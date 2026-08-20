@@ -358,16 +358,65 @@ raw-QR payer forfeits the auto-refund.
 
 ---
 
-## 7. nsite deploy and gateway resolution — `NEEDS HUMAN`
+## 7. nsite deploy and gateway resolution — **ANSWERED 2026-08-20**
 
-Not attempted: `nsyte` is a global install, and `/CLAUDE.md` says ask first. Say the word
-and I'll do it in the next session.
+**`npm i -g nsyte` does not work — nsyte is not on npm.** Corrected 2026-08-20 after the
+command in this file's own NEEDS HUMAN block 404'd. What is actually out there:
 
-- [ ] Hello-world deployed with nsyte
-- [ ] Resolves at: _(URL)_
-- [ ] `/404.html` fallback confirmed: yes / no
+| Tool | Distribution | Manifest kind it publishes | Verdict |
+|---|---|---|---|
+| **nsyte** (`sandwichfarm/nsyte`) | JSR (`deno install -A -f -g -n nsyte jsr:@nsyte/cli`) or a pre-built binary from GitHub Releases. **Not npm.** | **15128 / 35128**, and it reads kind `10063` | The right tool. Needs Deno or a 93 MB binary |
+| **nsite-cli** (`flox1an/nsite-cli`, npm, v0.1.18) | `npm i -g nsite-cli` | **34128** — the legacy one-event-per-file kind | **Do not use.** `/docs/spec.md` §6.4 rules 34128 out: one signature per file |
+| `nsite` on npm | — | — | Unrelated. A 2018 "JS site downloader" |
+
+nsyte release trust signals, checked 2026-08-20: latest is **v0.28.0, published that same day,
+4 downloads**. **v0.27.2 (2026-06-21) has 776** and is the one with field usage. GitHub publishes
+a per-asset sha256 `digest` via the releases API, so integrity is verifiable:
+`nsyte-macos-arm64` v0.27.2 is
+`sha256:03d1919a485c214ce3e528a66ec3b93a5ab47d6e743b9a3b1115b0ffa2a7741b`.
+
+Given this project's own thesis about supply-chain risk, note what installing it costs: either a
+Deno runtime plus `deno install -A` (which grants the installed script *all* permissions), or a
+93 MB unsigned binary that macOS Gatekeeper will quarantine. Neither is disqualifying — just
+priced honestly, and prefer v0.27.2 over the same-day release.
+
+**The alternative is that we already have the parts.** `/spike/seed-listings.ts` does Blossom
+upload with kind 24242 auth and relay publishing today. An nsite deploy adds only: hash each
+file, emit `["path","/abs",  "<sha256>"]` tags, compute the `x` aggregate hash (`5A.md:67-85`),
+and publish kind `15128` plus kind `10063`. That is slice 5's job regardless — "deploy from the
+app" cannot shell out to a Go/Deno binary from a browser — so writing it makes slice 5 a port
+rather than a greenfield. nsyte then has a second, better use: an independent checker to confirm
+our manifest is well-formed.
+
+- [x] Deployed with **our own `/spike/deploy-nsite.ts`**, not nsyte — see the tool table below
+- [x] Resolves at: `https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.nsite.lol/`
+      → `200 text/html 3143B`, byte-identical to our `dist/index.html`
+- [x] `/404.html` fallback confirmed: **yes** — `/definitely-missing` → `404`, 951 bytes,
+      byte-identical to our `dist/404.html`. `5A.md:196` holds in practice
 - [x] Manifest kind to use: **15128** (root site, one per pubkey, MUST NOT include a `d`
       tag — NIP-5A `5A.md:17`)
+- [x] Aggregate hash cross-checked two ways. Our implementation and the spec's own
+      `jq … | sort | sha256sum` pipeline (`5A.md:96`) both give
+      `1a15afd616c7fdcb84be2ddc91e7783011d8f9de99836616978c7426bf71af2d`, matching the
+      published `x` tag. Note the line format is `<hash> <path>`, **hash first** — reversing it
+      produces a wrong-but-plausible digest that nothing would catch
+- [x] Gateway used: `nsite.lol`. First request after publish timed out; every request since is
+      ~0.3s. Expect one cold miss while the gateway fetches blobs, and do not demo the first hit
+
+**Blob hosting is the real constraint, and it nearly sank the deploy.** Details in §9, summary
+here because it changes what the project can claim:
+
+- `blossom.band` is nostr.build. It stores the sale's **photos** fine and answers
+  `415 File type not allowed` for HTML/JS/CSS. It cannot host an nsite.
+- Of **fourteen** public Blossom servers probed with a real HTML upload from an unknown pubkey,
+  exactly **one** stored it: **`cdn.hzrd149.com`** → `201`, `type=text/html`, and it serves
+  `GET /<sha256>` with the right content-type. It takes JPEGs too, so it can be the only server.
+- The other twelve: `401 Pubkey not authorized by any storage rule`, `403 Public key not
+  authorized`, `400 unsupported content type`, or dead.
+
+⇒ The "no hosting account" claim currently rests on **one person's server choosing to accept
+anonymous uploads**. That is a weaker foundation than "no server", and a judge may ask. It is
+also a single point of failure with garbage collection: see §14's open question.
 
 **What the spike did verify from NIP-5A** (`nips/5A.md`), including two things spec §6.4
 gets wrong or omits — see §12:
@@ -394,7 +443,10 @@ gets wrong or omits — see §12:
 **NEEDS HUMAN — what to run**, if you'd rather do it yourself:
 
 ```bash
-npm i -g nsyte     # or npx, if it supports it
+# nsyte is NOT on npm. Either:
+#   deno install -A -f -g -n nsyte jsr:@nsyte/cli
+# or grab the v0.27.2 binary and verify it:
+#   shasum -a 256 nsyte-macos-arm64   # expect 03d1919a485c214ce3e528a66ec3b93a5ab47d6e743b9a3b1115b0ffa2a7741b
 # deploy a dir containing index.html and 404.html, then:
 curl -sI https://<npub>.<gateway>/                 # expect 200
 curl -sI https://<npub>.<gateway>/definitely-missing # expect the 404.html body

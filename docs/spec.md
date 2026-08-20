@@ -38,6 +38,12 @@ The seller's site is hosted on Nostr (NIP-5A manifest + Blossom blobs). The list
 - The seller's Lightning node must be **online**. It does not need inbound reachability, a public IP, DNS, TLS, or an open port — but it is a process running somewhere.
 - BOLT12 also achieves "static reusable payment code with no web server." CLINK's differentiators here are **identity/discovery (NIP-05 and kind 0), a typed decline the buyer's client can act on, buyer-supplied `payer_data` on the request, and per-item offers a marketplace app can mint over kind 21003** — not the absence of a server by itself.
 - **Receipts are private, not public.** The CLINK payment receipt is NIP-44 encrypted to the payer and addressed only to them (`clink-offers.md:307-343`), and it is a MAY, not a MUST. Do not claim publicly-readable signed receipts. See `/docs/spike-findings.md` §5.
+- **"No hosting account" rests on somebody accepting anonymous uploads.** Slice 1 probed
+  fourteen public Blossom servers with a real HTML upload; exactly one — `cdn.hzrd149.com` —
+  stored it. Most require an allowlist, and `blossom.band` is media-only. We do not operate a
+  server and we do not have an account, which is true and is the point; but the honest phrasing
+  is "no account, no domain, no TLS, no processor" rather than "no infrastructure exists."
+  See `/docs/spike-findings.md` §7.
 - There is no escrow and no chargebacks. Default to in-person pickup.
 
 ---
@@ -224,7 +230,16 @@ Two things the pre-spike draft missed:
 
 Kind `5128` manifest snapshots also exist (`5A.md:59-65`) — a regular event pinning one version. Not needed for v1; useful later for "show me the sale as it was."
 
-Blobs go to **multiple** Blossom servers. They garbage-collect. Mirror — and per §5 the mirroring costs no extra signature.
+Blobs go to **multiple** Blossom servers. They garbage-collect. Mirror — but note slice 1
+measured both halves of that advice to be harder than written: mirroring does **not** come free
+of signatures (§5, the batching lever is dead), and there is currently only **one** public server
+that will accept an nsite's HTML at all (`cdn.hzrd149.com`; `/docs/spike-findings.md` §7). Until
+a second one exists, "mirror your blobs" is advice we cannot follow for the site itself, only for
+the photos. Finding a second server is the highest-value infrastructure task after node funding.
+
+**Deploy is implemented** in `/spike/deploy-nsite.ts`. It refuses to publish a manifest unless at
+least one server holds a complete copy — a manifest whose blobs are missing is a site that 404s,
+and failing loudly at deploy beats discovering it from a buyer in a driveway.
 
 ### 6.5 CLINK
 
@@ -443,8 +458,18 @@ What it actually covers, and what it deliberately does not:
 - **No fiat → sats conversion.** It needs a price oracle, i.e. somebody else's server, against
   rule 1. Prices display as authored. Slice 2 has to solve this anyway to mint an offer.
 
-*Demo today: a local build showing eight real listings from real relays — two sold, one free, one
-multi-unit, one with no photo — and a printable flyer. The nsite deploy is still open (spike q7).*
+**Deployed, and spike q7 is closed with it.** `nsyte` turned out not to be on npm at all
+(`/docs/spike-findings.md` §7), and the npm package that *is* there, `nsite-cli`, publishes the
+legacy kind `34128` this spec rules out in §6.4. So the deploy is ours:
+`/spike/deploy-nsite.ts`, ~150 lines reusing the seeder's Blossom upload and relay publish. That
+is slice 5's job brought forward rather than extra work — "deploy from the app" cannot shell out
+to a binary from a browser, so this code had to exist either way.
+
+*Demo today, on a real URL with no server of ours:*
+**`https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.nsite.lol/`** —
+eight listings pulled from public relays, two sold, one free, one multi-unit, one with no photo,
+photos from Blossom, and a printable flyer with a tear-off QR strip. `/definitely-missing`
+serves our own `/404.html`.
 
 Test data comes from `/spike/seed-listings.ts`, a throwaway identity that publishes the fixture
 sale. **Delete that script and `spike/.dev-key` when slice 4 lands a real Signer.**
