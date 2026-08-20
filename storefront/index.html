@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- design.md §1: light mode only. This is read outdoors, in sunlight. -->
+    <meta name="color-scheme" content="light" />
+    <title>Yard Sale</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- The storefront QR, encoded at build time so the page ships no QR library.
+         Defined once and referenced by every tear-off tab via <use>. -->
+    <!--QR-->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

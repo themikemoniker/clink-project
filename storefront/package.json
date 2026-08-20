@@ -1,0 +1,23 @@
+{
+  "name": "storefront",
+  "private": true,
+  "type": "module",
+  "description": "Buyer-facing sale page. Static, no backend. Reads listings from relays.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node --test src/*.test.ts",
+    "size": "npm run build && find dist/assets -name '*.js' -o -name '*.css' | xargs -I{} sh -c 'printf \"%-40s %6s raw %6s gzip\\n\" {} $(wc -c <{}) $(gzip -9 -c {} | wc -c)'"
+  },
+  "dependencies": {
+    "nostr-tools": "2.24.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/qrcode": "^1.5.6",
+    "qrcode": "^1.5.4",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  }
+}

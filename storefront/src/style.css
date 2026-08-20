@@ -1,0 +1,267 @@
+/* design.md §1 — newspaper classifieds. Hairline rules, high-contrast serif, whitespace.
+   No gradients, no shadows, no rounded corners, no dark mode: this is read outdoors, in
+   sunlight, and then printed and taped to a lamppost. */
+
+:root {
+  --ink: #14110f;
+  --ink-soft: #55504a;
+  --rule: #c9c4bd;
+  --paper: #fbfaf7;
+  --stamp: #9c1f1f;
+
+  /* design.md §1 wants one high-contrast display serif for the masthead, subsetted to the
+     characters that sale actually uses, ≤20KB woff2. That subset cannot be built until the
+     sale's text is known — which happens at deploy, slice 5 — so slice 1 uses the system
+     high-contrast serifs and ships zero font bytes. */
+  --display: Didot, 'Bodoni MT', 'Big Caslon', 'Playfair Display', Georgia, serif;
+  --serif: Georgia, 'Iowan Old Style', Charter, 'Times New Roman', serif;
+  --sans: system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 1rem/1.55 var(--serif);
+  -webkit-text-size-adjust: 100%;
+}
+
+#app {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 4rem;
+}
+
+/* ---- masthead ---------------------------------------------------------------------- */
+
+.masthead {
+  border-bottom: 3px solid var(--ink);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.75rem;
+}
+
+.masthead h1 {
+  font: 400 clamp(2.4rem, 9vw, 4.5rem)/1.05 var(--display);
+  letter-spacing: -0.015em;
+  margin: 0 0 0.4rem;
+}
+
+.dateline {
+  font: 0.95rem/1.4 var(--serif);
+  margin: 0.15rem 0;
+  color: var(--ink-soft);
+}
+
+.byline {
+  font: 0.7rem/1.4 var(--sans);
+  color: var(--ink-soft);
+  margin: 0.6rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.byline code { font-size: 0.95em; }
+
+/* ---- the classifieds grid ------------------------------------------------------------
+   A grid, not CSS `columns` — design.md §1 is explicit, and columns break badly with lazy
+   images and anything interactive. Hairline rules between items, never a box around each. */
+
+.items {
+  display: grid;
+  gap: 0 2.5rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 40rem) { .items { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 62rem) { .items { grid-template-columns: 1fr 1fr 1fr; } }
+
+.item {
+  border-top: 1px solid var(--rule);
+  padding: 1.25rem 0 1.5rem;
+}
+
+/* The first row's rule doubles the masthead's; drop it. */
+.items > .item:first-child { border-top: 0; padding-top: 0.25rem; }
+
+@media (min-width: 40rem) {
+  .items > .item:nth-child(2) { border-top: 0; padding-top: 0.25rem; }
+}
+@media (min-width: 62rem) {
+  .items > .item:nth-child(3) { border-top: 0; padding-top: 0.25rem; }
+}
+
+.item-link {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+}
+
+.item h2 {
+  font: 600 1.15rem/1.3 var(--serif);
+  margin: 0.7rem 0 0.35rem;
+}
+
+.item-link:hover h2,
+.item-link:focus-visible h2 { text-decoration: underline; }
+
+.summary {
+  margin: 0 0 0.5rem;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+
+.meta {
+  font: 0.85rem/1.4 var(--sans);
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+}
+
+.price { font-weight: 650; font-variant-numeric: tabular-nums; }
+.stock { color: var(--ink-soft); }
+
+/* ---- photos --------------------------------------------------------------------------
+   The box is reserved from the event's own dimensions so nothing reflows as blobs arrive. */
+
+.shot {
+  background: #e8e4de;
+  overflow: hidden;
+}
+
+.shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ponytail: a flat tone, not a blurhash. design.md §2.5 wants a placeholder rendered inline
+   from the listing event, but no tag in NIP-99 or GammaMarkets carries one — NIP-92 `imeta`
+   is where blurhash lives, and nothing is authored with it until slice 4 uploads photos.
+   Choose the tag there, then render it here. */
+.shot-empty { background: repeating-linear-gradient(45deg, #eeeae4 0 6px, #e6e1da 6px 12px); }
+
+/* ---- sold ----------------------------------------------------------------------------
+   design.md §1: do not hide sold items. A page where things visibly disappear over the
+   morning is more compelling than one that was always short. Fade, strike, stamp. */
+
+.item.sold { opacity: 0.62; }
+.item.sold h2 { text-decoration: line-through; text-decoration-thickness: 1px; }
+.item.sold .shot img { filter: grayscale(1); }
+
+.stamp {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05em 0.4em;
+  border: 2px solid var(--stamp);
+  color: var(--stamp);
+  font: 700 0.62rem/1.5 var(--sans);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transform: rotate(-6deg);
+  vertical-align: middle;
+}
+
+/* ---- detail view ---------------------------------------------------------------------- */
+
+.detail { max-width: 44rem; }
+
+.back {
+  font: 0.85rem/1 var(--sans);
+  color: var(--ink-soft);
+  text-decoration: none;
+  display: inline-block;
+  margin-bottom: 1.25rem;
+}
+
+.back:hover { text-decoration: underline; }
+
+.detail h2 { font-size: 1.6rem; margin-top: 1rem; }
+.detail .meta { margin-top: 0.6rem; font-size: 1rem; }
+
+.body {
+  margin: 1.25rem 0;
+  white-space: pre-line; /* .content is markdown per 99.md:21; we show it as typed */
+}
+
+.where { color: var(--ink-soft); font-size: 0.9rem; }
+
+.empty { color: var(--ink-soft); padding: 2rem 0; }
+
+/* ---- the flyer ------------------------------------------------------------------------
+   design.md §3. The seller prints this, tapes it to a lamppost, and the QR goes to the live
+   version where sold items have already gone. Paper that stays current. */
+
+.flyer-foot { display: none; }
+
+@media print {
+  @page { margin: 14mm; }
+
+  :root { --ink: #000; --ink-soft: #000; --rule: #000; --stamp: #000; }
+
+  body { background: #fff; font-size: 10.5pt; }
+  #app { max-width: none; padding: 0; }
+
+  /* Interactive chrome has no meaning on paper. */
+  .back, .byline { display: none; }
+
+  .items { grid-template-columns: 1fr 1fr; gap: 0 10mm; }
+
+  .item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border-top: 0.4pt solid #000;
+  }
+
+  .item-link { text-decoration: none; }
+
+  /* ponytail: grayscale + hard contrast, not a real 1-bit halftone. design.md §2.2 wants
+     dithered thumbs, which have to be generated where the photo is uploaded — slice 4. This
+     approximates them on any printer until that exists. */
+  .shot img { filter: grayscale(1) contrast(1.45) brightness(1.06); }
+  .shot { background: #fff; border: 0.4pt solid #000; }
+
+  .stamp { border-width: 1pt; }
+
+  .flyer-foot {
+    display: block;
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .flyer-foot h2 {
+    font: 400 2.2rem/1.1 var(--display);
+    margin: 0 0 2mm;
+  }
+
+  .flyer-foot p {
+    font: 10pt/1.4 var(--sans);
+    margin: 0 0 6mm;
+  }
+
+  /* Tear-off tabs, the way a real yard sale sign works. */
+  .tabs {
+    display: flex;
+    border-top: 0.4pt dashed #000;
+  }
+
+  .tab {
+    flex: 1;
+    border-right: 0.4pt dashed #000;
+    padding: 3mm 2mm;
+    text-align: center;
+  }
+
+  .tab:last-child { border-right: 0; }
+  .tab svg { width: 100%; max-width: 22mm; height: auto; }
+
+  .tab span {
+    display: block;
+    font: 6pt/1.2 var(--sans);
+    margin-top: 1.5mm;
+    overflow-wrap: anywhere;
+  }
+}

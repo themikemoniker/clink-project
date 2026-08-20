@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.DS_Store
+
+# Key material. Nothing in this repo may contain a private key.
+# spike/.dev-key is a throwaway seeding identity (see spike/seed-listings.ts);
+# it is gitignored, holds no funds, and is deleted when slice 4 lands a real Signer.
+.env
+.env.*
+*.nsec
+spike/.dev-key
+spike/seed-photos/
+
+# Node credentials. admin.connect is nprofile:token = full node authority.
+admin.connect
+*.connect
+app.nprofile
