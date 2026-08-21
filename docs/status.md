@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-21**, end of slice 7.
+Last updated: **2026-08-21**, end of slice 7 — both nsites re-deployed, storefront SPOF closed.
 
 ---
 
@@ -64,7 +64,7 @@ now a deliberate boundary rather than an accident.
 | Node liquidity | **90,374 inbound / 8,000 outbound**, measured 2026-08-21 — drifts with every sale |
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
-| Blossom | **four** servers, verified — *for anything deployed after the slice-5 fix.* Two things predate it and are still on one server each: see the two single points of failure below |
+| Blossom | **four** servers, verified — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
 | Storefront bundle | 31.0 KB gzip JS + 2.0 CSS + 2.4 HTML cold, + 3.9 KB QR chunk on Buy |
 | Builder bundle | **57.3 KB gzip cold** (+4.3 for slice 6), + a built storefront in `public/site` (~99 KB raw) |
 
@@ -164,23 +164,31 @@ report four complete mirrors.
 re-cuts `.ladder.json` and republishes all nine listings, so it needs `watch-sales.ts` restarted
 after it, and it must not happen on demo day.
 
-**And there is a second one, found on 2026-08-21 during slice 6 and not previously written down.**
-`node spike/check-deploy.ts npub1lvvw…q0lalws --skip-gateway` passes every check and reports
-**"1 complete mirror(s). ONE copy — a single garbage collection breaks this site."** The live
-storefront was deployed *before* slice 5 found the base64 encoding bug, so its kind 10063 names
-only `cdn.hzrd149.com` and its five site blobs live there alone. The two sites deployed after the
-fix report four mirrors; the live one is not one of them.
+**The storefront's own single point of failure is CLOSED — 2026-08-21, after slice 7.** It had
+been the second one: the live storefront predated slice 5's base64 fix, so its kind 10063 named
+only `cdn.hzrd149.com` and its five site blobs lived there alone. Both nsites were re-deployed
+from the current builds and both now report **4 complete mirrors**:
 
-So the demo has **two** single points of failure, both on Blossom, and they are different fixes:
+| site | version | mirrors |
+|---|---|---|
+| storefront `npub1lvvw…q0lalws` | `a11873088a4c…` | 4 |
+| builder `npub1qqm9…qlerxa2` | `ba64de02b18f…` | 4 |
+
+`blossom.band` is in `SERVERS` and rejected every file in both deploys — `400 Content-Type header
+does not match the file content` for html/js/css and `415 File type not allowed` for json. That is
+the jpeg-only behaviour findings §9 already records, and `deploy-nsite.ts` drops it from the
+published kind 10063 rather than naming a server that does not have the blob. Four is the real
+number for anything that is not a photo.
+
+So the demo has **one** single point of failure left, on Blossom:
 
 | what | where | fix | safe to do on demo day? |
 |---|---|---|---|
 | the fixture's 21 item photos | `blossom.band` only | re-run `seed-listings.ts` | **no** — re-cuts the ladder, needs the watcher restarted |
-| the live storefront's 5 site blobs | `cdn.hzrd149.com` only | re-run `deploy-nsite.ts` | **no** — the gateway caches the old build for an hour |
 
-Neither is urgent and both are cheap on a quiet day. Doing them in the same sitting is the right
-move, in this order: `mint-offers.ts` → `seed-listings.ts` → `deploy-nsite.ts` → restart
-`watch-sales.ts` → `check-admin.ts` and `check-deploy.ts` to confirm.
+Not urgent, and cheap on a quiet day. The order when it happens: `mint-offers.ts` →
+`seed-listings.ts` → `deploy-nsite.ts` → restart `watch-sales.ts` → `check-admin.ts` and
+`check-deploy.ts` to confirm.
 
 `spike/.dev-key` and `spike/.offers.json` are gitignored and **not reproducible from the repo**.
 Losing `.dev-key` loses the seller identity, the storefront's npub, and access to the 6,000 sats
