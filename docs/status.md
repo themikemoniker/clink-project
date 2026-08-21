@@ -233,6 +233,15 @@ to delete it at slice 4.
 One spike question remains, and it **needs a phone.** Nothing blocks a slice. Full `NEEDS HUMAN`
 blocks with exact commands live in `/docs/spike-findings.md`.
 
+**Queued, not blocked: four confirmed defects from the 2026-08-21 review panel**, in
+`/docs/known-defects.md` § "Added by the review panel". Two touch the money path and should be
+read before anyone runs the watcher against the node again: the refund poller can pay a buyer
+twice (`spike/watch-sales.ts`, no in-flight guard on a `tick()` that outlives its own 5s timer,
+plus a `record()` that lets a late refusal overwrite a `paid` row), and the kill switch can print
+`BANNED` while the real grant stays live (`spike/authorize-refunds.ts` mints a fresh key above the
+`--revoke` branch). Same section carries seven further findings the panel produced but never
+verified — those are claims, not entries, and two contradict decisions recorded elsewhere.
+
 ### The bunker import — key backed up 2026-08-21, import NOT yet done
 
 `spike/.dev-key` is backed up to `~/.lamppost-key-backup/dev-key-2026-08-21.hex` (chmod 600,
