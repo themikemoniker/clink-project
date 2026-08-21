@@ -1563,7 +1563,12 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
    step 6: the node will not take a payment it could not refund. Say it here, once, rather than
    letting a judge find it at step 6.
 4. Refresh: item is sold.
-5. Show the seller's machine — no inbound ports open, no domain, no certificate, no processor account.
+5. Show the seller's machine — **no domain, no certificate, no processor account, and no inbound
+   port serving the storefront.** Corrected 2026-08-21: "no inbound ports open" was the old
+   wording and it is not true — `lnd` listens on `*:9735` and Lightning.Pub's API on `*:1776`.
+   A Lightning node listens because it is a Lightning node; that is a different claim from
+   hosting a website, and the true one is the stronger one. `lsof -nP -iTCP -sTCP:LISTEN` on
+   stage survives the check; the old sentence does not.
 6. Oversell deliberately. Show the automatic refund.
 7. ~~Optional: open the same site in Titan over `nsite://` with no gateway at all.~~ **Cut
    2026-08-21 — it does not work, see §14.** What replaces it, and it is a better answer to the
