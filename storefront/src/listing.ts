@@ -5,7 +5,9 @@
 //   NIP-99  kind 30402 classified listing        nips/99.md
 //   NIP-58  image / thumb tag shape              nips/58.md
 //   Gamma   kind 30402 extensions, kind 30405    GammaMarkets/market-spec spec.md
+//   CLINK   clink_offer tag value (an noffer)    clink-offers.md  (via /docs/clink-notes.md)
 import { verifiedSymbol, verifyEvent, type Event } from 'nostr-tools/pure'
+import { decodeNoffer, MIN_PAYABLE_SATS, type Offer } from './offer.ts'
 
 export const LISTING_KIND = 30402 // 99.md:9
 export const SALE_KIND = 30405 // Gamma spec.md:213 "Product Collection (Kind: 30405)"
@@ -67,6 +69,7 @@ export type Item = {
   images: Photo[] // distinct product photos
   thumbs: Photo[] // smaller renditions; see srcset() for the ambiguity
   location?: string
+  offer?: Offer // present only when this item can actually be bought — see buyableOffer()
 }
 
 export type Sale = {
@@ -132,11 +135,33 @@ const parsePhotos = (ev: Event, name: 'image' | 'thumb'): Photo[] => {
   return out
 }
 
+// Whether the page may put a Buy button on this item, and the offer it would pay.
+//
+// Slice 2 owns the fiat -> sats decision (/docs/spec.md §10) and the answer is: there is no
+// conversion. A price oracle is somebody else's server and /CLAUDE.md rule 1 forbids one, so a
+// buyable item is priced in sats by its seller, the page displays that number, and the offer is
+// minted at that number. Everything else is cash at the table, which is what a yard sale mostly
+// is anyway.
+//
+// The agreement is then *enforced*, not assumed: a fixed-price noffer carries its price in
+// TLV 4, so a listing whose tag says one thing and whose offer says another is not buyable at
+// all. buy.ts re-checks the same number against the BOLT11 the node actually returns, because
+// the tag and the TLV are both authored by the seller and only the invoice takes money.
+const buyableOffer = (raw: string | undefined, price: Money | undefined, sold: boolean): Offer | undefined => {
+  if (raw === undefined || sold) return undefined // §7.4(a): a sold item's offer should not exist
+  if (!price || !/^sats?$/i.test(price.currency)) return undefined
+  if (!Number.isSafeInteger(price.amount) || price.amount < MIN_PAYABLE_SATS) return undefined
+  const offer = decodeNoffer(raw)
+  if (!offer) return undefined
+  return offer.priceSats === undefined || offer.priceSats === price.amount ? offer : undefined
+}
+
 const parseItem = (ev: Event): Item | null => {
   const d = text(tagValue(ev, 'd'), 200) // 99.md:64, Gamma spec.md:108 — required
   const title = text(tagValue(ev, 'title'), LIMITS.title) // 99.md:34, Gamma spec.md:109
   if (!d || !title) return null // no identity or no name = not renderable
 
+  const price = parsePrice(firstTag(ev, 'price'))
   const stock = parseStock(tagValue(ev, 'stock'))
   // Two independent ways to be unavailable, and we honour both. 99.md:43 `status` is
   // "active"|"sold" and is what a generic NIP-99 client reads; Gamma spec.md:124 `stock` is a
@@ -153,12 +178,16 @@ const parseItem = (ev: Event): Item | null => {
     title,
     summary: text(tagValue(ev, 'summary'), LIMITS.summary), // 99.md:35
     content: text(ev.content, LIMITS.content) ?? '',
-    price: parsePrice(firstTag(ev, 'price')),
+    price,
     stock,
     sold,
     images: parsePhotos(ev, 'image'),
     thumbs: parsePhotos(ev, 'thumb'),
     location: text(tagValue(ev, 'location'), LIMITS.location), // 99.md:37
+    // Our own tag, documented in /docs/spec.md §6.1. clink-offers.md:58-83 standardises the
+    // name `clink_offer` for kind 0 metadata and NIP-05; a listing-level tag is not in any
+    // spec, so we reuse the standard name rather than invent a second one.
+    offer: buyableOffer(text(tagValue(ev, 'clink_offer'), 1_000), price, sold),
   }
 }
 

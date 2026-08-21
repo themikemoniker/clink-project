@@ -7,9 +7,13 @@
 // slice 4 lands a real Signer — at that point the builder authors listings and this is dead code.
 //
 // What it does, in the order slice 4/5 will eventually do it for real:
-//   1. photos -> N widths -> Blossom, with ONE batched kind 24242 auth (BUD-11 11.md:40,67)
+//   1. photos -> N widths -> Blossom, one signed kind 24242 auth per blob (BUD-11 11.md:11-27)
 //   2. one kind 30402 per item   (NIP-99 99.md:32-43 + GammaMarkets spec.md:104-190)
 //   3. one kind 30405 collection (GammaMarkets spec.md:213-236) = the sale, and the masthead
+//
+// Slice 2 added the `clink_offer` tag. Its values come from /spike/.offers.json, which
+// mint-offers.ts writes; run that first or the listings publish without a Buy button, which is
+// exactly the state slice 1 shipped in.
 //
 // Usage: node seed-listings.ts [--relays wss://a,wss://b] [--blossom https://x,https://y]
 import { createHash } from 'node:crypto'
@@ -18,9 +22,11 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils'
+import { ITEMS, SALE, listingD, offerPriceSats } from './fixture.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const KEY_FILE = join(HERE, '.dev-key')
+const OFFERS_FILE = join(HERE, '.offers.json')
 const PHOTO_DIR = join(HERE, 'seed-photos')
 
 const arg = (name: string, fallback: string) => {
@@ -41,35 +47,25 @@ const pk = getPublicKey(sk)
 console.log(`# seeding as ${nip19.npubEncode(pk)}\n#          hex ${pk}`)
 
 // --- the sale ---------------------------------------------------------------------------
-// Deliberately uneven: some fields missing, three ways of being unavailable, three currencies.
-// The storefront parser has to survive all of it. Hostile inputs are NOT published here —
-// they live in storefront/src/listing.test.ts, because this writes to public relays.
-const SALE = {
-  d: 'yardsale-2026-08',
-  title: 'Moving Sale — Colonia Americana',
-  summary: 'Saturday 23 August, 8am–2pm. Cash, or Lightning. Everything must go.',
-  location: 'Colonia Americana, Guadalajara',
-  g: '9ewmr4z',   // geohash, NIP-99 99.md:53
+// SALE and ITEMS live in ./fixture.ts, shared with mint-offers.ts so an item's listed price and
+// its minted offer cannot drift apart.
+type MintedOffer = { noffer: string; price_sats: number; payer_data: string[] }
+const OFFERS: Record<string, MintedOffer> = existsSync(OFFERS_FILE)
+  ? JSON.parse(readFileSync(OFFERS_FILE, 'utf8'))
+  : {}
+console.log(existsSync(OFFERS_FILE)
+  ? `# ${Object.keys(OFFERS).length} minted offer(s) loaded from ${OFFERS_FILE}`
+  : `# no ${OFFERS_FILE} — publishing without clink_offer tags; run mint-offers.ts first`)
+
+// Refuse to publish a listing whose advertised price disagrees with the offer it points at.
+// The storefront re-checks this off the noffer's own TLVs and would simply hide the Buy button,
+// which is a silent failure; failing here is the loud one.
+for (const item of ITEMS) {
+  const minted = OFFERS[listingD(item)]
+  if (minted && minted.price_sats !== offerPriceSats(item)) {
+    throw new Error(`${listingD(item)}: offer is ${minted.price_sats} sats, listing says ${item.price.join(' ')} — re-run mint-offers.ts`)
+  }
 }
-const ITEMS = [
-  { d: 'couch',   title: 'Green velvet couch, 3-seat',  price: ['4200', 'MXN'],  stock: '1',
-    summary: 'Some sun-fade on the left arm, no tears, no smell. You bring friends and a truck.', photo: true },
-  { d: 'bike',    title: 'Bianchi road bike, 54cm',     price: ['180000', 'sats'], stock: '1',
-    summary: 'Recently serviced. New chain and bar tape.', photo: true },
-  { d: 'lamp',    title: 'Brass floor lamp',            price: ['600', 'MXN'],   stock: '3',
-    summary: 'Three of these. Rewired, all work.', photo: true },
-  { d: 'records', title: 'Records, jazz and salsa',     price: ['80', 'MXN'],    stock: '24',
-    summary: 'Priced each. Mostly VG+, a few beat up — dig through the crate.', photo: true },
-  { d: 'table',   title: 'Oak dining table + 4 chairs', price: ['3500', 'MXN'],  stock: '0',
-    summary: 'SOLD — leaving it up so you can see what a sold item looks like.', photo: true },
-  { d: 'mirror',  title: 'Full-length mirror',          price: ['450', 'MXN'],   status: 'sold',
-    summary: 'Gone. Sold the old way, with a status tag instead of a stock count.', photo: true },
-  // no summary, no stock tag at all — parser must not assume either exists
-  { d: 'plants',  title: 'Houseplants, various',        price: ['120', 'MXN'], photo: true },
-  // no photo — the storefront must lay out fine without one
-  { d: 'boxes',   title: 'Moving boxes, free',          price: ['0', 'MXN'],     stock: '12',
-    summary: 'Free. Take them, please. They are in the garage.' },
-]
 
 // --- 1. photos: fetch at three widths, hash, upload with ONE auth ------------------------
 // Widths mirror what slice 4's canvas resize will emit. Fetching them pre-sized keeps this
@@ -177,7 +173,7 @@ const listings = ITEMS.map(item => finalizeEvent({
   kind: 30402,
   created_at: now,
   tags: [
-    ['d', `${SALE.d}-${item.d}`],
+    ['d', listingD(item)],
     ['title', item.title],
     // NIP-99 99.md:38 ["price","<number>","<currency>","<frequency>"?]. We never write frequency.
     ['price', item.price[0], item.price[1]],
@@ -197,6 +193,11 @@ const listings = ITEMS.map(item => finalizeEvent({
     ['t', 'yardsale'],
     // GammaMarkets spec.md:148 — products point at their collection for discoverability.
     ['a', `30405:${pk}:${SALE.d}`],
+    // Our own tag. `clink_offer` is the name CLINK standardises for a kind 0 metadata field and
+    // for NIP-05 (clink-offers.md:58-83); no spec puts an noffer on a listing, so we reuse the
+    // standard name rather than invent a second one. Purpose-made per item — never the
+    // account's default offer, whose id IS the account pointer (/docs/spike-findings.md §3).
+    ...(OFFERS[listingD(item)] ? [['clink_offer', OFFERS[listingD(item)]!.noffer]] : []),
     ...imagesFor(item.d),
   ],
   content: item.summary ?? '',

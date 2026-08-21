@@ -1,7 +1,8 @@
 import './style.css'
+import { closeBuy } from './buy.ts'
 import { orderBySale, parseListings, parseSales, type Item } from './listing.ts'
 import { fetchSaleEvents } from './nostr.ts'
-import { renderDetail, renderFlyerFoot, renderIndex, renderMasthead } from './render.ts'
+import { renderDetail, renderFlyerFoot, renderIndex, renderMasthead, SITE_NAME } from './render.ts'
 
 // Slice 1 hardcodes the seller, as the build plan says to. Slice 5 (deploy from the app) is
 // what writes these into the generated site, at which point this block becomes generated code.
@@ -29,6 +30,9 @@ const byD = new Map<string, Item>(items.map(i => [i.d, i]))
 // path routing is possible — but it costs a round trip through a 404 on every deep link, and
 // slice 1 does not need one.
 const route = () => {
+  // Leaving an item drops any open payment subscription with it. Without this, walking the sale
+  // leaves a relay socket per item behind, listening for receipts nobody is waiting for.
+  closeBuy()
   const match = /^#\/item\/(.+)$/.exec(location.hash)
   const item = match?.[1] ? byD.get(decodeURIComponent(match[1])) : undefined
   app.replaceChildren(
@@ -36,7 +40,7 @@ const route = () => {
     item ? renderDetail(item) : renderIndex(items),
     renderFlyerFoot(sale, __SITE_URL__),
   )
-  document.title = item ? `${item.title} — ${sale?.title ?? 'Yard Sale'}` : (sale?.title ?? 'Yard Sale')
+  document.title = item ? `${item.title} — ${sale?.title ?? SITE_NAME}` : (sale?.title ?? SITE_NAME)
   if (item) window.scrollTo(0, 0)
 }
 

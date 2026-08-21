@@ -258,10 +258,140 @@ body {
   .tab:last-child { border-right: 0; }
   .tab svg { width: 100%; max-width: 22mm; height: auto; }
 
+  .colophon {
+    font: 7pt/1.3 var(--sans);
+    margin: 4mm 0 0;
+    text-align: center;
+  }
+
   .tab span {
     display: block;
     font: 6pt/1.2 var(--sans);
     margin-top: 1.5mm;
     overflow-wrap: anywhere;
   }
+}
+
+/* ---- the Buy button -------------------------------------------------------------------
+   design.md §1 is explicit: this control is exempt from the newspaper metaphor. It is the
+   moment money moves, so it reads as a modern, obviously tappable thing — sans, solid fill,
+   full width on a phone — surrounded by classifieds that deliberately do not. */
+
+.buy {
+  margin: 2rem 0 0;
+  padding: 1.25rem 0 0;
+  border-top: 1px solid var(--rule);
+  font-family: var(--sans);
+}
+
+.buy label {
+  display: block;
+  font: 600 0.9rem/1.4 var(--sans);
+  margin-bottom: 0.3rem;
+}
+
+.buy .hint {
+  font: 0.82rem/1.45 var(--sans);
+  color: var(--ink-soft);
+  margin: 0 0 0.7rem;
+}
+
+.buy input {
+  display: block;
+  width: 100%;
+  font: 1rem/1.4 var(--sans);
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--ink-soft);
+  background: #fff;
+  color: var(--ink);
+}
+
+.buy input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.buy input[aria-invalid='true'] { border-color: var(--stamp); }
+.buy input:disabled { background: #f0ece6; color: var(--ink-soft); }
+
+/* ≥44px tall: this is tapped outdoors, one-handed, possibly in sunlight. */
+.pay {
+  display: block;
+  width: 100%;
+  margin-top: 0.9rem;
+  padding: 0.85rem 1rem;
+  border: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font: 650 1rem/1.2 var(--sans);
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.pay:hover, .pay:focus-visible { background: #000; }
+.pay:disabled { background: var(--ink-soft); cursor: default; }
+
+.ghost {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--ink-soft);
+  background: transparent;
+  color: var(--ink);
+  font: 500 0.9rem/1.2 var(--sans);
+  cursor: pointer;
+}
+
+.buy-status:empty { display: none; }
+.buy-status > * { margin: 0.9rem 0 0; }
+
+.waiting { font: 0.9rem/1.4 var(--sans); color: var(--ink-soft); }
+.buy-error { font: 0.9rem/1.45 var(--sans); color: var(--stamp); }
+
+.invoice-amount {
+  font: 650 1.6rem/1.2 var(--sans);
+  font-variant-numeric: tabular-nums;
+  margin: 0.9rem 0 0.2rem;
+}
+
+/* The invoice QR — for a page on a laptop and a wallet in a pocket. Capped so it stays a QR
+   and not a poster, and on white regardless of the paper tone so contrast is never marginal. */
+.qr-frame { margin: 0.9rem 0 0.2rem; }
+
+.qr {
+  display: block;
+  width: 100%;
+  max-width: 15rem;
+  height: auto;
+  background: #fff;
+  padding: 0.4rem;
+  border: 1px solid var(--rule);
+  fill: #000;
+  shape-rendering: crispEdges;
+}
+
+/* The raw invoice, shown because copy-paste is the fallback when a camera will not cooperate.
+   Wrapping is the point; so is being selectable. */
+.bolt11 {
+  display: block;
+  margin-top: 0.6rem;
+  padding: 0.6rem;
+  background: #f0ece6;
+  font: 0.68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.paid-mark {
+  font: 700 1.5rem/1.1 var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--stamp);
+  border: 3px solid var(--stamp);
+  display: inline-block;
+  padding: 0.15em 0.5em;
+  transform: rotate(-4deg);
+}
+
+/* Paper cannot be tapped. design.md §3: hide every interactive control in print. */
+@media print {
+  .buy { display: none; }
 }

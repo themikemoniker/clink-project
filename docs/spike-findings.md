@@ -1,7 +1,11 @@
 # Spike Findings
 
-**Status:** desk spike complete 2026-08-20. Five items need a funded node or a human with a
-phone; each is marked `NEEDS HUMAN` with the exact command and the exact output to paste back.
+**Status:** desk spike complete 2026-08-20; **updated at the end of slice 2** with what a live
+CLINK round trip actually returns. Four items still need a funded node or a human with a phone;
+each is marked `NEEDS HUMAN` with the exact command and the exact output to paste back. Slice 2
+closed the node-side halves of questions 2 and 6, corrected §13.4, and added §13.13-14. Question
+1 was answered separately on 2026-08-21 — the node has rented inbound now, so the one remaining
+slice-2 unknown is a single paid invoice (§1).
 **Rule:** every answer needs evidence — a spec file path, a source file and line, or
 pasted event JSON. `UNVERIFIED` is an acceptable answer. A confident guess is not.
 
@@ -16,7 +20,7 @@ Where this file disagrees with `/docs/spec.md`, this file wins. Corrections are 
 | Blossom BUDs — `github.com/hzrd149/blossom` | fetched 2026-08-20 |
 | Lightning.Pub source | the **running local install**, `~/lightning_pub`, `package.json` version `0.0.37` |
 | `@shocknet/clink-sdk` | `1.5.5` bundled in Lightning.Pub; `1.7.0` current on npm |
-| Live node | local Pub, LND `SERVER_ACTIVE`, **0 channels, unfunded** |
+| Live node | local Pub, LND `SERVER_ACTIVE`, 1 private channel, **98,160 sat inbound / 0 outbound** (§1) |
 
 Field-name detail lives in `/docs/clink-notes.md`. This file is the answers.
 
@@ -24,11 +28,20 @@ Field-name detail lives in `/docs/clink-notes.md`. This file is the answers.
 
 ```bash
 cd spike && npm install
+
+# slice 0 — raw wire capture
 node request-invoice.ts <noffer1...> [amount_sats] ['{"key":"value"}']
 node watch-receipts.ts <npub|hex> [wss://relay ...]
+
+# slice 2 — the fixture's offers, and the storefront's own buy path against the live node
+node mint-offers.ts [--nprofile <path|nprofile1…>] [--dry]   # writes .offers.json
+node seed-listings.ts                                        # republishes 30402s with clink_offer
+node check-buy.ts [item-d-tag]                               # exit 0 = the money path works
 ```
 
 Node 24 runs the `.ts` files directly (type stripping). No build step, no global install.
+`check-buy.ts` imports `/storefront/src/*.ts` unmodified — if it and the storefront ever
+disagree, `check-buy.ts` is wrong.
 
 ---
 
@@ -79,23 +92,45 @@ itself. Item prices scale to any size; channels do not.
 constraint on **slice 7**: refunds need outbound, and outbound only exists after buyers have
 paid. A refund cannot be the first payment this node ever makes.
 
-**Non-obvious thing the spike found:** an unfunded node still passes the amount check.
-`getNofferInvoice` sets `maxSendable` from the channel balance, but falls back to
-`10_000_000` when the liquidity provider is ready
-(`~/lightning_pub/src/services/main/offerManager.ts:286-298`). Our live request against
-the 0-channel node came back with `"max":10000000`, not `0`. So **"the invoice request
-succeeded" is not evidence that the node can actually receive.** Only a real paid invoice
-proves that.
+**The amount check does not protect you, and slice 2 proved how little.** `getNofferInvoice`
+sets `maxSendable` from the channel balance but falls back to `10_000_000` whenever the
+liquidity provider is reachable (`offerManager.ts:286-298`), so the **0-channel** node reported
+`"max":10000000`. Worse, **a fixed-price offer is not range-checked at all**: `HandleUserOffer`
+(`offerManager.ts:246-257`) compares `amount` against `[10, remote]` only when
+`price_sats === 0` (spontaneous); when `price_sats > 0` it takes the offer's own price and goes
+straight to `AddAppUserInvoice`. Measured on the wire before this channel existed: the
+0-channel node returned `lnbc2100u1p4g0fv9…`, a perfectly valid 210,000-sat BOLT11 it had no
+capacity whatsoever to settle.
 
-**NEEDS HUMAN — what to run**
+⇒ **"the invoice request succeeded" is not evidence the node can receive, and neither is "we
+got a real BOLT11 back".** Only a paid invoice is. Every offer we mint is fixed-price, so this
+is the path the demo runs on: a green `check-buy.ts` says our client is correct, not that money
+can move.
+
+**Which fixture items are actually payable, given 98,160 sat inbound:**
+
+| item | price | payable today |
+|---|---|---|
+| `plants` | 6,000 sat | **yes** |
+| `lamp` | 30,000 sat | **yes** |
+| `bike` | 180,000 sat | no — over inbound |
+| `couch` | 210,000 sat | no — over inbound |
+
+Both unpayable ones will still hand a buyer a BOLT11 and then fail at payment time, which is
+the honest shape of the problem and worth showing rather than hiding. Demo `plants` or `lamp`.
+
+**NEEDS HUMAN — the last thing slice 2 needs, and it is now a 60-second job.**
 
 ```bash
-lncli getinfo | grep -E 'num_active_channels|synced_to_chain'
-lncli listchannels | grep -E 'remote_balance|active'
+cd spike && node check-buy.ts yardsale-2026-08-plants --pay
 ```
 
-Paste both outputs, plus the date of a test payment actually received. Per
-`/docs/runbook.md` §3 this is the long pole — start it days before demo day.
+It prints a real 6,000-sat invoice and waits. Pay it from the phone wallet that paid the
+Olympus fee, then paste everything the script prints after `# waiting`. That single run proves,
+in order: the invoice is payable (so §1's checkbox closes), Lightning.Pub really does send the
+kind 21001 receipt, the receipt is readable by the payer's ephemeral key and by nothing else,
+and the storefront's `showPaid()` path fires. Confirm whether the payload is `{"res":"ok"}` or
+`{"res":"ok","preimage":"…"}` — §5 predicts no preimage.
 
 ---
 
@@ -163,14 +198,42 @@ Facts established:
 - The service pubkey `3f0abe5a…` is the **application** pubkey, not per-user. It appears in
   TLV `0` of every noffer this node mints.
 
-**NEEDS HUMAN — the paid half.** With a funded node and ShockWallet paired:
+### The success path, captured in slice 2 (2026-08-20)
 
-1. In ShockWallet, create a fixed-price offer of ~100 sats and copy its `noffer1…`.
-2. `cd spike && node request-invoice.ts <that noffer>` — paste everything it prints.
-3. Pay the returned `bolt11` from a second wallet, and paste the **receipt** event that
-   `request-invoice.ts` prints afterwards (the script keeps the subscription open 60s for
-   exactly this). Confirm whether the payload is `{"res":"ok"}` or
-   `{"res":"ok","preimage":"…"}` — see §5, we expect no preimage.
+Against a purpose-made fixed-price offer minted by `/spike/mint-offers.ts` on the same node
+(`plants`, 6000 sats, `payer_data: ["refund_pointer"]` required). Same wire shape as above:
+kind 21001, `p` + `clink_version` on the request, `p` + `e` and **still no `clink_version`** on
+the response.
+
+Request payload (decrypted), and note `amount_sats` is deliberately absent — the offer is
+fixed-price, so the node prices it (`clink-offers.md:134` makes the field optional there):
+
+```json
+{"offer":"230bc0e1eecd95483df1b6b4990a119b3f5ed55ea78cfefff4121e5b9e394d3338dd",
+ "payer_data":{"refund_pointer":"spike@example.com"}}
+```
+
+Response payload (decrypted):
+
+```json
+{"bolt11":"lnbc60u1p4g08chpp543vhej394h4er3fcdaye7lnvnp3g4ej0j6888e8j6ke33zfstznsdp909shyernv9kx2tfjxqervtfs8qkhqmrpde68xcqzzsxqrrsssp5gv0wp265auuqggmtzz4nss97avajn6gux763f84dx5p0mgmarr7s9qxpqysgqp6lrahqe9x5dxffjdm5u9g7kzlqmpsz0ntt9xvfju4aqm9397xspgj0444uhrmqrtkrhj05k9ry3ugrj8fn49z9636dqzc3uuc8wctcqpts0l4"}
+```
+
+`lnbc60u` = 60 × 10⁻⁶ BTC = **6000 sats**, matching the offer and the listing. From a node with
+**0 channels** — see §1.
+
+And the same offer with the required key omitted, which is the typed decline the whole design
+rests on:
+
+```json
+{"code":1,"error":"Missing or invalid payer_data: refund_pointer","payer_data":["refund_pointer"]}
+```
+
+Round trip ~1–2s each time, over `wss://relay.lightning.pub`.
+
+**NEEDS HUMAN — only the paid half now**, and the channel to pay it over exists as of
+2026-08-21. One command, in §1: `node check-buy.ts yardsale-2026-08-plants --pay`. Note the
+default item is the *cheapest* offer precisely so it fits inside the rented inbound.
 
 ---
 
@@ -374,16 +437,29 @@ means an out-of-band payer (someone who scans the raw QR with a wallet that does
 populate our key) simply cannot pay — which is the correct behaviour for a
 non-refundable-oversell risk, and worth stating as a deliberate trade-off.
 
-**NEEDS HUMAN — what to run** (needs a funded node; ~5 minutes)
+**Steps 3 and 4 are done — slice 2, 2026-08-20.** Against a real offer minted with
+`payer_data: ["refund_pointer"]`, with the key named as ours rather than `order_id`:
 
-1. In ShockWallet, create an offer with a required payer-data field named `order_id`.
-2. Pay that offer's `noffer` **from ShockWallet on another device**. Record: does the
-   wallet prompt for `order_id`, silently fail, or show the error text?
-3. Then run `cd spike && node request-invoice.ts <noffer> 100` (no payer_data) and paste
-   the decrypted error — we expect
-   `{"code":1,"error":"Missing or invalid payer_data: order_id","payer_data":["order_id"]}`.
-4. Then `node request-invoice.ts <noffer> 100 '{"order_id":"spike-1"}'` and paste the
-   success response.
+```json
+{"code":1,"error":"Missing or invalid payer_data: refund_pointer","payer_data":["refund_pointer"]}
+```
+
+and with the key supplied, a BOLT11 (§2). Both reproduce on demand:
+`cd spike && node check-buy.ts`, which drives the storefront's own modules. The
+Lightning.Pub `payer_data` extension to the error payload is therefore confirmed on the wire,
+not just in source, and our page reads it to re-prompt.
+
+**NEEDS HUMAN — only the wallet half now** (needs a funded node; ~5 minutes)
+
+1. Pay one of our fixture offers' `noffer` **from ShockWallet on another device** —
+   `node -p "require('./.offers.json')['yardsale-2026-08-plants'].noffer"` prints one.
+2. Record: does the wallet prompt for `refund_pointer`, silently fail, or show the error text?
+
+This is now a *secondary* question, and slice 2 is why. Our page is the client sending the
+21001, so the refund pointer arrives whatever a third-party wallet does. What the answer
+changes is slice 8's fallback copy: if ShockWallet cannot supply the key, then every offer we
+mint is unpayable by any wallet but ours, and the item-QR sticker in `/docs/design.md` §4 has
+to point at the item page rather than the offer. We have already assumed the worst there.
 
 Paste evidence:
 
@@ -761,10 +837,21 @@ invalidate.
 4. **Lightning.Pub does not implement CLINK Enroll's "Owner policy."**
    `clink-enroll.md:168-175` says a request signed by the account-owning key MUST be
    allowed without a prior grant. `validateGrantAccess` (`managementManager.ts:254-273`)
-   requires a `ManagementGrant` row for **every** requestor, owner included. Practically:
-   the builder must go through the one-time `AuthorizeManage` approval even when it is the
-   seller's own key. One prompt, then unlimited offer CRUD — acceptable, but budget for it
-   in §8's count.
+   requires a `ManagementGrant` row for **every** requestor, owner included.
+
+   **Scoped correctly in slice 2: this gates CLINK Manage only, and there is a path around
+   it.** Offer CRUD also exists as native RPCs — `AddUserOffer`, `GetUserOffer`,
+   `UpdateUserOffer`, `DeleteUserOffer`, all `auth_type = "User"`
+   (`proto/service/methods.proto:625-664`) — reached over **kind 21000**, which
+   `NostrUserAuthGuard` serves by *auto-creating an account for any pubkey that asks*
+   (`nostrMiddleware.ts:13-18`), gated only by `application.allow_user_creation`. Verified:
+   the throwaway dev key spoke to the guest `app.nprofile`, was given an account, and minted
+   four offers with **no approval, no wallet, and no human**. `/spike/mint-offers.ts`.
+
+   So the `AuthorizeManage` prompt is a cost of choosing CLINK Manage, not a cost of minting
+   offers. It is still worth paying in the builder — Manage is the portable, spec'd path and
+   the one a "Best Use of CLINK" judge cares about — but budget it as one prompt for a
+   deliberate choice, not as an unavoidable tax. See spec §14.
 5. **`blind` offers exist, are undocumented in CLINK, and on this node would be unpayable.**
    `UserOffer.blind` (entity line 42, migration `1760000000000-add_blind_to_user_offer.ts`),
    passed into invoice creation (`offerManager.ts:275`). Still in no CLINK spec. But
@@ -815,7 +902,27 @@ invalidate.
     masthead, and slice 1 renders them out of the collection's freeform `summary`. Decide
     before slice 6 whether that stays freeform or earns a tag.
 
-13. **An npub URL is not human-transcribable, which the printed flyer exposes.** The tear-off
+13. **The kind 21000 RPC envelope is neither NIP-04 nor NIP-44.** Documented because slice 3's
+    watcher needs it for `GetLiveUserOperations` and slice 6's admin panel for everything else.
+    It is xchacha20 keyed on `sha256` of the ECDH x-coordinate, payload
+    `base64(0x01 ‖ nonce[24] ‖ ciphertext)` — `~/lightning_pub/src/services/nostr/nip44v1.ts`,
+    used at `nostrPool.ts:111,177`. The request body is
+    `{rpcName, authIdentifier, requestId, body}` and `nostrMiddleware.ts:92` drops it unless
+    `authIdentifier` equals the event pubkey. Responses come back on kind 21000 `p`-tagged to
+    the caller, correlated by `requestId`, and are **split into shards** above
+    `maxEventContentLength` (`nostrPool.ts:44-58`) — our offer payloads are far below it, but a
+    settlement feed may not be. ~90 lines in `/spike/mint-offers.ts`; lift them when the
+    watcher needs them, do not re-derive them.
+
+14. **`@shocknet/clink-sdk` in a browser bundle costs a second `nostr-tools`.** Measured in
+    slice 2, and it settles spec §9: hand-rolled 83.2 KB raw / 30.9 KB gzip, SDK 169.0 / 59.0.
+    Importing *anything* from the package root drags in `sender.js` and therefore its nested
+    exact-pinned `nostr-tools@2.15.1`. A deep import of only `build/nip19Extension.js` avoids
+    that (85.6 / 30.9) but reaches past the package entry point and still costs more than ours.
+    Its `decodeBech32` also *requires* TLV `3`, which `clink-offers.md:29` makes optional, and
+    ignores TLV `5` entirely. Fine for the builder; wrong for the storefront.
+
+15. **An npub URL is not human-transcribable, which the printed flyer exposes.** The tear-off
     tabs in `/docs/design.md` §3 carry `npub1lvvw…q0lalws.nsite.lol` — 63 characters that wrap
     to four unreadable lines on a 22mm tab. The QR works; the text under it is decoration. A
     torn-off tab whose QR will not scan is a dead end. Options are a NIP-05 name, a short

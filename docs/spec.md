@@ -1,7 +1,18 @@
-# Yard Sale Builder — Architecture & Build Spec
+# Lamppost — Architecture & Build Spec
 
-**Working name:** TBD
+**Working name:** **Lamppost**, settled in slice 2. Named for the flyer taped to one: paper that
+stays current because the QR on it points at a live page. It appears in exactly two places —
+the masthead when a sale has no title of its own, and a colophon on the printed flyer.
 **Target:** hackathon submission, "Best Use of CLINK"
+
+**Status:** slice 2 shipped (2026-08-20) — the Buy button. A static page mints an ephemeral key,
+sends a NIP-44-encrypted kind 21001 to the seller's own node over that node's relay, and gets a
+real BOLT11 back. Verified end to end against the live local Lightning.Pub; the *payment* half
+still needs a funded node. Slice 2 settled four things this document had left open: the
+`payer_data` key name (`refund_pointer`), fiat→sats (there is no conversion — see §6.1), the
+clink-sdk question (measured, hand-rolled wins by 29 KB gzip — §9), and the JS budget (it means
+**gzip** — §9).
+
 **Status:** slice 1 shipped (2026-08-20) — read-only storefront in `/storefront`, everything but
 the nsite deploy. Slice 1 corrected three things in this document: `quantity` is deleted in favour
 of GammaMarkets `stock` (§6.1), sale grouping is kind `30405` not a `t` tag (§6.3), and the Blossom
@@ -150,7 +161,29 @@ Custom tags (namespace them clearly, document them in the README):
 
 | Tag | Use |
 |---|---|
-| `clink_offer` | per-item `noffer`. Confirmed available — Lightning.Pub mints unlimited offers per account, each with its own `offer_id` in TLV `2` (`/docs/spike-findings.md` §3). |
+| `clink_offer` | per-item `noffer`. **Live as of slice 2** — minted by `/spike/mint-offers.ts`, carried on the seeded 30402s, decoded and paid by `/storefront/src/offer.ts`. The tag name is not in any spec; we reuse CLINK's own kind-0/NIP-05 field name (`clink-offers.md:58-83`) rather than invent a second one. Lightning.Pub mints unlimited offers per account, each with its own `offer_id` in TLV `2` (`/docs/spike-findings.md` §3). |
+
+**Prices on a buyable item are authored in satoshis. There is no fiat conversion, ever.**
+Settled in slice 2, and it is a consequence of rule 1 rather than a preference: converting MXN to
+sats needs a price oracle, an oracle is an HTTP call to somebody else's server, and this project
+does not make one. So the seller writes the sats number, the listing displays that number, and
+the offer is minted at that number — one number, no drift, no third party.
+
+An item priced in anything else is simply not buyable on the page: no offer is minted for it and
+no Buy button is drawn. That is honest for a yard sale, where most things are cash at the table
+anyway, and it keeps fiat listings in the fixture so the no-offer render path stays exercised.
+
+The agreement is enforced rather than assumed, in three places, because the seller authors both
+the tag and the offer and only the invoice actually takes money:
+
+1. `/spike/mint-offers.ts` refuses to write an offer whose `price_sats` differs from the fixture,
+   and `/spike/seed-listings.ts` refuses to publish a listing that disagrees with the minted offer.
+2. `storefront/src/listing.ts` drops the offer entirely unless the noffer's TLV `4` price equals
+   the listed sats price — a listing that advertises one price and points at another is not
+   buyable at all.
+3. `storefront/src/buy.ts` parses the amount out of the returned BOLT11's human-readable part and
+   refuses to display an invoice for a different number, or one with no amount at all. An
+   amountless invoice is the dangerous case: every wallet lets the payer type any figure into it.
 
 `quantity` is **deleted**. Slice 1 read the GammaMarkets market-spec that NIP-99 links as its
 e-commerce extension (`99.md:11`) and it already standardises remaining count as
@@ -314,7 +347,10 @@ Resolution: the watcher detects the second settlement for a depleted item and **
 
 That is fine, and it is better than depending on wallet behaviour:
 
-- The item's offer declares the key as required (`payer_data: ["refund_pointer"]` on the offer object). Lightning.Pub enforces presence and string-ness, and declines with `code: 1`, `"Missing or invalid payer_data: refund_pointer"` plus a `payer_data` array of the missing keys.
+- The item's offer declares the key as required (`payer_data: ["refund_pointer"]` on the offer object). **Confirmed on the wire in slice 2**, against the live node: a request without it comes back
+  `{"code":1,"error":"Missing or invalid payer_data: refund_pointer","payer_data":["refund_pointer"]}`,
+  and the same request with it comes back with a BOLT11. The key name `refund_pointer` is now
+  minted into every offer and is expensive to change — see `/spike/mint-offers.ts`.
 - Our page asks the buyer for a Lightning address or `noffer` **before** requesting the invoice, and puts it in `payer_data`. A form field, not a protocol hope.
 - A payment that would be unrefundable is therefore declined rather than accepted. That is the correct default for oversell risk.
 - Someone who scans the raw QR with a generic wallet cannot pay at all. Deliberate trade-off; slice 8's fallback copy must say so.
@@ -399,16 +435,48 @@ See `/docs/design.md` for the full design direction. The two surfaces have oppos
 - Budget: ~30KB JS, ~10KB CSS. Justify every dependency.
 - No three.js / R3F. No animation libraries.
 
-**Measured at the end of slice 1** (`npm run size` in `/storefront`):
+**The budget means gzip.** Settled 2026-08-20 (slice 2). It is a number about what a phone on
+mobile data in a driveway has to pull down, so transfer size is the thing it was always about.
+The raw figure is now ~2.7x the number and always would have been: `verifyEvent` alone is most of
+it, and dropping it to hit a byte target would trade `/CLAUDE.md`'s "verify every inbound event"
+for a statistic.
 
-| Asset | Raw | gzip |
-|---|---|---|
-| JS | 52.6 KB | **19.6 KB** |
-| CSS | 3.8 KB | 1.5 KB |
-| HTML (incl. the inlined QR) | 3.1 KB | 1.1 KB |
+**Measured at the end of slice 2** (`npm run size` in `/storefront`):
 
-Under budget on transfer, over it on raw parse. **State which one the budget means before slice 2
-spends against it.** Nearly all of the JS is secp256k1 for `verifyEvent`, which is not optional —
+| Asset | Raw | gzip | vs slice 1 |
+|---|---|---|---|
+| JS, cold load | 83.2 KB | **30.9 KB** | +11.3 KB gzip |
+| JS, QR chunk (loaded only on Buy) | 10.3 KB | 3.9 KB | new |
+| CSS | 5.8 KB | 2.1 KB | +0.6 KB gzip |
+| HTML (incl. the inlined storefront QR) | 3.1 KB | 1.1 KB | — |
+
+Where the slice-2 increase went, measured by stubbing each import and rebuilding:
+
+| Piece | Raw | gzip | Optional? |
+|---|---|---|---|
+| `nostr-tools/nip44` | 17.4 KB | 6.0 KB | No. CLINK content is NIP-44 encrypted; without it there is no payment |
+| signing (`finalizeEvent`, `generateSecretKey`) | ~9 KB | ~3.5 KB | No. Slice 1 only verified events; slice 2 signs them |
+| `@scure/base` bech32 | 2.0 KB | 0.6 KB | No — a noffer is bech32. See below |
+| our own offer/buy/render code | ~5 KB | ~1.5 KB | — |
+
+So a page that takes money costs ~11 KB gzip more than a page that only reads, and 6 of those
+are one NIP. That is the honest number to say on stage. The QR encoder is **not** in the cold
+load: it is a dynamic `import('uqr')` behind the Buy button, so a visitor who only browses never
+downloads it.
+
+**The two dependencies slice 2 added, and why each is not "just one more":**
+
+- **`@scure/base@2.0.0`, pinned exact.** Needed for bech32, which is what a `noffer` is. It was
+  already physically in `node_modules` — `nostr-tools`' own `nip19` imports it and pins the same
+  exact version — so this pins what was already there rather than adding a package. The
+  alternative was ~50 hand-rolled lines including a checksum, and a wrong checksum on the money
+  path accepts a corrupted pointer as a valid pubkey.
+- **`uqr@0.1.3`, pinned exact, dynamically imported.** The invoice QR. design.md §4's *storefront*
+  QR is a build-time constant and still costs the page nothing; this is the other kind — a BOLT11
+  that does not exist until the node answers, so it needs a real encoder in the browser. Measured
+  against the `qrcode` devDependency we already had: `qrcode` costs 25.6 KB raw / 10.0 KB gzip in
+  the bundle, `uqr` costs 10.4 / 3.9. Uppercasing the invoice first (bech32 is case-insensitive)
+  puts it in QR alphanumeric mode and drops this invoice from 63 modules to 55. Nearly all of the JS is secp256k1 for `verifyEvent`, which is not optional —
 `/CLAUDE.md` requires verifying every inbound event, and dropping it to hit a byte target would
 trade the security rule for a number. Only one runtime dependency ships: `nostr-tools`, pinned to
 an exact `2.24.3`. `qrcode` is a devDependency — the storefront QR is encoded at build time and
@@ -417,7 +485,24 @@ inlined as an SVG `<symbol>`, so it costs the page zero JS.
 **Shared:**
 - TypeScript throughout
 - `nostr-tools` (or NDK if a higher-level cache is wanted — pick one, don't mix). **Pin it deliberately.** v2.24.3 changed `pool.subscribeMany(relays, filter, params)` to take a single filter object rather than an array; passing an array makes strfry reply `bad req: provided filter is not an object` and the subscription silently never fires.
-- `@shocknet/clink-sdk` — **measure before adopting it in the storefront.** It pins `nostr-tools` to an exact version (1.7.0 → 2.15.1) and npm nests it, so a storefront bundling both ships two copies of nostr-tools. Against a ~30KB budget that is decisive. The builder can afford it; the storefront may need hand-rolled `noffer` TLV decode plus nip44 instead. Decide with a bundle measurement in slice 2, not by taste.
+- `@shocknet/clink-sdk` — **measured in slice 2, and the answer is no for the storefront.**
+
+  | Approach | Raw | gzip |
+  |---|---|---|
+  | Hand-rolled TLV decode + our own 21001 client | **83.2 KB** | **30.9 KB** |
+  | `import { decodeBech32, SendNofferRequest } from '@shocknet/clink-sdk'` | 169.0 KB | 59.0 KB |
+  | Deep-import only its TLV codec, `…/build/nip19Extension.js` | 85.6 KB | 30.9 KB |
+
+  The middle row is the second `nostr-tools` (it pins an exact `2.15.1` and npm nests it), and
+  importing *anything* from the package root drags it in, because the root re-exports `sender.js`.
+  The deep-import row avoids that but reaches past the package's own entry point into `build/`,
+  costs 4.3 KB raw more than ours anyway, requires TLV `3` where its own spec makes it optional
+  (`clink-offers.md:29`), and has no TLV `5` handling at all. Hand-rolled it is —
+  `storefront/src/offer.ts`, 126 lines, 14 assertions.
+
+  This says nothing about the builder, which is React and can afford the SDK. Note also that the
+  SDK still passes an array to `subscribeMany` (`build/sender.js`) and is only safe because of
+  the nested pin — see §13.9 in the findings.
 - A Blossom client library for uploads/mirroring
 - `nsyte` or `nsite-cli` for deploy during development; in-app deploy for the product
 - Watcher: small Node process, no framework
@@ -474,14 +559,54 @@ serves our own `/404.html`.
 Test data comes from `/spike/seed-listings.ts`, a throwaway identity that publishes the fixture
 sale. **Delete that script and `spike/.dev-key` when slice 4 lands a real Signer.**
 
-**Slice 2 — Buy button.** Add the kind `21001` invoice request from the static page: ephemeral key, nip44-encrypted payload, `["clink_version","1"]` on send but **lenient on receive** (Lightning.Pub omits it on responses). Handle the five offers error codes, including `code: 1` with a `payer_data` array. Measure the bundle here and decide the clink-sdk question from §9.
+**Slice 2 — Buy button. DONE 2026-08-20.** A static page takes money. Adds
+`storefront/src/offer.ts` (noffer TLV + BOLT11 amount, 126 lines, the second trust boundary),
+`storefront/src/buy.ts` (the kind 21001 client), and the buy panel in `render.ts`.
 
-  **Decide `payer_data` here, not in slice 7.** Every offer we mint must declare
-  `payer_data: ["refund_pointer"]` as required (§7.3). Get it wrong and slice 7 has no buyer
-  pointer to refund to, and every offer already minted has to be re-minted. Also fix the sats
-  price question here: the storefront displays prices as authored and does no fiat conversion
-  (§9), but minting a fixed-price offer needs a sats number, so whatever converts it is chosen
-  in this slice and the storefront should display the same figure. Buyer pays; the receipt goes to the buyer, so the page confirms from the response it already has. *Demo: money moves from a page with no backend.* Start from `/spike/request-invoice.ts`.
+*Demo, and it runs today against the live node:* `cd spike && node check-buy.ts` — the storefront's
+own modules, unmodified, against the running Lightning.Pub. It shows the typed decline for a
+missing `refund_pointer`, then a real BOLT11 for exactly the listed price, then the page refusing
+an invoice whose amount does not match. No backend on either side of it.
+
+What it actually covers:
+
+- **Ephemeral key per purchase**, NIP-44-encrypted payload, `["clink_version","1"]` on send.
+  A fresh key is not ceremony: it is what stops the node and the relay linking one buyer's
+  purchases to each other, and it is the key the receipt is encrypted to.
+- **Lenient on receive.** No `clink_version` required on the response — Lightning.Pub omits it
+  (`/docs/spike-findings.md` §2) and rejecting would mean working against no server that exists.
+  TLV `3` is optional on read too, per `clink-offers.md:29`, though the reference SDK requires it.
+- **All five Offers error codes**, each turned into something a person in a driveway can act on,
+  including `code: 1` with Lightning.Pub's non-standard `payer_data` array (re-prompt with the
+  named keys) and the `code: 3` → `latest` automatic retry that `clink-offers.md:217-219` asks for.
+- **`payer_data: ["refund_pointer"]` required on every offer**, decided here because offers are
+  minted here (§7.3). The page collects it in a form field before requesting the invoice, and
+  validates an noffer with the real decoder rather than a shape regex.
+- **The invoice amount is checked against the price on the page** before the buyer sees it (§6.1).
+- **Confirmation with no backend and no polling.** The page keeps its ephemeral key and the
+  subscription open, so it — and only it — can read the settlement receipt.
+
+What it deliberately does not do:
+
+- **No payment yet.** Every check above ran before the node had a channel, and none of them
+  needed one — a fixed-price offer is not range-checked, so a 0-channel node issues invoices it
+  cannot settle (`/docs/spike-findings.md` §1). The node gained 98,160 sat of rented inbound on
+  2026-08-21, so this is now one command away: `node check-buy.ts yardsale-2026-08-plants --pay`
+  prints an invoice and waits for a human to pay it. Until that runs, `showPaid()` is written
+  and unproven — say so rather than demoing around it. Note also that `bike` (180k) and `couch`
+  (210k) are priced above the node's inbound and cannot settle at all today.
+- **No re-use of an outstanding invoice.** Leaving an item and coming back mints a second one.
+  Two unpaid invoices cost nothing and expire in 15 minutes, and the oversell that matters is two
+  *different* buyers, which is slice 3's watcher.
+- **No CLINK Manage.** Offers are minted over Lightning.Pub's native kind 21000 RPC, not kind
+  21003 — see the note under §11 q11 and `/docs/spike-findings.md` §13.4. The builder should
+  speak Manage; the throwaway seeder had no reason to.
+
+**First task, and it was not in this slice's one-line description:** the slice-1 listings carried
+no `clink_offer` tag at all, so nothing was buyable. `/spike/mint-offers.ts` now mints one
+purpose-made offer per buyable item on the local node and `/spike/seed-listings.ts` republishes
+the 30402s carrying them. The fixture is deliberately mixed: four items buyable, two sold, one
+priced in pesos (cash at the table), one free.
 
 **Slice 3 — Availability.** Page derives sold/remaining from the listing event alone. Watcher observes settlement from the node (`GetLiveUserOperations`, or the loopback `callback_url` experiment — §7.2) and republishes the `30402`. Idempotency keyed on the settled invoice, never the request event id (§8). *Demo: item flips to sold in front of the audience.*
 
@@ -507,19 +632,22 @@ Full answers with citations live in `/docs/spike-findings.md`; field names live 
 | # | Question | Answer |
 |---|---|---|
 | 1 | Node funded, channel with inbound liquidity | **OPEN — needs you.** Node runs and is reachable over Nostr; 0 channels. Note an unfunded node still reports `max: 10000000` via the liquidity-provider fallback, so a successful invoice request is *not* proof it can receive |
-| 2 | Raw request/response captured | **Half done.** Live round trip against the local node captured in findings §2 (~1s, error path). The paid half needs a funded node |
+| 2 | Raw request/response captured | **Success path now captured too** (slice 2, findings §2): a real `lnbc2100u1…` for a 210 000-sat fixed-price offer, from a node with 0 channels. Only the *payment* still needs a funded node |
 | 3 | Multiple offers per account? | **Yes, unlimited, per item.** `clink_offer` per listing; `item_ref` deleted (§6.1) |
 | 4 | Decline on custom logic? | **No pre-invoice hook.** Strict mode = delete the offer on depletion, or hold the service key ourselves (§7.4) |
 | 5 | Settlement receipt on the wire? | Kind `21001`, **NIP-44 encrypted to the payer**, no `preimage` in Lightning.Pub, and a MAY. Not seller-readable. Rewrote §7.2 and §7.6 |
-| 6 | `payer_data` end-to-end? | Node side verified; **no standard keys exist**, so the refund field is our own convention and our page must supply it (§7.3). Wallet behaviour **OPEN — needs you** |
+| 6 | `payer_data` end-to-end? | **Node side now verified on the wire, not just in source** (findings §6): required key declared at mint, `code: 1` + `payer_data:["refund_pointer"]` when omitted, invoice when supplied. The key name is ours (§7.3). Wallet behaviour **OPEN — needs you**, and secondary: our page is the client |
 | 7 | nsite deploy + `/404.html` | **OPEN — needs you** (`nsyte` is a global install). NIP-5A itself read: `/404.html` confirmed required, plus the kind `10063` requirement in §6.4 |
 | 8 | Bunker prompt count for 10 items | **OPEN — needs you.** Levers found: batched Blossom auth and NIP-46 `perms` (§5) |
 | 9 | Blossom auth per upload | **Batching is permitted** — multiple `x` tags in one kind `24242` event (§5) |
 | 10 | Credential scoping for the watcher | **Better than feared.** `admin.connect` is never needed. Three levels exist (Admin / User / Guest); the refund path should use a **CLINK Debit grant held by a separate watcher key**, with a node-enforced frequency cap and `BanDebit` as the kill switch. Residual: observation still needs a User-scoped key, which implies spend authority over that account — so keep the observe key and the refund key separate, and try the credential-free loopback `callback_url` (§7.2) |
-| 11 | Guest account with its own offer? | **Yes** — one community Pub can host a market. Sellers share TLV `0` and differ only in TLV `2`, so listing signatures (not payment pointers) carry identity. CLINK Enroll (kind `21004`) is **not implemented** by Lightning.Pub 0.0.37, so onboarding is still the ShockWallet pairing flow — keep provisioning behind one swappable function |
+| 11 | Guest account with its own offer? | **Yes, and slice 2 did it with no human in the loop.** The dev key spoke to the guest `app.nprofile`, got an account auto-created by `NostrUserAuthGuard`, and minted four offers — no pairing, no approval. **This corrects the `AuthorizeManage` assumption**: that grant gates CLINK Manage (kind 21003) only, not the native `AddUserOffer` RPC (kind 21000, `auth_type = "User"`). See findings §13.4. CLINK Enroll (kind `21004`) is still **not implemented** by Lightning.Pub 0.0.37 |
 
-Five items are still open; each has a `NEEDS HUMAN` block in the findings with the exact
-command to run and the exact output to paste back.
+**Four items are still open** — 1, 2 (the paid half only), 6 (the wallet half only), and 8 — and
+each has a `NEEDS HUMAN` block in the findings with the exact command to run and the exact output
+to paste back. Question 7 closed in slice 1; the node-side halves of 2 and 6 closed in slice 2.
+
+**Everything still open needs a funded node or a phone. Nothing else in the project does.**
 
 See also `/docs/runbook.md` for install gotchas already found (macOS `LND_LOG_DIR` crash loop, `.wallet_secret` permissions, pairing, uptime).
 
@@ -571,5 +699,7 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 - What does the buyer see if their wallet can't speak CLINK? (Slice 8 — decide the copy early. Must include: no `payer_data` pointer means no automatic refund.)
 - Where does buyer↔seller pickup messaging live — NIP-17 DMs to the **ephemeral payer pubkey** stored on the invoice as `clink_requester_pub`? Note that key is ephemeral by design, so the buyer's page must keep it or the thread is unreachable. (Was "the receipt's payer pubkey" — we cannot read the receipt.)
 - Do we ship a hosted gateway convenience URL, or force gateway choice? (A hosted one is a centralization we should at least name.)
-- Is `blind` on a Lightning.Pub offer worth using? It exists in the entity and reaches invoice creation, and is in no CLINK spec. `UNVERIFIED` — find out before enabling it; it may affect receive reliability.
-- What is the `p:` offer-id prefix? It routes to a separate "product" system that bypasses `payer_data` validation and amount checks, and is in no CLINK spec. Worth 20 minutes before we commit to per-item offers — it may be a better fit or a footgun.
+- Is `blind` on a Lightning.Pub offer worth using? It exists in the entity and reaches invoice creation, and is in no CLINK spec. `UNVERIFIED` — find out before enabling it; it may affect receive reliability. Slice 2 mints offers with it unset.
+- What is the `p:` offer-id prefix? It routes to a separate "product" system that bypasses `payer_data` validation and amount checks, and is in no CLINK spec. Slice 2 did **not** use it, and the `payer_data` bypass alone probably disqualifies it — a product offer cannot carry a refund pointer, so it cannot be refunded. Confirm before anyone reaches for it.
+- **Should the builder mint offers over CLINK Manage (21003) or the native RPC (21000)?** Slice 2 used the native RPC because it needs no grant and the seeder is throwaway. Manage is the portable path, is what "Best Use of CLINK" would reward, and costs one `AuthorizeManage` prompt. Decide before slice 4 writes the authoring UI, and note the spec/implementation disagreement in findings §13.3 (`fields` wrapper) if you take it.
+- **Does the printed flyer need the item QRs now?** design.md §4's item stickers encode the item's `noffer`, which exists as of slice 2. But a raw-QR payer supplies no `refund_pointer`, so the node declines them outright — an item sticker today is a QR that cannot be paid. Either the sticker points at the item's page (`#/item/<d>`), or slice 8's fallback path changes what "required" means.

@@ -1,0 +1,68 @@
+// The fixture sale, shared by seed-listings.ts (publishes it) and mint-offers.ts (mints one
+// CLINK offer per buyable item). Extracted in slice 2 so the two scripts cannot drift: an
+// offer minted for an item the listing prices differently is the exact failure the slice-2
+// brief calls out ("the offer and the displayed price must agree").
+//
+// Dies with the rest of /spike when slice 4 lands a real Signer and real authoring.
+
+export const SALE = {
+  d: 'yardsale-2026-08',
+  title: 'Moving Sale — Colonia Americana',
+  summary: 'Saturday 23 August, 8am–2pm. Cash, or Lightning. Everything must go.',
+  location: 'Colonia Americana, Guadalajara',
+  g: '9ewmr4z', // geohash, NIP-99 99.md:53
+}
+
+export type FixtureItem = {
+  d: string
+  title: string
+  price: [amount: string, currency: string]
+  stock?: string
+  status?: string
+  summary?: string
+  photo?: boolean
+}
+
+// Deliberately uneven: some fields missing, three ways of being unavailable, two currencies.
+// The storefront parser has to survive all of it. Hostile inputs are NOT published here —
+// they live in storefront/src/listing.test.ts, because this writes to public relays.
+//
+// PRICES ARE AUTHORED IN SATS wherever an item is meant to be buyable. That is slice 2's
+// answer to the fiat→sats question: there is no conversion, because a conversion needs a
+// price oracle and an oracle is somebody else's server (/CLAUDE.md rule 1). The seller writes
+// the sats number, the listing displays that number, and the offer is minted at that same
+// number. Items priced in fiat are cash-only and get no offer — which is honest for a yard
+// sale, and keeps a fiat listing in the fixture so the no-offer render path stays exercised.
+export const ITEMS: FixtureItem[] = [
+  { d: 'couch',   title: 'Green velvet couch, 3-seat',  price: ['210000', 'sats'], stock: '1',
+    summary: 'Some sun-fade on the left arm, no tears, no smell. You bring friends and a truck.', photo: true },
+  { d: 'bike',    title: 'Bianchi road bike, 54cm',     price: ['180000', 'sats'], stock: '1',
+    summary: 'Recently serviced. New chain and bar tape.', photo: true },
+  { d: 'lamp',    title: 'Brass floor lamp',            price: ['30000', 'sats'],  stock: '3',
+    summary: 'Three of these. Rewired, all work.', photo: true },
+  // priced in pesos: cash only, no offer, no Buy button
+  { d: 'records', title: 'Records, jazz and salsa',     price: ['80', 'MXN'],      stock: '24',
+    summary: 'Priced each, cash at the table. Mostly VG+, a few beat up — dig through the crate.', photo: true },
+  { d: 'table',   title: 'Oak dining table + 4 chairs', price: ['175000', 'sats'], stock: '0',
+    summary: 'SOLD — leaving it up so you can see what a sold item looks like.', photo: true },
+  { d: 'mirror',  title: 'Full-length mirror',          price: ['22000', 'sats'],  status: 'sold',
+    summary: 'Gone. Sold the old way, with a status tag instead of a stock count.', photo: true },
+  // no summary, no stock tag at all — parser must not assume either exists
+  { d: 'plants',  title: 'Houseplants, various',        price: ['6000', 'sats'], photo: true },
+  // no photo — the storefront must lay out fine without one
+  { d: 'boxes',   title: 'Moving boxes, free',          price: ['0', 'MXN'],       stock: '12',
+    summary: 'Free. Take them, please. They are in the garage.' },
+]
+
+export const listingD = (item: FixtureItem) => `${SALE.d}-${item.d}`
+
+const sold = (item: FixtureItem) => item.status === 'sold' || item.stock === '0'
+
+// An item gets an offer only if it is priced in whole sats, above Lightning.Pub's hardcoded
+// 10-sat floor (offerManager.ts:224,251), and is still for sale. Sold items deliberately get
+// no offer: /docs/spec.md §7.4(a) makes "the offer stops existing" the decline mechanism.
+export const offerPriceSats = (item: FixtureItem): number | undefined => {
+  if (sold(item) || !/^sats?$/i.test(item.price[1])) return undefined
+  const sats = Number(item.price[0])
+  return Number.isSafeInteger(sats) && sats >= 10 ? sats : undefined
+}

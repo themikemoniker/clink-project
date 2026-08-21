@@ -190,3 +190,46 @@ test('items render in the order the collection lists them, strays last', () => {
   }, sk)], PK)[0]!
   assert.deepEqual(orderBySale(items, sale).map(i => i.d), ['couch', 'bike', 'unlisted'])
 })
+
+// --- slice 2: the Buy button's gate ------------------------------------------------------
+// The same real noffer offer.test.ts uses: minted by the live Lightning.Pub for the fixture's
+// `plants` item at a fixed 6000 sats, encoded by the reference SDK.
+const OFFER_6000 =
+  'noffer1qszqqqqhwqpszqqzgserxvrzvvcx2vt9v43kgwf4xsurxerxx93rvc358yunqcf3xyukyvmxx4jkgdf4v4snwwrrvejkvenxxscnyvt9x43rjefn8y6xgvenxvuxgeqpr9mhxue69uhhyetvv9ujumrfva58gmnfdenjuur4vgqzq0c2hedfg3hccr2zl7p7x9ne9j3e8vvjpjakahjswg6s29spt0huyqj43q'
+
+test('an item is buyable only when its listed price and its offer are the same number', () => {
+  const at = (amount: string, currency: string, extra: string[][] = []) =>
+    one(base('x', [['price', amount, currency], ['clink_offer', OFFER_6000], ...extra]))!
+
+  assert.equal(at('6000', 'sats').offer?.priceSats, 6000)
+  assert.equal(at('6000', 'sat').offer?.priceSats, 6000, 'singular "sat" is the same currency')
+
+  // The whole point of the check: a listing that advertises one price and points at an offer
+  // priced differently is not buyable at all, in either direction.
+  assert.equal(at('5999', 'sats').offer, undefined)
+  assert.equal(at('60000', 'sats').offer, undefined)
+
+  // No oracle, so no fiat purchase (/CLAUDE.md rule 1). Cash at the table instead.
+  assert.equal(at('120', 'MXN').offer, undefined)
+  assert.equal(at('6000', 'USD').offer, undefined)
+})
+
+test('a sold or unpriced or unpayable item gets no offer', () => {
+  const with_ = (tags: string[][]) => one(base('x', [['clink_offer', OFFER_6000], ...tags]))!
+  assert.equal(with_([['price', '6000', 'sats'], ['status', 'sold']]).offer, undefined)
+  assert.equal(with_([['price', '6000', 'sats'], ['stock', '0']]).offer, undefined)
+  assert.equal(with_([]).offer, undefined, 'no price tag')
+  assert.equal(with_([['price', '0', 'sats']]).offer, undefined, 'free')
+  // Lightning.Pub will not invoice below 10 sats, so a Buy button there is a button that fails.
+  assert.equal(with_([['price', '9', 'sats']]).offer, undefined)
+  assert.equal(with_([['price', '10', 'sats']]).offer, undefined, '10 sats, but the offer says 6000')
+})
+
+test('an unparseable clink_offer tag leaves the item unbuyable, never half-parsed', () => {
+  const with_ = (raw: string) => one(base('x', [['price', '6000', 'sats'], ['clink_offer', raw]]))!
+  assert.equal(with_('not-an-offer').offer, undefined)
+  assert.equal(with_(OFFER_6000.slice(0, -4)).offer, undefined)
+  assert.equal(with_('').offer, undefined)
+  // An item with no tag at all is the slice-1 state, and must simply have no Buy button.
+  assert.equal(one(base('y', [['price', '6000', 'sats']]))!.offer, undefined)
+})

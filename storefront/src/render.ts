@@ -4,7 +4,14 @@
 // through innerHTML, so a title containing markup is displayed as the characters the seller
 // typed rather than parsed. That is a property of h() below, not of a sanitiser we have to
 // remember to call — which is why there is no sanitiser here.
+import { requestInvoice, type Outcome } from './buy.ts'
 import { srcset, type Item, type Money, type Sale } from './listing.ts'
+import { decodeNoffer } from './offer.ts'
+
+// The working name, settled in slice 2. It appears twice and quietly: as the masthead when a
+// sale has no title of its own, and as a colophon — which is where a printer's mark belongs on
+// a flyer, and this flyer is the one that gets taped to a lamppost.
+export const SITE_NAME = 'Lamppost'
 
 type Kid = Node | string | false | null | undefined
 
@@ -22,9 +29,10 @@ const h = <K extends keyof HTMLElementTagNameMap>(
 // Currency here is whatever the seller wrote. 99.md:41 calls it "ISO 4217-like", which in the
 // wild means "sats" and "btc" turn up beside real codes, and Intl throws on those.
 //
-// ponytail: no fiat -> sats conversion. It needs a price oracle, i.e. an HTTP call to somebody
-// else's server, which is the one thing /CLAUDE.md rule 1 forbids. Slice 2 has to solve it
-// anyway to mint an offer with a sats price, and whatever it decides belongs here too.
+// No fiat -> sats conversion, ever: it needs a price oracle, i.e. an HTTP call to somebody
+// else's server, and /CLAUDE.md rule 1 forbids one. Slice 2 settled the question the other way
+// round — an item that is meant to be buyable is *authored* in sats, so the number here and the
+// number the offer was minted at are the same number. See listing.ts buyableOffer().
 export const formatPrice = (price: Money | undefined): string | undefined => {
   if (!price) return undefined
   if (price.amount === 0) return 'Free'
@@ -73,13 +81,13 @@ export const renderMasthead = (sale: Sale | undefined, npub: string): HTMLElemen
   h(
     'header',
     { class: 'masthead' },
-    h('h1', {}, sale?.title ?? 'Yard Sale'),
+    h('h1', {}, sale?.title ?? SITE_NAME),
     // No standard tag carries a sale's date and opening hours — not in NIP-99, not in
     // GammaMarkets. The collection's `summary` is where the seller writes them for now; slice 6
     // needs to decide whether that stays a freeform line or earns a tag.
     sale?.summary && h('p', { class: 'dateline' }, sale.summary),
     sale?.location && h('p', { class: 'dateline' }, sale.location),
-    h('p', { class: 'byline' }, 'Published by ', h('code', {}, npub)),
+    h('p', { class: 'byline' }, 'Published by ', h('code', {}, npub), ` · made with ${SITE_NAME}`),
   )
 
 export const renderIndex = (items: Item[]): HTMLElement => {
@@ -139,13 +147,14 @@ export const renderFlyerFoot = (sale: Sale | undefined, siteUrl: string): HTMLEl
   return h(
     'footer',
     { class: 'flyer-foot' },
-    h('h2', {}, sale?.title ?? 'Yard Sale'),
+    h('h2', {}, sale?.title ?? SITE_NAME),
     h(
       'p',
       {},
       'Prices as printed. Scan for what is still unsold — this list changes during the sale.',
     ),
     tabs,
+    h('p', { class: 'colophon' }, `${SITE_NAME} · no server, no account, no processor`),
   )
 }
 
@@ -175,9 +184,215 @@ export const renderDetail = (item: Item): HTMLElement => {
       // rather than an HTML string is the only acceptable shape.
       item.content && h('div', { class: 'body' }, item.content),
       item.location && h('p', { class: 'where' }, item.location),
-      // Slice 2 puts the Buy button here. It is deliberately absent rather than stubbed —
-      // design.md is explicit that this control must read as obviously live, and a dead one
-      // that does nothing is worse than none.
+      renderBuy(item),
     ),
   )
+}
+
+// ---- the Buy button -------------------------------------------------------------------------
+// design.md §1: "The Buy button is exempt from the metaphor. It must read as a modern, obviously
+// tappable control. This is the moment money moves; clarity beats the bit."
+//
+// Everything below is one <section> that swaps its own contents through four states — form,
+// waiting, invoice, paid — because a purchase is the only stateful thing on this page and a
+// framework to hold four states would cost more bytes than the payment code itself.
+
+const sats = (n: number) => `${n.toLocaleString('en-US')} sats`
+
+// A Lightning address (user@host) or an noffer. Slice 7's watcher has to be able to actually pay
+// this, so the shapes accepted here are the shapes that code will handle — not "any string".
+// The node checks only `typeof === 'string'` (offerManager.ts:139-155), so a typo would sail
+// through and surface months later as a refund that went nowhere.
+const LN_ADDRESS = /^[^\s@]{1,64}@[a-z0-9.-]{3,253}\.[a-z]{2,24}$/i
+// An noffer gets the real decoder rather than a shape regex — same checksum check we apply to
+// the seller's pointer, for the same reason: a flipped character is a wallet that is not theirs.
+const isPointer = (raw: string) => LN_ADDRESS.test(raw) || decodeNoffer(raw) !== null
+
+const REFUND_POINTER = 'refund_pointer' // the key our offers declare required — /docs/spec.md §7.3
+
+// The five Offers codes (clink-offers.md:188-192), turned into something a person in a driveway
+// can act on. Codes are matched exhaustively rather than falling through to the node's own text,
+// because the node's text is written for developers.
+const declineText = (out: Extract<Outcome, { ok: false }>): string => {
+  switch (out.code) {
+    case 1:
+      return out.payerData?.length
+        ? `The seller’s node needs ${out.payerData.join(', ')} before it will issue an invoice.`
+        : 'This item is no longer for sale. Reload the page for what is left.'
+    case 2:
+      return 'The seller’s node is temporarily unable to take the payment. Try again in a moment.'
+    case 3:
+      return 'This offer has expired or moved. Reload the page to get the current one.'
+    case 4:
+      return 'The seller’s node does not support something this page asked for.'
+    case 5:
+      return out.range
+        ? `That price is outside what this node will accept (${sats(out.range.min)} to ${sats(out.range.max)}).`
+        : 'That amount was refused.'
+    default:
+      return out.error
+  }
+}
+
+// The invoice QR, and the only code-split point on the page.
+//
+// design.md §4 keeps two QR types apart: the storefront QR (a build-time constant, inlined as an
+// SVG <symbol> — see vite.config.ts) and this one, which encodes a BOLT11 that does not exist
+// until the node answers. It therefore needs a real encoder in the browser, ~3.9 KB gzip of one.
+//
+// It is dynamically imported so that cost lands on the buyer who taps Buy, not on every visitor
+// loading a sale page on mobile data in a driveway (/docs/spec.md §9's budget is about cold
+// load). Uppercasing the invoice first is not cosmetic: bech32 is case-insensitive, and the
+// uppercase form fits QR's alphanumeric mode, which drops this invoice from 63 modules to 55.
+const qrCode = async (bolt11: string): Promise<SVGSVGElement> => {
+  const { encode } = await import('uqr')
+  const { size, data } = encode(bolt11.toUpperCase(), { border: 1 })
+  // One <path> of 1x1 squares rather than N <rect>s, and built with setAttribute rather than an
+  // SVG string, so nothing on this page ever parses markup it did not construct.
+  let d = ''
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) if (data[y]![x]) d += `M${x} ${y}h1v1h-1z`
+  }
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', `0 0 ${size} ${size}`)
+  svg.setAttribute('class', 'qr')
+  svg.setAttribute('role', 'img')
+  svg.setAttribute('aria-label', 'Lightning invoice QR code')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', d)
+  svg.append(path)
+  return svg
+}
+
+const copyButton = (bolt11: string) => {
+  const button = h('button', { type: 'button', class: 'ghost' }, 'Copy invoice')
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(bolt11)
+      button.textContent = 'Copied'
+    } catch {
+      button.textContent = 'Select it below instead'
+    }
+  })
+  return button
+}
+
+export const renderBuy = (item: Item): HTMLElement | false => {
+  const offer = item.offer
+  const price = item.price
+  if (!offer || !price) return false
+
+  const panel = h('section', { class: 'buy' })
+  // aria-live so a screen reader hears the invoice arrive; the whole flow is one region that
+  // rewrites itself, and without this it rewrites silently.
+  const status = h('div', { class: 'buy-status', role: 'status', 'aria-live': 'polite' })
+
+  const field = h('input', {
+    // The `d` tag is authored by whoever signed the event, so it is stripped to what is legal in
+    // an id before it goes near one — otherwise a label can simply stop pointing at its input.
+    id: `refund-${item.d.replace(/[^a-zA-Z0-9_-]/g, '')}`,
+    name: REFUND_POINTER,
+    type: 'text',
+    inputmode: 'email',
+    autocomplete: 'off',
+    autocapitalize: 'none',
+    spellcheck: 'false',
+    maxlength: '255',
+    required: '',
+    placeholder: 'you@yourwallet.com',
+  })
+  const submit = h('button', { type: 'submit', class: 'pay' }, `Buy — ${sats(price.amount)}`)
+  const form = h(
+    'form',
+    { class: 'buy-form', novalidate: '' },
+    h('label', { for: field.id }, 'Where should a refund go?'),
+    // Not a dark pattern and not optional: the offer declares this key required, so the node
+    // declines a payment that arrives without it (/docs/spec.md §7.3). Say why, once, plainly.
+    h(
+      'p',
+      { class: 'hint' },
+      'A Lightning address or noffer. If two people buy the last one, this is where your money ' +
+        'comes back — the seller’s node will not take a payment it could not refund.',
+    ),
+    field,
+    submit,
+  )
+
+  const say = (...kids: (Node | string | false)[]) => status.replaceChildren(...kids.filter(k => k !== false) as Node[])
+
+  const showInvoice = (bolt11: string) => {
+    const frame = h('div', { class: 'qr-frame' })
+    const invoice = h(
+      'div',
+      { class: 'invoice' },
+      h('p', { class: 'invoice-amount' }, sats(price.amount)),
+      frame,
+      // On the phone the page is already on, this opens the buyer's wallet directly; the QR is
+      // for the other case, a page on a laptop and a wallet in a pocket.
+      h('a', { class: 'pay', href: `lightning:${bolt11}` }, 'Open in a Lightning wallet'),
+      copyButton(bolt11),
+      h('code', { class: 'bolt11' }, bolt11),
+      h(
+        'p',
+        { class: 'hint' },
+        'Expires in 15 minutes. Keep this page open — it confirms here when the payment lands, ' +
+          'because the receipt is encrypted to this page and to nobody else.',
+      ),
+    )
+    say(invoice)
+    // The invoice is usable the moment it is on screen; the QR arrives a chunk later, and if the
+    // chunk fails to load the buyer still has a link, a copy button and the raw string.
+    void qrCode(bolt11).then(svg => frame.append(svg), () => frame.remove())
+  }
+
+  const showPaid = () =>
+    say(
+      h(
+        'div',
+        { class: 'paid' },
+        h('p', { class: 'paid-mark' }, 'Paid'),
+        h('p', { class: 'hint' }, 'Show this to the seller when you collect. Nothing was sent to any server of ours.'),
+      ),
+    )
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault()
+    const pointer = field.value.trim()
+    if (!isPointer(pointer)) {
+      field.setAttribute('aria-invalid', 'true')
+      say(h('p', { class: 'buy-error' }, 'That does not look like a Lightning address or an noffer.'))
+      field.focus()
+      return
+    }
+    field.removeAttribute('aria-invalid')
+    submit.disabled = true
+    field.disabled = true
+    say(h('p', { class: 'waiting' }, 'Asking the seller’s node for an invoice…'))
+
+    const outcome = await requestInvoice(
+      offer,
+      { [REFUND_POINTER]: pointer },
+      price.amount,
+      item.title,
+      showPaid,
+    )
+    if (outcome.ok) {
+      // Hidden, not removed: the pointer is already baked into this invoice's payer_data, so
+      // editing it now would change nothing.
+      //
+      // ponytail: leaving the item and coming back mints a second invoice rather than showing
+      // this one again. Two unpaid invoices cost nothing and expire in 15 minutes, and the
+      // oversell that matters is two different buyers — which is slice 3's watcher, not
+      // something a page-local cache could fix. Revisit only if a buyer can pay both by accident.
+      form.hidden = true
+      showInvoice(outcome.bolt11)
+      return
+    }
+    submit.disabled = false
+    field.disabled = false
+    say(h('p', { class: 'buy-error' }, declineText(outcome)))
+  })
+
+  panel.append(form, status)
+  return panel
 }

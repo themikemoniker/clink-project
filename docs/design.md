@@ -7,7 +7,7 @@ Two surfaces, opposite constraints. Do not share a design system between them.
 | Audience | Seller, motivated, loaded once | Buyer, in a driveway, on mobile data |
 | Priority | Speed of building UI | Weight, legibility, print |
 | Stack | React + Tailwind + shadcn/ui | Hand-written CSS, no component library |
-| Budget | Whatever it takes | ~30KB JS, ~10KB CSS |
+| Budget | Whatever it takes | ~30KB JS **gzip**, ~10KB CSS (settled slice 2 — spec §9) |
 
 ---
 
@@ -40,6 +40,10 @@ Dropcaps, faux-yellowed paper textures, fake ink bleed, ALL-CAPS everything, dec
 ### The Buy button is exempt from the metaphor
 
 It must read as a modern, obviously tappable control. This is the moment money moves; clarity beats the bit.
+
+**Built in slice 2** (`render.ts` `renderBuy`, `style.css` `.buy`): sans throughout, solid ink fill, full width, ≥44px tall, on the item detail page only — not on the index, where a row is a link and a payment control would be a mis-tap waiting to happen. One `<section>` that swaps through four states (form → waiting → invoice → paid) with an `aria-live` region, because a purchase is the only stateful thing on this page.
+
+The form field above it is not a dark pattern and not optional: the offer declares `refund_pointer` required, so the node refuses a payment it could not refund. The copy says that in one sentence, once.
 
 ### Sold state
 
@@ -84,7 +88,9 @@ Requirements:
 
 Item QRs need a printable sticker sheet: one per item, ≥2cm square or phones won't read it reliably, item name and price above the code. Scan the thing, pay for the thing.
 
-`SPIKE`: item QRs depend on per-item offers being mintable. If Lightning.Pub only supports one node-level offer, item QRs must instead point at a storefront deep link (`/item/<d-tag>`), and the pay flow happens on the page.
+~~`SPIKE`: item QRs depend on per-item offers being mintable.~~ **Resolved, and the answer changed the design.** Per-item offers are mintable and are live (spec §6.1), so an item QR *could* encode the item's `noffer` — but slice 2 made every offer require a `refund_pointer` in `payer_data`, and a wallet scanning a raw QR has no way to supply one. The node declines it. So an item sticker that encodes the noffer today is a QR that cannot be paid.
+
+Item QRs therefore encode the **storefront deep link** (`#/item/<d-tag>`) until slice 8 decides what happens to buyers without a refund pointer. Scan the thing, land on the thing's page, pay there. That is one extra tap and it keeps the refund guarantee, which is the demo.
 
 ---
 
