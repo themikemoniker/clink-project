@@ -657,7 +657,10 @@ See `/docs/design.md` for the full design direction. The two surfaces have oppos
 **Builder + admin** — loaded once by a motivated user. **Corrected in slice 4: shipped without
 React, Tailwind or shadcn/ui.**
 - Vite + TypeScript, hand-written DOM calls and hand-written CSS — the same shape `/storefront`
-  already proved, and **zero new runtime dependencies** (`nostr-tools` was already pinned).
+  already proved. Two runtime dependencies, both already pinned elsewhere in this repo:
+  `nostr-tools` and `uqr@0.1.3` (dynamically imported) for the `nostrconnect://` QR. Amber
+  connects by scanning that code — a URI shown as text on a laptop is not a path a phone can
+  take — so the QR is what makes the one-approval flow reachable at all.
 - Slice 4's builder is one form, an upload list and a connect screen. Native `<form>`, `<label>`,
   `<input>`, `<output>` and `<dialog>` give the focus order, labelling and keyboard behaviour
   design.md §5 wanted Radix for, and ~200 dev packages for that is a poor trade in an app that
@@ -665,7 +668,8 @@ React, Tailwind or shadcn/ui.**
 - **Revisit at slice 6**, which is where the admin panel actually wants tables, dialogs and
   toasts. If it does, that is a real reason and this line changes again; "the spec said React"
   is not one.
-- Measured at the end of slice 4: **141.5 KB raw / 50.2 KB gzip** JS, 2.2 KB CSS. No budget
+- Measured at the end of slice 4: **142.8 KB raw / 50.8 KB gzip** cold, plus a 4.2 KB gzip QR
+  chunk fetched only on the bunker path, and 2.4 KB CSS. No budget
   applies here the way it does to the storefront — design.md §5 says "whatever it takes" — but
   it is worth knowing it is ~1.6x the storefront and every KB is still a blob fetch.
 

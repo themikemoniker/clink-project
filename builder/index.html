@@ -36,7 +36,9 @@
           </div>
 
           <div id="scan" hidden>
-            <label for="connect-uri">Scan this with Amber, or paste it into nsec.app</label>
+            <p class="hint">In Amber: <strong>Scan a QR Code</strong>.</p>
+            <div id="connect-qr" role="img" aria-label="Nostr Connect QR code"></div>
+            <label for="connect-uri">…or copy the link, if your signer takes one pasted</label>
             <textarea id="connect-uri" rows="3" readonly spellcheck="false"></textarea>
             <p class="hint">
               We are asking for these permissions up front, which is what makes the whole publish
@@ -44,9 +46,9 @@
             </p>
             <p class="warn">
               If your signer asks you to approve every single signature, its policy discarded the
-              request. In Amber that is the “Approve basic actions” sign policy — switch to
-              “Manually approve each permission” and reconnect. Nothing is broken; it just costs
-              one tap per kind instead of one in total.
+              request. In Amber that is the “Approve basic actions” sign policy — change it to
+              either of the “Manually approve…” options and reconnect. Nothing is broken; it just
+              costs one tap per kind instead of one in total.
             </p>
           </div>
         </div>

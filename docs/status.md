@@ -321,6 +321,10 @@ reads and the seller drops it next to the watcher. **Nothing on the watcher side
 
 ### What slice 4 deliberately did not build
 
+- **The bunker path needs a QR, and the first cut shipped the URI as text.** Amber connects by
+  scanning (`nostr_connect_qr_description` in its own strings), and the builder runs on a laptop
+  while the signer is a phone. Fixed by adding `uqr@0.1.3` — already pinned and justified for the
+  storefront — dynamically imported so the NIP-07 path never fetches it.
 - **No React, Tailwind or shadcn/ui**, against `/docs/spec.md` §9 and `design.md` §5 — corrected
   in §9. One form, an upload list and a connect screen; native `<form>`/`<label>`/`<input>`/
   `<output>` cover it. Revisit at slice 6 if the admin panel really wants tables and toasts.
@@ -338,7 +342,7 @@ reads and the seller drops it next to the watcher. **Nothing on the watcher side
 
 ```
 cd builder   && npm test          # 10/10
-cd builder   && npm run build     # tsc --noEmit clean; 141.5 KB raw / 50.2 KB gzip
+cd builder   && npm run build     # tsc --noEmit clean; 142.8 KB raw / 50.8 KB gzip
 cd storefront && npm test         # 27/27, unchanged
 cd spike     && npm test          # 8/8, unchanged
 cd spike     && node mint-offers.ts --dry    # still talks to the node after REFUND_POINTER moved

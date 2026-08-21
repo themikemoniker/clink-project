@@ -3,9 +3,14 @@
 // /docs/spec.md §9 and design.md §5 called for React + Tailwind + shadcn/ui. Slice 4 does not
 // add them: this surface is one form, an upload list and a connect screen, and native <form>,
 // <label>, <input>, <output> and <dialog> already give the focus order, labelling and keyboard
-// behaviour design §5 wanted Radix for. Zero new runtime dependencies — nostr-tools was already
-// pinned. Revisit when slice 6's admin panel wants tables, dialogs and toasts; §9 is corrected
-// to say so.
+// behaviour design §5 wanted Radix for. Revisit when slice 6's admin panel wants tables, dialogs
+// and toasts; §9 is corrected to say so.
+//
+// ONE runtime dependency beyond nostr-tools: `uqr`, exact-pinned 0.1.3, the same encoder the
+// storefront already measured and justified (spec §9). It renders the `nostrconnect://` QR, and
+// without it the bunker path does not work at all — Amber connects by scanning, and a
+// 250-character URI shown as text on a laptop is not something a phone can read. Dynamically
+// imported, so a seller on a NIP-07 extension never downloads it.
 //
 // design.md §5 still applies to the look: this is a tool, it should not cosplay as a newspaper,
 // and it should not look AI-generated either — warm paper neutrals, one accent, high contrast.
@@ -83,8 +88,15 @@ const startScan = async () => {
   const uri = bunkerConnectURI(relays, secret)
   const box = $<HTMLTextAreaElement>('#connect-uri')
   box.value = uri
+  // Amber connects by SCANNING this, not by reading it: "If your app offers you a Nostr Connect
+  // QR Code you can scan it from here" (Amber `nostr_connect_qr_description`). The builder runs
+  // on a laptop and the signer is a phone, so a 250-character URI as text is not a connection
+  // path — it is a transcription exercise. Dynamically imported so a seller using a NIP-07
+  // extension never downloads an encoder they will not look at.
+  const { renderSVG } = await import('uqr')
+  $('#connect-qr').innerHTML = renderSVG(uri, { border: 2 })
   $('#scan').hidden = false
-  say('Scan or paste that link into your signer. Approve every permission it lists.')
+  say('Scan the code with your signer. Approve every permission it lists.')
   try {
     useSigner(await awaitBunkerScan(uri, scanAbort.signal))
     $('#scan').hidden = true

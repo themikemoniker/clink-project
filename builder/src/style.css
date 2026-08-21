@@ -106,3 +106,14 @@ output { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
 #status[data-tone="busy"] { color: var(--muted); }
 
 #connect-uri { font: 0.75rem ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+
+/* The Nostr Connect QR. White quiet zone regardless of the page ground, because a scanner needs
+   the contrast and the border is part of the symbol, not decoration. */
+#connect-qr {
+  width: min(260px, 70vw);
+  margin: 0.75rem 0;
+  padding: 0.5rem;
+  background: #fff;
+  border: 1px solid var(--rule);
+}
+#connect-qr svg { display: block; width: 100%; height: auto; }
