@@ -574,6 +574,28 @@ our manifest is well-formed.
       produces a wrong-but-plausible digest that nothing would catch
 - [x] Gateway used: `nsite.lol`. First request after publish timed out; every request since is
       ~0.3s. Expect one cold miss while the gateway fetches blobs, and do not demo the first hit
+- [x] **Redeploy is not immediate, and this is the sharp edge** (measured 2026-08-21, slice 2's
+      deploy). Relays and Blossom update in seconds — the kind 15128 carried the new `path`
+      hashes and every blob answered `200` from `cdn.hzrd149.com` straight away — but the
+      gateway kept serving the *previous* build. It sends
+      `cache-control: public, max-age=3600` with an `etag` and a `last-modified` from the old
+      version, and a cache-busting query string does not defeat it: the stale copy is on the
+      gateway's side, not the client's. New asset filenames therefore **404** while the old
+      `index.html` is still being served, which looks exactly like a broken deploy and is not.
+
+      **The stale snapshot is coherent, which is the saving grace.** Measured 70 minutes after
+      the slice-2 deploy: `/` served slice 1's `index.html` and *both* of the asset paths it
+      references still answered `200`, while both of slice 2's answered `404` — even though the
+      current kind 15128 lists only slice 2's and not slice 1's. So the gateway is serving
+      wholly from its own cache and ignoring the manifest, rather than mixing the two. A visitor
+      sees the previous version working, not a half-broken page. Still over an hour after the
+      `max-age` should have lapsed, so `max-age` is not the whole story.
+
+      ⇒ **Verify a deploy against the relay and Blossom, never against the gateway.** The
+      manifest is the source of truth:
+      `nak req -k 15128 -a <pubkey> wss://relay.damus.io | jq '.tags'`, then
+      `curl -sI https://cdn.hzrd149.com/<hash>` per blob. ⇒ **Do not redeploy on demo day**, or
+      budget an hour before the URL reflects it.
 
 **Blob hosting is the real constraint, and it nearly sank the deploy.** Details in §9, summary
 here because it changes what the project can claim:

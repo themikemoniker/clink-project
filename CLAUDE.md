@@ -5,6 +5,8 @@ conflicts with these, stop and say so rather than proceeding.
 
 ## Read first
 
+- `/docs/status.md` — **start here.** Where the project is today, what is live, what is
+  blocked, and the commands that reproduce it. Goes stale fastest; the findings win over it.
 - `/docs/spec.md` — architecture and build plan
 - `/docs/spike-findings.md` — verified facts. **Where this disagrees with spec.md,
   this wins.**

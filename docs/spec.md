@@ -5,6 +5,8 @@ stays current because the QR on it points at a live page. It appears in exactly 
 the masthead when a sale has no title of its own, and a colophon on the printed flyer.
 **Target:** hackathon submission, "Best Use of CLINK"
 
+**Current state and next actions live in `/docs/status.md`** — read that first in a new session.
+
 **Status:** slice 2 shipped (2026-08-20), **and money has moved (2026-08-21)**. A static page
 mints an ephemeral key, sends a NIP-44-encrypted kind 21001 to the seller's own node over that
 node's relay, gets a real BOLT11 back, and reads the settlement receipt that nobody else can
@@ -608,7 +610,9 @@ purpose-made offer per buyable item on the local node and `/spike/seed-listings.
 the 30402s carrying them. The fixture is deliberately mixed: four items buyable, two sold, one
 priced in pesos (cash at the table), one free.
 
-**Slice 3 — Availability.** Page derives sold/remaining from the listing event alone. Watcher observes settlement from the node (`GetLiveUserOperations`, or the loopback `callback_url` experiment — §7.2) and republishes the `30402`. Idempotency keyed on the settled invoice, never the request event id (§8). *Demo: item flips to sold in front of the audience.*
+**Slice 3 — Availability. NEXT.** Much of the groundwork is already measured — see
+`/docs/status.md` for what slice 3 does not have to rediscover.
+ Page derives sold/remaining from the listing event alone. Watcher observes settlement from the node (`GetLiveUserOperations`, or the loopback `callback_url` experiment — §7.2) and republishes the `30402`. Idempotency keyed on the settled invoice, never the request event id (§8). *Demo: item flips to sold in front of the audience.*
 
 **Slice 4 — Authoring.** Signer abstraction (NIP-07 + NIP-46), item form, photo upload to Blossom, publish 30402. *Demo: create a listing live.*
 
