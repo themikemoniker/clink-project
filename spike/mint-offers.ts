@@ -24,15 +24,13 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getPublicKey, nip19 } from 'nostr-tools'
 import { hexToBytes } from '@noble/hashes/utils.js'
-import { ITEMS, listingD, offerPriceSats } from './fixture.ts'
+import { ITEMS, listingD, offerPriceSats, REFUND_POINTER } from './fixture.ts'
 import { arg, connectPub } from './pub-rpc.ts'
 
-// The one payer_data key this project defines, decided in slice 2 because offers are minted
-// here and getting it wrong means re-minting every offer (/docs/spec.md §7.3). CLINK enumerates
-// no payer_data keys at all (/docs/clink-notes.md §8), so the name is ours. Declared REQUIRED on
-// every offer: Lightning.Pub then refuses to issue an invoice to a payer who did not supply a
-// refund pointer, which turns "we hope we can refund an oversell" into a form field.
-export const REFUND_POINTER = 'refund_pointer'
+// REFUND_POINTER moved to ./fixture.ts in slice 4 — the builder mints offers over CLINK Manage
+// and needs the same string, and this file cannot be imported (top-level effects). Re-exported
+// so anything that imported it from here still works.
+export { REFUND_POINTER }
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const KEY_FILE = join(HERE, '.dev-key')

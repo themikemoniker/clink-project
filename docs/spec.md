@@ -7,6 +7,15 @@ the masthead when a sale has no title of its own, and a colophon on the printed 
 
 **Current state and next actions live in `/docs/status.md`** — read that first in a new session.
 
+**Status:** slice 4 shipped (2026-08-21). Authoring is live in `/builder`: a Signer (NIP-07 +
+NIP-46), an item form, canvas resize + Blossom upload, and the kind 30402 published to public
+relays — with the item's offer minted over **CLINK Manage, kind 21003**. That transport was not a
+preference: moving authoring behind a Signer makes Lightning.Pub's native kind 21000 RPC
+unreachable, because it is keyed on a raw ECDH secret NIP-46 does not expose (§10, findings
+§13.18). Slice 4 also corrected §5's `perms` string (it was missing `21003`), settled §14's image
+placeholder tag (NIP-92 `imeta`, and no blurhash — §6.1), and corrected §9's stack: the builder
+ships with no React, no Tailwind and no shadcn/ui, and no new runtime dependency at all.
+
 **Status:** slice 3 shipped (2026-08-21). Availability is live: a watcher on the seller's
 machine observes settlement on their own node and republishes the kind 30402, and it does so
 **holding no signing key**. That was the slice's real design work and it is not in §10's
@@ -256,9 +265,17 @@ Every signature is a prompt on the seller's phone when using a bunker. Publishin
 - One signature for the whole site manifest (see §6.4 — this is why we use kind 15128/35128, not legacy 34128)
 - ~~**One signature for the whole photo batch.**~~ **Dead — measured false in slice 1.** BUD-11 does permit multiple `x` tags in one kind `24242` event (`buds/11.md:40,67`), but blossom.band reads the *first* `x` as the blob's identity rather than hashing the body: under a batched token, uploading blob B returns blob A's descriptor with a **200**, and B is discarded. Every listing then points at the same photo. Budget **one signature per photo**. Evidence and the exact transcript are in `/docs/spike-findings.md` §9. Keep `expiration` short, scope any `delete` token with both `server` and `x`, and always compare the server's returned `sha256` against the one we computed.
 - One signature for the kind `10063` Blossom server list — once per seller, not per deploy (see §6.4).
-- **NIP-46 `perms` was the lever, and it works.** **Answered 2026-08-21** from both signers' source (`/docs/spike-findings.md` §8). Amber and nsec.app each honour `perms` for arbitrary kinds, and Amber's *default* sign policy is the one that persists them. Send `perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078` — note `30405`, which the earlier draft of this line omitted, and note that neither signer accepts a bare `sign_event` with no kind.
+- **NIP-46 `perms` was the lever, and it works.** **Answered 2026-08-21** from both signers' source (`/docs/spike-findings.md` §8). Amber and nsec.app each honour `perms` for arbitrary kinds, and Amber's *default* sign policy is the one that persists them. Send `perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:21003,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078` — note `30405`, which the pre-slice-4 draft of this line omitted, note **`21003`**, which slice 4 added because the builder mints each offer over CLINK Manage and that is a signed event (the storefront's kind 21001s are signed by a fresh ephemeral key per purchase, which no bunker ever sees), and note that neither signer accepts a bare `sign_event` with no kind. The live copy is `PERMS` in `/builder/src/signer.ts`.
 
-**Slice 3 adds one term, and removes a worse one.** The availability ladder (§7.2) pre-signs
+**An item is `1 + units` signatures, not one — and slice 4 is where that reaches a UI.** The
+availability ladder (§7.2) pre-signs every future stock state, so an item with stock 3 costs
+four kind 30402 signatures. Ten items averaging two units is 30, not 10. All the same kind, so a
+remembered `sign_event:30402` grant still covers them for **one** approval — the budget is
+unchanged, the *expectation* is not. `/builder` therefore shows the real count before the seller
+starts: a seller told "one approval" who then sees thirty is a seller who abandons a publish
+halfway and leaves a listing with no ladder behind it.
+
+**Slice 3 added that term, and removed a worse one.** The ladder pre-signs
 every future stock state of every buyable item, so a 10-item sale with a few multi-unit items
 costs a handful of extra signatures — but all of them at publish time, in the same sitting as
 the listings, where `perms` either helps or does not. What it removes is the alternative: a
@@ -341,6 +358,18 @@ Two more tags worth writing, both free interop:
 | `stock` | remaining count (Gamma `spec.md:124`) |
 | `type` | `["type","simple","physical"]` (Gamma `spec.md:119-121`). The default is *digital*; a yard sale is emphatically not |
 | `thumb` | NIP-58 `58.md:34`, MAY repeat at different dimensions. This is the standard multi-width srcset source — no custom tag needed for the image pipeline |
+| `imeta` | NIP-92 `92.md`. **The image-placeholder tag slice 1 deferred, resolved in slice 4.** Variadic space-delimited key/value pairs; MUST carry `url` plus one other field, and MAY carry any NIP-94 field (`94.md`) — which is where `blurhash`, `x`, `dim`, `alt` and `fallback` are actually defined. Nothing in NIP-99 or GammaMarkets carries any of them |
+
+**We write `imeta`, and we deliberately do not write `blurhash`.** The tag carries `url`, `m`,
+`x` (the blob's sha256, so the storefront can check a fetch against its content address — the
+generalised lesson of findings §13.11), `dim`, `alt` (accessibility, and no other tag here has
+anywhere to put it), and one `fallback` per additional Blossom server, which is the standard
+answer to blobs living on exactly one server the moment a second one exists. A blurhash would
+need an encoder in the builder and a decoder inside the storefront's ~30 KB gzip budget, to
+replace a flat tone that already works — so the field name is pinned with a citation and shipping
+one later is an hour rather than a research task. One caveat: `92.md` says each `imeta` SHOULD
+match a URL in the event's *content* and ours match `image` tags, so a generic NIP-92 client will
+not look for them. Inventing our own tag instead is exactly what §14 exists to prevent.
 
 One ambiguity the two specs leave open, resolved in code: NIP-58 pairs one `image` with its
 `thumb`s, GammaMarkets allows several `image` tags for several distinct photos
@@ -625,9 +654,23 @@ expressing it that way costs the refund pointer.
 
 See `/docs/design.md` for the full design direction. The two surfaces have opposite constraints and do not share a design system.
 
-**Builder + admin** — loaded once by a motivated user:
-- Vite + React + TypeScript
-- Tailwind + shadcn/ui (forms, dialogs, tables, toasts, upload progress)
+**Builder + admin** — loaded once by a motivated user. **Corrected in slice 4: shipped without
+React, Tailwind or shadcn/ui.**
+- Vite + TypeScript, hand-written DOM calls and hand-written CSS — the same shape `/storefront`
+  already proved, and **zero new runtime dependencies** (`nostr-tools` was already pinned).
+- Slice 4's builder is one form, an upload list and a connect screen. Native `<form>`, `<label>`,
+  `<input>`, `<output>` and `<dialog>` give the focus order, labelling and keyboard behaviour
+  design.md §5 wanted Radix for, and ~200 dev packages for that is a poor trade in an app that
+  must itself deploy as an nsite (rule 5) and is therefore fetched blob by blob from a gateway.
+- **Revisit at slice 6**, which is where the admin panel actually wants tables, dialogs and
+  toasts. If it does, that is a real reason and this line changes again; "the spec said React"
+  is not one.
+- Measured at the end of slice 4: **141.5 KB raw / 50.2 KB gzip** JS, 2.2 KB CSS. No budget
+  applies here the way it does to the storefront — design.md §5 says "whatever it takes" — but
+  it is worth knowing it is ~1.6x the storefront and every KB is still a blob fetch.
+
+~~- Vite + React + TypeScript~~
+~~- Tailwind + shadcn/ui (forms, dialogs, tables, toasts, upload progress)~~
 
 **Generated storefront** — loaded cold from a gateway, on mobile data, in a driveway:
 - Hand-written CSS, no component library. Newspaper classifieds aesthetic.
@@ -856,7 +899,52 @@ is deliberately unsold so the last rung (sold, `clink_offer` dropped) is availab
 1,000 sat. Better still: re-seed first, and watch the watcher put `plants` back to sold on its
 own — availability is recomputed from the node, never remembered.*
 
-**Slice 4 — Authoring.** Signer abstraction (NIP-07 + NIP-46), item form, photo upload to Blossom, publish 30402. *Demo: create a listing live.*
+**Slice 4 — Authoring. DONE 2026-08-21.** Lives in `/builder`: Vite + TypeScript, no framework,
+zero new runtime dependencies. A Signer (NIP-07 + NIP-46), an item form, canvas resize + Blossom
+upload, an offer minted over **CLINK Manage**, and the kind 30402 published to four relays.
+
+**The blocker underneath the one-line description was the same shape as slices 2 and 3's: the
+transport.** Moving authoring behind a Signer makes Lightning.Pub's native kind 21000 RPC
+**unreachable** — it is encrypted with the Pub's own v1 envelope, keyed on `sha256` of the raw
+ECDH x-coordinate, and NIP-46 exposes no raw-ECDH method (`/docs/spike-findings.md` §13.18, read
+before the slice and measured during it). Kind 21003 is NIP-44 v2 and a bunker signs it happily.
+So §14's "Manage or the native RPC?" was not a preference to weigh: **Manage is the only
+offer-minting transport a NIP-46 seller can drive.** Two corrections fell out of building it —
+the `AuthorizeManage` grant costs **zero** prompts rather than one (§13.19), and Manage and the
+native RPC see different sets of offers (§13.20).
+
+What it covers, and what it deliberately does not:
+
+- **`/builder/src/signer.ts`** — one `Signer` type, both paths behind it. nostr-tools 2.24.3
+  already declares the interface and implements the NIP-46 half (`BunkerSigner`, with
+  `nip44Encrypt`/`nip44Decrypt`), so this is ~40 lines of glue rather than an abstraction of our
+  own. The NIP-46 client key is persisted in `localStorage`, without which the seller re-approves
+  the connection every session (findings §8).
+- **`/builder/src/manage.ts`** — the kind 21003 client and an `nmanage` decoder. The reference
+  SDK's `SendNmanageRequest` takes a raw `privateKey`, so it cannot be used with a Signer at all.
+- **`/spike/authorize-manage.ts`** — the one-time bootstrap. Manage cannot issue its own grant,
+  because `AuthorizeManage` is itself a kind 21000 call. Run once, at the desk, with the raw key.
+- **`/builder/src/photos.ts`** — slice 1's deferred generator half: canvas resize to the same
+  1200/480/160 the seeder faked, one signed kind 24242 per blob (never batched — findings §9),
+  and the returned sha256 compared against ours every time.
+- **The ladder is cut here now, and delivered as a file.** An item is `1 + units` signatures
+  (§5). The rungs cannot go on a relay — publishing the stock-0 rung marks the item sold
+  instantly — cannot go through a backend (rule 1), and cannot be NIP-78-encrypted to self,
+  because the watcher holds no key to decrypt with, which is the whole point of slice 3. So the
+  browser hands the seller a `.ladder.json` in exactly the shape `/spike/watch-sales.ts` already
+  reads, and they drop it next to the watcher. Nothing on the watcher side changed.
+- **Nothing is published until it survives `parseListings()`** — the storefront's own trust
+  boundary, the same door slice 3's watcher makes the ladder go through. A listing whose price
+  and whose minted offer disagree fails here rather than reaching a relay with a dead Buy button.
+- **The `imeta` tag, with no blurhash.** See §6.1.
+- **No blurhash, no edit flow, no 30405 re-signing, no deploy.** A new item appears at the foot
+  of the sale because `orderBySale` renders collection members first and strays after, which
+  costs no second signature. Editing an item — and therefore re-cutting its ladder — is slice 6.
+  Deploy is slice 5.
+
+*Demo: `cd builder && npm run dev`, connect Amber, fill the form, publish — then refresh the
+storefront and the item is there, with a working Buy button, having touched no server of ours.
+The headless version, which needs no phone: `cd spike && node check-manage.ts`.*
 
 **Slice 5 — Deploy from the app.** Generate site files, upload, publish kind 15128. *Demo: full zero-to-storefront in under two minutes.*
 
@@ -943,12 +1031,22 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
   means per-unit `d` tags and the decision belongs before slice 4's authoring UI.
 - **Does any marketplace client actually render a kind 30405 collection's `summary`?** We put the
   sale's date and hours there because no tag exists for them. `UNVERIFIED`.
+- ~~Which tag carries the image placeholder?~~ **Answered in slice 4: NIP-92 `imeta`, carrying the
+  field names it inherits from NIP-94.** We write it, and we deliberately do not write
+  `blurhash` — see §6.1 and findings §13.21.
+- **Manage and the native RPC do not see the same offers** (findings §13.20), and the fixture's
+  five were minted natively. Nothing is broken — they are tagged onto live listings and have been
+  paid against — but an edit flow going through Manage cannot touch them. Slice 6 decides: re-mint
+  them through Manage, or keep a native path for pre-slice-4 items.
 - **Which second Blossom server?** `cdn.satellite.earth` needs an account (401). Blobs on one
   server are one garbage collection away from a broken storefront. See spike findings §9.
+  **Slice 4 made this cheap to act on**: the builder writes a NIP-92 `fallback` per extra server
+  into each item's `imeta`, so adding one to `BLOSSOM` in `/builder/src/photos.ts` is the whole
+  change on the authoring side.
 - What does the buyer see if their wallet can't speak CLINK? (Slice 8 — decide the copy early. Must include: no `payer_data` pointer means no automatic refund.)
 - Where does buyer↔seller pickup messaging live — NIP-17 DMs to the **ephemeral payer pubkey** stored on the invoice as `clink_requester_pub`? Note that key is ephemeral by design, so the buyer's page must keep it or the thread is unreachable. (Was "the receipt's payer pubkey" — we cannot read the receipt.)
 - Do we ship a hosted gateway convenience URL, or force gateway choice? (A hosted one is a centralization we should at least name.)
 - Is `blind` on a Lightning.Pub offer worth using? It exists in the entity and reaches invoice creation, and is in no CLINK spec. `UNVERIFIED` — find out before enabling it; it may affect receive reliability. Slice 2 mints offers with it unset.
 - What is the `p:` offer-id prefix? It routes to a separate "product" system that bypasses `payer_data` validation and amount checks, and is in no CLINK spec. Slice 2 did **not** use it, and the `payer_data` bypass alone probably disqualifies it — a product offer cannot carry a refund pointer, so it cannot be refunded. Confirm before anyone reaches for it.
-- ~~Should the builder mint offers over CLINK Manage (21003) or the native RPC (21000)?~~ **Answered 2026-08-21: Manage, and it is forced rather than chosen.** The native kind 21000 uses Lightning.Pub's custom `nip44v1` envelope, keyed on the raw ECDH x-coordinate (`nostrPool.ts:110-113`), and NIP-46 never exposes raw ECDH or a private key — so a builder holding only a bunker connection cannot construct a 21000 request at all. CLINK's own `21001`–`21004` are standard NIP-44, which a bunker does expose. Slice 2 got away with the native RPC only because `/spike/.dev-key` is a raw key on disk. Budget one `AuthorizeManage` prompt (findings §13.4) and expect the `fields` wrapper disagreement (§13.3). Full evidence: findings §13.18.
+- ~~Should the builder mint offers over CLINK Manage (21003) or the native RPC (21000)?~~ **Answered 2026-08-21: Manage, and it is forced rather than chosen.** The native kind 21000 uses Lightning.Pub's custom `nip44v1` envelope, keyed on the raw ECDH x-coordinate (`nostrPool.ts:110-113`), and NIP-46 never exposes raw ECDH or a private key — so a builder holding only a bunker connection cannot construct a 21000 request at all. CLINK's own `21001`–`21004` are standard NIP-44, which a bunker does expose. Slice 2 got away with the native RPC only because `/spike/.dev-key` is a raw key on disk. **Built in slice 4** (`/builder/src/manage.ts`), verified end to end against the live node by `/spike/check-manage.ts`, and the `fields` wrapper disagreement (§13.3) is handled. Two corrections to this line, both measured while building it: the `AuthorizeManage` prompt is **zero**, not one — it is `auth_type = "User"`, so the account's own key issues its own grant (findings §13.19) — and because that call is itself kind 21000 it needs a one-time bootstrap next to the node (`/spike/authorize-manage.ts`). Full evidence: findings §13.18, §13.19, §13.20.
 - **Does the printed flyer need the item QRs now?** design.md §4's item stickers encode the item's `noffer`, which exists as of slice 2. But a raw-QR payer supplies no `refund_pointer`, so the node declines them outright — an item sticker today is a QR that cannot be paid. Either the sticker points at the item's page (`#/item/<d>`), or slice 8's fallback path changes what "required" means.

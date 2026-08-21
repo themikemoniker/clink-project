@@ -1,0 +1,108 @@
+/* design.md §5: the admin is a tool, it should not cosplay as a newspaper. And it should not
+   look AI-generated either — no default-Tailwind palette, no Inter, no purple-to-blue gradient,
+   no glass cards. Warm paper neutrals, one accent, high contrast, system fonts. */
+
+:root {
+  --paper: #faf8f4;
+  --ink: #1c1a17;
+  --muted: #6a6459;
+  --rule: #ddd7cb;
+  --accent: #8c3a10; /* one accent, and it is the same rust the storefront uses for prices */
+  --bad: #a01b1b;
+  --ok: #2b6141;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 2rem 1.25rem 6rem;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main { max-width: 42rem; margin: 0 auto; }
+
+h1 { font-size: 1.5rem; margin: 0 0 0.25rem; letter-spacing: -0.01em; }
+h2 { font-size: 1rem; margin: 0 0 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+
+.lede { margin: 0 0 2rem; color: var(--muted); max-width: 34rem; }
+
+section {
+  border-top: 1px solid var(--rule);
+  padding: 1.5rem 0;
+}
+
+label {
+  display: block;
+  margin: 0.9rem 0 0.3rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.optional { font-weight: 400; color: var(--muted); text-transform: none; letter-spacing: 0; }
+
+input, textarea {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+textarea { resize: vertical; }
+input[type="file"] { padding: 0.4rem; background: transparent; border-style: dashed; }
+
+/* Visible focus is not decoration — it is the whole keyboard story on a form this long. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+button {
+  padding: 0.6rem 0.9rem;
+  min-height: 44px; /* same reason as the storefront's Buy button: thumbs */
+  border: 1px solid var(--ink);
+  border-radius: 3px;
+  background: var(--ink);
+  color: var(--paper);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button[type="button"] { background: transparent; color: var(--ink); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button[type="submit"] { margin-top: 1.25rem; width: 100%; background: var(--accent); border-color: var(--accent); }
+
+.row { display: flex; gap: 0.6rem; align-items: end; flex-wrap: wrap; }
+.row > span { flex: 1 1 8rem; }
+.row > input { flex: 1 1 14rem; }
+.row > label { margin-top: 0; }
+
+.hint, .warn, .cost { font-size: 0.85rem; color: var(--muted); margin: 0.4rem 0 0; }
+.warn { color: var(--bad); }
+
+.cost {
+  margin-top: 1.25rem;
+  padding: 0.7rem 0.8rem;
+  border-left: 3px solid var(--accent);
+  background: #fff;
+  color: var(--ink);
+}
+
+code { font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+output { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+#status {
+  margin: 1.25rem 0 0;
+  min-height: 1.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+#status[data-tone="ok"] { color: var(--ok); }
+#status[data-tone="bad"] { color: var(--bad); }
+#status[data-tone="busy"] { color: var(--muted); }
+
+#connect-uri { font: 0.75rem ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }

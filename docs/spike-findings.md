@@ -5,7 +5,8 @@ CLINK round trip actually returns. Four items still need a funded node or a huma
 each is marked `NEEDS HUMAN` with the exact command and the exact output to paste back. Slice 2
 closed questions 1, 2 and 5 outright and the node-side half of 6, corrected §13.4, and added
 §13.13-14. **A real 6,000-sat payment settled on 2026-08-21** and is the evidence behind §1, §5
-and §6. Two questions remain, and both need a phone rather than a node: 6's wallet half, and 8.
+and §6. **Slice 4 added §13.19-21**, corrected the `perms` string in §8, and turned §13.18 from
+a source read into a measured one — offers now mint over CLINK Manage against the live node. Two questions remain, and both need a phone rather than a node: 6's wallet half, and 8.
 **Rule:** every answer needs evidence — a spec file path, a source file and line, or
 pasted event JSON. `UNVERIFIED` is an acceptable answer. A confident guess is not.
 
@@ -716,17 +717,32 @@ which is luck rather than design.
 | No `perms`, seller taps "remember always" on each new kind | **5** — one per distinct kind |
 | No `perms`, seller never remembers | **33** — 10 + 1 + 1 + 1 + 20 |
 
+**Slice 4 adds a term to the event count, though not to the prompt count.** An item is not one
+signature, it is **1 + units**: the listing plus one pre-signed kind 30402 per reachable stock
+state, so the watcher can publish availability holding no key (§7.2, `/spike/ladder.ts`). Ten
+items averaging two units each is 30 kind-30402 signatures rather than 10 — all the same kind,
+so a remembered `sign_event:30402` grant still covers them for **one** approval. It changes the
+UI, not the budget: `/builder` shows the real count before the seller starts, because a seller
+who was told "one approval" and then sees thirty is a seller who abandons a publish halfway and
+leaves a listing with no ladder behind it.
+
 The middle row is the one this section previously missed, and it is the one that actually
 retires the question. Both signers key a remembered grant on `(app, type, kind)`, so the twenty
 Blossom auths are all kind `24242` and cost **one** approval between them — with or without
 `perms`. There is no path to 33 that does not require the seller to decline to remember
 anything, thirty-three times.
 
-**The perms string the builder should send:**
+**The perms string the builder should send** — corrected in slice 4, which added `21003`:
 
 ```
-perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078
+perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:21003,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078
 ```
+
+`sign_event:21003` was missing from every earlier copy of this string, here and in spec §5,
+because before slice 4 nothing signed a CLINK event **as the seller** — the storefront's kind
+21001 requests are signed by a fresh ephemeral key per purchase, which no bunker ever sees. The
+builder mints each item's offer over CLINK Manage, which is a signed kind 21003, so omitting it
+costs one prompt at the first publish. Live in `/builder/src/signer.ts` as `PERMS`.
 
 Two things that bite:
 
@@ -1171,7 +1187,77 @@ invalidate.
     ⇒ **Slice 4 must mint offers over CLINK Manage (kind 21003), not the native RPC.** It is not
     a preference between a portable path and a convenient one, as spec §14 framed it — the
     convenient one is unreachable the moment the seller's key lives in a signer instead of a file,
-    and rule 2 says it always will. Budget the one `AuthorizeManage` prompt (§13.4), and expect
-    the `fields` wrapper disagreement (§13.3). The alternative — a browser-generated key with its
-    own account on the seller's node — is worse than it looks: the offers, and therefore the
-    money, would belong to *that* account rather than the seller's.
+    and rule 2 says it always will. Expect the `fields` wrapper disagreement (§13.3). The
+    alternative — a browser-generated key with its own account on the seller's node — is worse
+    than it looks: the offers, and therefore the money, would belong to *that* account rather
+    than the seller's.
+
+    **Slice 4 built it and this is now measured rather than read** (2026-08-21). The exact send
+    side, which the entry above did not cover, is the mirror of the receive branch:
+    `handleSendDataContent -> encryptV1` for kind 21000, `handleSendDataEvent -> encryptV2` for
+    everything else (`nostrPool.ts:176-190`). `/spike/check-manage.ts` drives
+    `/builder/src/manage.ts` — the shipped module, through a `Signer` — against the live node
+    and gets a real offer back: correct `price_sats` in TLV 4, `refund_pointer` recorded
+    required, not the account default offer, and a listing the storefront's own parser would
+    draw a Buy button on. Two corrections to this entry fall out of that build, in §13.19 and
+    §13.20: the `AuthorizeManage` prompt it tells you to budget for is **zero**, and Manage and
+    the native RPC do not see the same set of offers.
+
+19. **`AuthorizeManage` is `auth_type = "User"`, so the grant costs zero human prompts on this
+    node.** `methods.proto:678-683`, `option (nostr) = true`. The account's own key issues its
+    own grant; nothing is pushed to a wallet and nobody approves anything. Spec §14 and §11 q11
+    both assumed one `AuthorizeManage` prompt — that is the *other* path, `handleAuthRequired`
+    (`managementManager.ts:71-89`), which fires only when an **ungranted** requestor sends a
+    21003 and pushes a `GetLiveManageRequests` message to `appUser.nostr_public_key` for
+    ShockWallet to display. Granting yourself first skips it entirely.
+
+    Two details that cost time:
+
+    - **`authorize_npub` is a misnomer.** It is stored as `app_pubkey`
+      (`managementStorage.ts:15`) and matched against `event.pub`
+      (`managementManager.ts:254`), i.e. a **64-char hex** pubkey. An `npub1…` creates a grant
+      that can never match.
+    - **`addGrant` is `CreateAndSave`, not an upsert** (`managementStorage.ts:15`), so running
+      the bootstrap twice leaves two rows. `getGrant` is a `FindOne` so it still works, but
+      check `GetManageAuthorizations` first. `ResetManage` removes one.
+
+20. **The two offer transports partition the offer set, asymmetrically.** `createOffer` over
+    Manage stamps `management_pubkey: requestorPub` (`managementManager.ts:249`);
+    `validateOfferAccess` refuses `get`/`update`/`delete` unless it matches (`:280`) and `list`
+    queries `getManagedUserOffers(app_user_id, management_pubkey)` (`offerStorage.ts:43-45`).
+    Native `AddUserOffer` never sets the column and it defaults to `''` (migration
+    `1752425992291-invoice_callback_urls.ts`).
+
+    So:
+
+    | | sees native offers | sees Manage offers |
+    |---|---|---|
+    | native `GetUserOffers` (kind 21000) | yes | **yes** |
+    | CLINK Manage `list` (kind 21003) | **no** | only its own requestor's |
+
+    **Measured 2026-08-21**: after `check-manage.ts` minted one offer over Manage,
+    `mint-offers.ts --dry` reported "7 offer(s) on the account, 6 purpose-made" — up one from
+    the fixture's five plus the default. The native RPC sees everything.
+
+    Consequence for the fixture: the five offers `/spike/mint-offers.ts` minted are **not**
+    editable over Manage. Nothing breaks — they are already minted, already tagged onto the
+    listings, and already paid against — but an edit flow that goes through Manage cannot touch
+    them. They get re-minted through Manage if and when they are ever edited.
+
+21. **NIP-92 `imeta` is the image-placeholder tag slice 1 deferred, and NIP-94 is where its
+    field names actually live.** `nips/92.md`: `imeta` is variadic space-delimited key/value
+    pairs, MUST carry `url` plus at least one other field, and "MAY include any field specified
+    by NIP 94". `nips/94.md` is the list: `url`, `m`, `x`, `ox`, `size`, `dim`, `magnet`, `i`,
+    **`blurhash`**, `thumb`, `image`, `summary`, `alt`, `fallback`, `service`. Neither NIP-99
+    nor the GammaMarkets market-spec carries any of them, which confirms slice 1's read.
+
+    Slice 4 writes `imeta` with `url`, `m`, `x`, `dim`, `alt` and one `fallback` per extra
+    Blossom server — and **deliberately not `blurhash`**, which would need an encoder in the
+    builder and a decoder inside the storefront's ~30 KB gzip budget to replace a flat tone
+    that already works. The field name is now pinned with a citation, so shipping one later is
+    an hour rather than a research task.
+
+    One caveat to carry: 92.md says each `imeta` SHOULD match a URL in the event's **content**,
+    and ours match `image` tags instead. A generic NIP-92 client will not look for them. The
+    fields are for our own storefront to read; the alternative was inventing a tag, which
+    spec §14 exists to prevent.

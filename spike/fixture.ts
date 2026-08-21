@@ -9,6 +9,17 @@
 // that republishes it cannot end up pointing at different relays — a mismatch there is a
 // watcher that works perfectly and a storefront that never sees the update.
 // The storefront's own copy is in storefront/src/main.ts, which slice 5 will generate.
+// The one payer_data key this project defines, decided in slice 2 because offers are minted
+// against it and getting it wrong means re-minting every offer (/docs/spec.md §7.3). CLINK
+// enumerates no payer_data keys at all (/docs/clink-notes.md §8), so the name is ours. Declared
+// REQUIRED on every offer: Lightning.Pub then refuses to issue an invoice to a payer who did
+// not supply a refund pointer, which turns "we hope we can refund an oversell" into a form field.
+//
+// It lived in mint-offers.ts until slice 4. It moved here because the builder mints offers too
+// (over CLINK Manage) and that file cannot be imported — it is a script with top-level effects.
+// Two spellings of this string is a sale where half the items cannot be refunded.
+export const REFUND_POINTER = 'refund_pointer'
+
 export const SALE_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',

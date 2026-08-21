@@ -1,0 +1,22 @@
+{
+  "name": "builder",
+  "private": true,
+  "type": "module",
+  "description": "Seller-facing authoring app. Static, no backend, deploys as an nsite (rule 5).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node --test src/*.test.ts",
+    "size": "npm run build && find dist/assets -name '*.js' -o -name '*.css' | xargs -I{} sh -c 'printf \"%-40s %6s raw %6s gzip\\n\" {} $(wc -c <{}) $(gzip -9 -c {} | wc -c)'"
+  },
+  "dependencies": {
+    "@scure/base": "2.0.0",
+    "nostr-tools": "2.24.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  }
+}

@@ -24,3 +24,8 @@ spike/.offers.json
 # public events, no key material — but it is cut from one version of the listings and goes
 # stale the moment they are re-seeded, so it is generated, never committed.
 spike/.ladder.json
+
+# The CLINK Manage pointer written by spike/authorize-manage.ts. Not key material, but TLV 2
+# carries the account pointer, whose publication hands every visitor a channel to push
+# authorization prompts at the seller (/docs/spec.md §6.1). Seller's browser only.
+spike/.nmanage

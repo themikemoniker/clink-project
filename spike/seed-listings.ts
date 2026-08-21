@@ -3,8 +3,21 @@
 // KEY HANDLING NOTICE. /CLAUDE.md rule 2 says no private key touches this codebase outside a
 // Signer. This script is the one approved exception, agreed 2026-08-20, and it is deliberately
 // narrow: a throwaway identity in /spike/.dev-key (gitignored, chmod 600), never funded, never
-// the seller's, used only to publish public test listings. DELETE THIS FILE AND THE KEY when
-// slice 4 lands a real Signer — at that point the builder authors listings and this is dead code.
+// the seller's, used only to publish public test listings.
+//
+// THIS LINE USED TO SAY "delete this file and the key when slice 4 lands a real Signer." Slice 4
+// landed one (/builder) and the key STAYS, by a decision taken 2026-08-21. Deleting it now would
+// take four working things with it: this seeder, mint-offers.ts, deploy-nsite.ts, and — worst —
+// slice 3's watch-sales.ts, which needs a node credential to read settlements. The identity is
+// also the storefront's npub, its live nsite URL, and the owner of the node account holding the
+// sale's sats, so a fresh Signer identity would mean a new URL behind an hour of gateway cache
+// on demo day (findings §7).
+//
+// What actually happened instead: the key is imported into a bunker, so the BUILDER signs as
+// this same identity through NIP-46 and never sees the key, while these scripts keep reading the
+// file. The key dies when slices 5 and 6 move deploy and admin into the app. Until then it is a
+// raw key on disk that a Signer has adopted, which is a smaller claim than the one this comment
+// used to make — say the smaller one on stage.
 //
 // What it does, in the order slice 4/5 will eventually do it for real:
 //   1. photos -> N widths -> Blossom, one signed kind 24242 auth per blob (BUD-11 11.md:11-27)

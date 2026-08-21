@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Lamppost — add an item</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Lamppost</h1>
+        <p class="lede">
+          Author a yard-sale item. It is signed by your own signer, its photo goes to Blossom, its
+          offer is minted on your own node over CLINK, and the listing goes to public relays.
+          Nothing here has a server of ours behind it.
+        </p>
+      </header>
+
+      <!-- 1. signer ------------------------------------------------------------------- -->
+      <section>
+        <h2>1 · Your signer</h2>
+        <div id="connect">
+          <p class="hint">
+            Nothing in this app ever sees your key. It asks your signer to sign, and your signer
+            decides.
+          </p>
+          <div class="row">
+            <button type="button" id="nip07">Browser extension (NIP-07)</button>
+            <button type="button" id="bunker-scan">Connect a bunker — one approval</button>
+          </div>
+          <label for="bunker-input">…or paste a <code>bunker://</code> URL or a NIP-05</label>
+          <div class="row">
+            <input id="bunker-input" type="text" placeholder="bunker://… or you@example.com" autocomplete="off" spellcheck="false" />
+            <button type="button" id="bunker-url">Connect</button>
+          </div>
+
+          <div id="scan" hidden>
+            <label for="connect-uri">Scan this with Amber, or paste it into nsec.app</label>
+            <textarea id="connect-uri" rows="3" readonly spellcheck="false"></textarea>
+            <p class="hint">
+              We are asking for these permissions up front, which is what makes the whole publish
+              cost one approval instead of one per event: <code id="perms"></code>
+            </p>
+            <p class="warn">
+              If your signer asks you to approve every single signature, its policy discarded the
+              request. In Amber that is the “Approve basic actions” sign policy — switch to
+              “Manually approve each permission” and reconnect. Nothing is broken; it just costs
+              one tap per kind instead of one in total.
+            </p>
+          </div>
+        </div>
+        <div id="signed-in" hidden>
+          <p>Signed in as <output id="whoami"></output></p>
+          <button type="button" id="disconnect">Disconnect</button>
+        </div>
+      </section>
+
+      <!-- 2. node --------------------------------------------------------------------- -->
+      <section>
+        <h2>2 · Your node <span class="optional">optional</span></h2>
+        <label for="node-input">CLINK Manage pointer</label>
+        <input id="node-input" type="text" placeholder="nmanage1…" autocomplete="off" spellcheck="false" />
+        <p class="hint" id="node-state">No node — items will publish as cash-only, with no Buy button.</p>
+        <p class="hint">
+          Run <code>node spike/authorize-manage.ts</code> once, on the machine with your node, and
+          paste the line it writes. This pointer addresses your account, so it stays in this
+          browser — it is never published and never sent anywhere but your own node.
+        </p>
+      </section>
+
+      <!-- 3. the item ----------------------------------------------------------------- -->
+      <section>
+        <h2>3 · The item</h2>
+        <form id="item">
+          <label for="title">Title</label>
+          <input id="title" type="text" required maxlength="200" placeholder="Brass floor lamp" />
+
+          <label for="slug">Slug <span class="optional">its permanent address; filled in from the title</span></label>
+          <input id="slug" type="text" maxlength="60" placeholder="brass-floor-lamp" autocomplete="off" spellcheck="false" />
+
+          <label for="summary">One line</label>
+          <textarea id="summary" rows="2" maxlength="600" placeholder="Rewired, works, some patina on the base."></textarea>
+
+          <div class="row">
+            <span>
+              <label for="price">Price, in sats</label>
+              <input id="price" type="number" min="0" step="1" value="1000" required />
+            </span>
+            <span>
+              <label for="stock">How many</label>
+              <input id="stock" type="number" min="0" max="999" step="1" value="1" required />
+            </span>
+          </div>
+          <p class="hint">
+            Sats only. There is no currency conversion anywhere in this app — that would need a
+            price oracle, and an oracle is somebody else’s server. Price something in pesos by
+            leaving the node field empty: it lists, it just has no Buy button.
+          </p>
+
+          <label for="photo">Photo</label>
+          <input id="photo" type="file" accept="image/*" />
+          <p class="hint" id="photo-state">Resized in your browser to 1200, 480 and 160px. The original is never uploaded.</p>
+
+          <label for="alt">Photo description <span class="optional">for screen readers</span></label>
+          <input id="alt" type="text" maxlength="200" placeholder="A brass floor lamp with a linen shade." />
+
+          <p class="cost" id="cost"></p>
+          <button type="submit" id="publish" disabled>Publish this item</button>
+        </form>
+      </section>
+
+      <p id="status" role="status" aria-live="polite" data-tone="busy"></p>
+
+      <!-- 4. the ladder --------------------------------------------------------------- -->
+      <section id="result" hidden>
+        <h2>4 · Give the watcher its ladder</h2>
+        <p id="result-text"></p>
+        <p>
+          Every future stock state of this item is now signed and waiting. Your watcher publishes
+          them as things sell, which is how it updates the sale while holding no key of yours at
+          all. It cannot get them off a relay — publishing the sold-out one would mark the item
+          sold immediately — so you carry them across.
+        </p>
+        <button type="button" id="download-ladder">Download .ladder.json</button>
+        <p class="hint" id="ladder-note"></p>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

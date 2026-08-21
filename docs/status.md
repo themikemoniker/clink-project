@@ -4,19 +4,28 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-21**, end of slice 3.
+Last updated: **2026-08-21**, end of slice 4.
 
 ---
 
 ## One-paragraph summary
 
-Slices 0, 1, 2 and 3 are done. A static page hosted on Nostr reads listings off public relays and
+Slices 0 through 4 are done. A static page hosted on Nostr reads listings off public relays and
 takes Lightning payments by sending CLINK invoice requests to the seller's own node over relays.
 **This is proven with real money** — 6,000 sats settled on 2026-08-21 and the page read the
-settlement receipt that nobody else can decrypt. A watcher on the seller's machine now closes
-the loop: it observes settlement on the node and republishes the listing, **holding no signing
-key**, so `plants` reads as sold on the relays today. There is no server of ours anywhere in it.
-Next up is slice 4: the Signer abstraction and real authoring.
+settlement receipt that nobody else can decrypt. A watcher on the seller's machine closes the
+loop: it observes settlement on the node and republishes the listing, **holding no signing key**,
+so `plants` reads as sold on the relays today. And as of slice 4 a seller authors items in a
+static builder that holds no key either — signing through NIP-07 or a NIP-46 bunker, minting each
+item's offer on their own node over **CLINK Manage (kind 21003)**. There is no server of ours
+anywhere in it. Next up is slice 5: deploy from the app.
+
+**The thing to know before touching slice 5.** Moving authoring behind a Signer made
+Lightning.Pub's native kind 21000 RPC *unreachable from the browser* — it is keyed on a raw ECDH
+secret that NIP-46 does not expose (findings §13.18). Every node call the builder makes is CLINK,
+or it does not happen. Anything still using kind 21000 (`mint-offers.ts`, `watch-sales.ts`,
+`authorize-manage.ts`) is a script holding the raw key on the seller's own machine, and that is
+now a deliberate boundary rather than an accident.
 
 ---
 
@@ -69,13 +78,25 @@ node seed-listings.ts                  # republishes the 30402s AND cuts .ladder
 node watch-sales.ts [--once]           # slice 3: observe settlement, republish availability
 node deploy-nsite.ts                   # blobs to Blossom, kind 15128 + 10063 to relays
 
+# slice 4: authoring, against the running node
+node authorize-manage.ts               # ONCE, at the desk. Grants Manage, writes .nmanage
+node authorize-manage.ts --revoke      # takes the grant back
+node check-manage.ts                   # mints a real offer over kind 21003. Exit 0 = it works
+
 # node health
 export PATH="$HOME/lnd:$PATH"
 lncli state && lncli listchannels | grep -E 'active|local_balance|remote_balance'
 curl -s http://127.0.0.1:1776/api/health
 ```
 
-**Ordering matters.** `mint-offers.ts` → `seed-listings.ts` → `watch-sales.ts`. The seeder cuts
+**Ordering matters.** `mint-offers.ts` → `seed-listings.ts` → `watch-sales.ts`. The builder is a
+separate track that does the first two itself, per item, for items authored in it.
+
+**The builder does not replace the seeder, and slice 4 did not delete it.** The fixture's nine
+items and five offers are still seeded by the scripts, and those offers went over the native kind
+21000 RPC — which means **CLINK Manage cannot see or edit them** (findings §13.20). Nothing is
+broken; an edit flow through Manage just cannot touch them. Slice 6 decides whether to re-mint.
+ The seeder cuts
 the pre-signed ladder from the listings it publishes, so any edit to a price, a title or a photo
 means re-seeding before the watcher runs, or the watcher would republish the old text over the
 new. `seed-listings.ts` takes ~1 minute since `cdn.satellite.earth` came out of its default on
@@ -119,11 +140,17 @@ twenty kind-`24242` Blossom auths cost one approval between them. The old 33-pro
 a seller who declines to remember anything thirty-three times. Nothing is over the ~15 threshold,
 so **slice 4 builds the publish flow as planned.**
 
-Send this at connect — note `30405`, and note that neither signer accepts a bare `sign_event`
+**Slice 4 turned this into a task with a button on it.** The builder sends the string below at
+connect; `bunker-scan` in `/builder` generates the `nostrconnect://` URI carrying it. So the
+confirmation run is now: import `spike/.dev-key` into your bunker, open the builder, click
+"Connect a bunker", scan, and publish one item.
+
+Note `21003`, which every earlier copy of this string omitted — nothing signed a CLINK event as
+the seller before slice 4. Note `30405`. And note that neither signer accepts a bare `sign_event`
 with no kind:
 
 ```
-perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078
+perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:21003,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078
 ```
 
 Read from source, not measured on hardware. One confirmation run remains, and the residual risk
@@ -224,8 +251,117 @@ stage beat than the sellout — it shows where the state actually lives.
 
 ---
 
+## Slice 4 — what shipped, and the two things that were not in the description
+
+`/builder`, a second Vite app: Vite + TypeScript, no framework, **zero new runtime dependencies**.
+Plus two spike scripts, and one constant moved.
+
+| file | what |
+|---|---|
+| `builder/src/signer.ts` | the Signer. NIP-07 + NIP-46, `PERMS`, persisted client key |
+| `builder/src/manage.ts` | CLINK Manage kind 21003 client + `nmanage` decoder |
+| `builder/src/photos.ts` | canvas resize to 1200/480/160, one kind 24242 auth per blob |
+| `builder/src/listing.ts` | the 30402 tags, the `imeta` tag, the ladder cut. **The tested one** |
+| `builder/src/publish.ts` | mint → sign → verify → publish → hand over the ladder file |
+| `builder/src/main.ts` | the form |
+| `spike/authorize-manage.ts` | the one-time Manage grant + the `nmanage` pointer |
+| `spike/check-manage.ts` | drives the builder's real modules against the live node |
+
+### 1. A Signer makes the native RPC unreachable, so the transport chose itself
+
+`/docs/spec.md` §14 framed CLINK Manage vs the native kind 21000 RPC as portability against
+convenience. It is not a trade-off. Kind 21000 is encrypted with Lightning.Pub's own v1 envelope
+— xchacha20 keyed on `sha256` of the raw ECDH x-coordinate (`nostrPool.ts:110-114`, `176-190`) —
+and NIP-46 exposes `sign_event`, `nip04_*`, `nip44_*`, `get_public_key` and nothing else. There is
+no way to ask a bunker for a shared secret. Kind 21003 takes the other branch of that same `if`
+and is NIP-44 v2. **A bunker-held key can speak CLINK and cannot speak the native RPC**, full
+stop. Findings §13.18 had already read this from source; slice 4 measured it and built on it.
+
+Two corrections fell out of building it:
+
+- **The `AuthorizeManage` grant costs zero prompts, not one.** It is `auth_type = "User"`
+  (`methods.proto:678-683`), so the account's own key issues its own grant. The one-prompt path
+  is `handleAuthRequired`, which only fires for an *ungranted* requestor. Findings §13.19.
+- **Manage and the native RPC do not see the same offers**, asymmetrically: native
+  `GetUserOffers` sees everything, Manage `list` sees only offers carrying its own
+  `management_pubkey`. Findings §13.20. The fixture's five are native and stay native.
+
+Because `AuthorizeManage` is itself kind 21000, it cannot bootstrap over Manage — hence
+`spike/authorize-manage.ts`, run once at the desk with the raw key. After it, nothing in the
+authoring path touches a key.
+
+### 2. The ladder is authored now, and every route to the watcher was closed
+
+Slice 3's watcher publishes rungs `seed-listings.ts` cut from the raw key. Behind a Signer, the
+builder cuts them — so **an item is `1 + units` signatures**, a term `/docs/spec.md` §5's budget
+did not have. Same kind throughout, so a remembered `sign_event:30402` grant still makes it one
+approval; the builder shows the real count anyway, because a seller told "one approval" who then
+sees thirty abandons the publish and leaves a listing with no ladder.
+
+Delivering them is the harder half, and every obvious route is closed: a relay marks the item
+sold instantly (NIP-01 keeps the newest per `(kind, pubkey, d)` and the rungs are newer by
+construction), a backend is rule 1, and NIP-78-to-self needs a key the watcher deliberately does
+not have. So the browser downloads `.ladder.json` in exactly the shape `watch-sales.ts` already
+reads and the seller drops it next to the watcher. **Nothing on the watcher side changed.**
+
+### What slice 4 deliberately did not build
+
+- **No React, Tailwind or shadcn/ui**, against `/docs/spec.md` §9 and `design.md` §5 — corrected
+  in §9. One form, an upload list and a connect screen; native `<form>`/`<label>`/`<input>`/
+  `<output>` cover it. Revisit at slice 6 if the admin panel really wants tables and toasts.
+- **No blurhash.** The tag question is answered — NIP-92 `imeta`, NIP-94 field names, both cited
+  in findings §13.21 — and we write `imeta` with `x`, `dim`, `alt` and `fallback`. A blurhash
+  needs an encoder here and a decoder inside the storefront's 30 KB budget, to replace a flat
+  tone that already works.
+- **No edit flow.** Editing an item means re-cutting its ladder (a stale rung republishes old
+  text over new with a newer `created_at`) and re-minting through Manage. Slice 6.
+- **No 30405 re-signing.** A new item appears at the foot of the sale, because `orderBySale`
+  renders collection members first and strays after. Reordering is slice 6.
+- **No deploy.** Slice 5. The builder itself is not yet an nsite, so rule 5 is still owed.
+
+### Verified how
+
+```
+cd builder   && npm test          # 10/10
+cd builder   && npm run build     # tsc --noEmit clean; 141.5 KB raw / 50.2 KB gzip
+cd storefront && npm test         # 27/27, unchanged
+cd spike     && npm test          # 8/8, unchanged
+cd spike     && node mint-offers.ts --dry    # still talks to the node after REFUND_POINTER moved
+cd spike     && node authorize-manage.ts     # granted manage_id 1 on the live node
+cd spike     && node check-manage.ts         # 13/13 checks, a REAL offer minted over kind 21003
+```
+
+`check-manage.ts` is the one that matters, and it is the `check-buy.ts` pattern: it imports
+`/builder/src/manage.ts` and `/builder/src/listing.ts` unmodified and drives them against the
+running Lightning.Pub. It mints a real offer, confirms the node priced it correctly in the
+noffer's TLV 4, confirms `refund_pointer` was recorded required, confirms it is not the account's
+default offer, and then confirms the storefront's own parser would draw a Buy button on the
+resulting listing and walk the ladder `2 -> 1 -> 0`. If it and the builder ever disagree, it is
+wrong.
+
+**What is NOT proven: the browser half.** No NIP-07 extension and no bunker has driven this — no
+Chrome extension was connected in the session that built it. The module graph typechecks, builds,
+and every DOM selector in `main.ts` resolves against `index.html`, but connecting Amber and
+publishing an item from a real browser is unrun. That run is also spike question 8's hardware
+confirmation — see below.
+
+---
+
 ## Traps that will cost an hour each
 
+- **A NIP-46 bunker cannot speak kind 21000.** Every native Lightning.Pub RPC — `AddUserOffer`,
+  `GetUserOffers`, `GetUserOfferInvoices`, `AuthorizeManage` — needs a raw ECDH secret NIP-46 does
+  not expose (findings §13.18). In the browser it is CLINK or nothing. If you find yourself
+  wanting `pub-rpc.ts` in the builder, stop: that is the wrong shape.
+- **Manage `list` does not show natively-minted offers.** `management_pubkey` partitions them,
+  asymmetrically — native sees everything, Manage sees only its own (findings §13.20). An empty
+  Manage `list` on an account with five offers is not a bug.
+- **`authorize_npub` wants a HEX pubkey despite the name.** It is stored as `app_pubkey` and
+  matched against `event.pub`. An `npub1…` creates a grant that silently never matches.
+- **`spike/.nmanage` carries the account pointer.** Same handling as the pairing string: seller's
+  browser only, never a relay, never a log, never this repo. It is gitignored.
+- **An item is `1 + units` signatures, not one.** Any UI that implies otherwise gets a seller
+  abandoning a publish halfway, leaving a listing on the relays with no ladder behind it.
 - **The ladder is cut from one version of the listings.** Edit a price, a title or a photo and
   you must re-seed before running the watcher, or it republishes the old text over the new with
   a newer `created_at`. `mint-offers.ts` → `seed-listings.ts` → `watch-sales.ts`, in that order.
@@ -264,5 +400,6 @@ stage beat than the sellout — it shows where the state actually lives.
 | `/docs/spike-findings.md` | measured evidence, `NEEDS HUMAN` blocks | wins over spec.md |
 | `/docs/spec.md` | architecture and the slice plan (§10) | |
 | `/docs/design.md` | the two design surfaces | |
+| `/builder` | slice 4's authoring app. Signer, CLINK Manage, photos, the ladder cut | |
 | `/docs/runbook.md` | the node: install, funding, demo-day checklist | |
 | this file | where we are today | goes stale fastest |
