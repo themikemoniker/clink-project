@@ -13,7 +13,7 @@
 //
 // So the transport choice in /docs/spec.md §14 was never really a choice once the Signer
 // landed: Manage is not merely the portable path, it is the only offer-minting path a
-// NIP-46 seller can drive. See /docs/spike-findings.md §14.
+// NIP-46 seller can drive. See /docs/spike-findings.md §13.18.
 //
 // The one thing Manage cannot bootstrap is its own grant. `validateGrantAccess`
 // (managementManager.ts:254-273) needs a ManagementGrant row for every requestor, owner

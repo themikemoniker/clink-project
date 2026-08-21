@@ -169,7 +169,6 @@ const tick = async () => {
     }
 
     if (lastSold.get(d) === sold) continue
-    lastSold.set(d, sold)
 
     if (sold > rung.units) {
       // Oversold: two buyers reached the last unit (/docs/spec.md §7.3). Slice 7 is the
@@ -181,9 +180,28 @@ const tick = async () => {
     }
 
     const target = targetStock(rung.units, sold)
-    if (target === rung.units) continue // nothing has sold; the seeded listing is already right
+    if (target === rung.units) {
+      lastSold.set(d, sold) // nothing has sold; the seeded listing is already right
+      continue
+    }
 
-    const ok = await publish(stepFor(d, rung, target))
+    // Record the count only once a relay has actually taken the update. Marking it before
+    // publishing meant one failed publish — a rejected relay, a bad rung, a timeout — left the
+    // item advertised as available forever, because the next poll sees the same count and skips.
+    // A sold-out item with a live Buy button is the oversell slice 7 does not yet exist to
+    // refund. Republishing the same signed event is a no-op at the relay, so retrying is free.
+    let ok = 0
+    try {
+      ok = await publish(stepFor(d, rung, target))
+    } catch (err) {
+      console.log(`# ${d}: ${String(err).slice(0, 160)} — will retry`)
+      continue
+    }
+    if (ok === 0) {
+      console.log(`# ${d}: no relay accepted stock ${target} — will retry`)
+      continue
+    }
+    lastSold.set(d, sold)
     console.log(`# ${new Date().toISOString()} ${d}: ${sold} sold -> stock ${target}${target === 0 ? ' (SOLD)' : ''}, ${ok}/${RELAYS.length} relays`)
   }
 }
