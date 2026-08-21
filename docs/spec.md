@@ -7,6 +7,14 @@ the masthead when a sale has no title of its own, and a colophon on the printed 
 
 **Current state and next actions live in `/docs/status.md`** — read that first in a new session.
 
+**Status:** slice 3 shipped (2026-08-21). Availability is live: a watcher on the seller's
+machine observes settlement on their own node and republishes the kind 30402, and it does so
+**holding no signing key**. That was the slice's real design work and it is not in §10's
+one-line description — see §7.2's "Who signs the republish" and `/spike/ladder.ts`. Slice 3
+corrected two things measured while building: `GetLiveUserOperations` cannot attribute a
+payment to an item (§7.2), and §7.4(a)'s "delete the offer on depletion" would destroy the
+buyer's refund pointer (§7.4). It also demoted spike question 8 from blocking to slice-4-only.
+
 **Status:** slice 2 shipped (2026-08-20), **and money has moved (2026-08-21)**. A static page
 mints an ephemeral key, sends a NIP-44-encrypted kind 21001 to the seller's own node over that
 node's relay, gets a real BOLT11 back, and reads the settlement receipt that nobody else can
@@ -95,7 +103,7 @@ These are not preferences. Violating them destroys the pitch.
 | Relays | Public | No | Listings, site manifest, CLINK messages, receipts |
 | Blossom servers | Public | No | Photos and site files, addressed by sha256 |
 | Seller's node | Seller's VPS / laptop / Pi | Yes (seller's) | Lightning.Pub (or other CLINK node service) |
-| Shop watcher | Seller's machine, next to the node | No (uses a delegated/limited signer) | Observes settlement, republishes inventory state, issues refunds |
+| Shop watcher | Seller's machine, next to the node | **No — none.** Publishes kind 30402 events the seller pre-signed (§7.2) | Observes settlement, republishes inventory state, issues refunds |
 | Storefront | Static files on Blossom, resolved via NIP-5A | No | The buyer-facing sale page |
 
 ---
@@ -129,13 +137,22 @@ Every signature is a prompt on the seller's phone when using a bunker. Publishin
 - One signature for the whole site manifest (see §6.4 — this is why we use kind 15128/35128, not legacy 34128)
 - ~~**One signature for the whole photo batch.**~~ **Dead — measured false in slice 1.** BUD-11 does permit multiple `x` tags in one kind `24242` event (`buds/11.md:40,67`), but blossom.band reads the *first* `x` as the blob's identity rather than hashing the body: under a batched token, uploading blob B returns blob A's descriptor with a **200**, and B is discarded. Every listing then points at the same photo. Budget **one signature per photo**. Evidence and the exact transcript are in `/docs/spike-findings.md` §9. Keep `expiration` short, scope any `delete` token with both `server` and `x`, and always compare the server's returned `sha256` against the one we computed.
 - One signature for the kind `10063` Blossom server list — once per seller, not per deploy (see §6.4).
-- **NIP-46 `perms` is the real lever.** A bunker connection can pre-grant `sign_event` per kind (`nips/46.md:113`), e.g. `perms=sign_event:30402,sign_event:15128,sign_event:10063,sign_event:24242`. If the signer honours it, a 10-item publish is one approval at connect time rather than twelve. Whether Amber / nsec.app actually honour it is `UNVERIFIED` — a signer-implementation question, not a NIP question.
+- **NIP-46 `perms` was the lever, and it works.** **Answered 2026-08-21** from both signers' source (`/docs/spike-findings.md` §8). Amber and nsec.app each honour `perms` for arbitrary kinds, and Amber's *default* sign policy is the one that persists them. Send `perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078` — note `30405`, which the earlier draft of this line omitted, and note that neither signer accepts a bare `sign_event` with no kind.
 
-Floor, now that photo batching is gone: 10 listings + 1 manifest + 1 `10063` + 1 `AuthorizeManage`
-(`/docs/spike-findings.md` §13.4) + one auth per photo. At 2 photos an item that is **33 prompts**,
-and the only remaining lever is NIP-46 `perms`. **Spike question 8 is therefore now the highest-value
-open question in the project** — if `perms` is not honoured for arbitrary kinds, the publish flow needs
-redesigning before slice 4's UI exists, not after. If it exceeds ~15, redesign first.
+**Slice 3 adds one term, and removes a worse one.** The availability ladder (§7.2) pre-signs
+every future stock state of every buyable item, so a 10-item sale with a few multi-unit items
+costs a handful of extra signatures — but all of them at publish time, in the same sitting as
+the listings, where `perms` either helps or does not. What it removes is the alternative: a
+watcher that signed each stock update through a bunker would prompt the seller's phone **once
+per sale, during the sale**. That is why spike question 8 no longer gates slice 3.
+
+**The measured floor, now that spike question 8 is answered.** A 10-item publish with 2 photos
+an item costs **1 prompt** if `perms` is granted at connect, and **5** if it is ignored entirely —
+because both signers key a remembered grant on `(app, type, kind)`, so twenty kind-`24242` Blossom
+auths are one approval between them, not twenty. The old "33 prompts, redesign first" figure
+assumed a seller who declines to remember anything thirty-three times. Nothing is over the ~15
+threshold on any path, so **slice 4 builds the publish flow as planned.** Full citations, the exact
+Amber and nsec.app code paths, and the one residual UI risk are in `/docs/spike-findings.md` §8.
 
 ---
 
@@ -332,11 +349,27 @@ Buyer taps "Buy" on the static page
 
 The pre-spike draft had the page reading settlement receipts off relays. It cannot: the CLINK receipt is kind `21001`, NIP-44 encrypted to the payer and addressed to the payer, carries no `preimage` in Lightning.Pub, and is a MAY rather than a MUST (`/docs/spike-findings.md` §5). Nobody but that one buyer can read it.
 
-So the seller's node is the only party that observes settlement, and the watcher gets it from the node, not from a relay. In order of preference:
+So the seller's node is the only party that observes settlement, and the watcher gets it from the node, not from a relay. **Settled in slice 3, and the pre-slice ranking here was backwards:**
 
-1. **`GetLiveUserOperations`** — the node pushes an `INCOMING_INVOICE` operation over Nostr to the account's own key on every settlement. Nostr-native, no HTTP listener.
-2. **`GetUserOfferInvoices`** — poll per offer; returns `invoice`, `offer_id`, `paid_at_unix`, `amount`, and the stored `payer_data`. This is where the refund path reads the buyer's pointer. **Confirmed populated by a real settlement** on 2026-08-21: the row carried the per-item `offer_id`, `paid_amount: 6000`, and `payer_data: {"refund_pointer":"…"}` intact (`/docs/spike-findings.md` §6). Slice 7's input exists and is not hypothetical.
-3. **`callback_url`** on the offer — the node GETs a URI template on settlement, and loopback addresses are explicitly allowed while private ranges are blocked. Needs no credential at all, but it is an HTTP listener on the seller's machine.
+1. **`GetUserOfferInvoices`** — poll per offer with `{ offer_id, include_unpaid: false }`; returns `invoice`, `offer_id`, `paid_at_unix`, `amount`, and the stored `payer_data`. **This is the watcher's feed.** It is the only call that answers *which item sold*, and it is where the refund path reads the buyer's pointer. **Confirmed populated by a real settlement** on 2026-08-21: the row carried the per-item `offer_id`, `paid_amount: 6000`, and `payer_data: {"refund_pointer":"…"}` intact (`/docs/spike-findings.md` §6).
+2. **`GetLiveUserOperations`** — the node pushes an `INCOMING_INVOICE` operation over Nostr to the account's own key on every settlement. Nostr-native, no HTTP listener, lower latency — but `UserOperation` carries **no `offer_id`** (`structs.proto:634-646`), so it cannot attribute a payment to an item and has to be followed by (1) anyway. It is also push-once, so a watcher that was down never learns. A latency nudge, not a feed (`/docs/spike-findings.md` §13.16).
+3. **`callback_url`** on the offer — the node GETs a URI template on settlement, and loopback addresses are explicitly allowed while private ranges are blocked. Needs no credential at all, and it is the one path that delivers `payer_data` without an RPC — but it is an HTTP listener on the seller's machine, and push-once like (2).
+
+### Who signs the republish
+
+**This is the part §10's one-line description hides, and it is the slice's real design work.** Republishing a kind 30402 means signing *as the seller*, and rule 1 in §3 says the watcher must not hold the seller's key. Nothing in CLINK helps: a listing's authority is its signature, so a substitute key cannot publish stock updates without breaking the trust the storefront depends on (`/docs/spike-findings.md` §11 — identity comes from the listing signature, never from the payment pointer). NIP-26 delegation is deprecated and no marketplace client reads it.
+
+**The answer is that the watcher does not sign.** A yard-sale item has a finite, knowable set of future states: an item with stock 3 can only ever be 2, 1, or 0. So the seller signs all of them at publish time, in the same sitting that signs the listing, and the watcher holds a bundle of already-signed events — an **availability ladder** — and publishes the right rung when it sees money arrive. Implemented in `/spike/ladder.ts`, cut by `/spike/seed-listings.ts`, consumed by `/spike/watch-sales.ts`.
+
+What it buys:
+
+- The watcher's key material is **none**. Not "the narrowest credential that works" — none at all. It still holds a node credential to *read* settlements, and that one is not read-only (§12).
+- A compromised watcher can publish only states the seller authorised. It cannot invent a price, retitle an item, or resurrect a sold one: each rung's `created_at` strictly increases as stock falls, so NIP-01's newest-per-address rule makes an out-of-order or replayed publish a no-op at the relay. Availability cannot run backwards by construction rather than by the watcher behaving.
+- **Signing happens at the desk, before the sale.** The alternative — a watcher signing each update through a NIP-46 bunker — would push an approval prompt to the seller's phone once per sale, during their own yard sale. `perms` would in fact cover it (§11 q8 is answered: both signers honour `sign_event:30402`), but a pre-granted signing permission living next to an always-on process is a worse posture than a watcher that holds no key at all. The ladder makes the question moot here rather than merely survivable.
+
+**The ceiling, stated plainly:** the ladder is cut from one version of the listing, so editing a price or a title mid-sale invalidates it — a stale rung would republish the old text over the new. Re-seed after any edit and the ladder is re-cut with it. If inventory ever becomes unbounded, or mid-sale edits become routine, this becomes a NIP-46-signing watcher and q8 becomes blocking again.
+
+**Idempotency, and where the state lives.** The key is the settled invoice, never the request event id (§8). Slice 3 does not persist a seen-set at all: remaining stock is derived from the *count of distinct settled invoices the node reports for that item's offer*, so the node holds the state, a restart recomputes it, and a replayed kind 21001 request that never became a payment cannot move it.
 
 **The honest consequence:** availability is only as fresh as the seller's watcher. A page loaded while the watcher is down shows stale stock. Say that out loud in the demo rather than letting a judge find it.
 
@@ -370,10 +403,14 @@ The intent stands: return an error instead of an invoice for a depleted item, so
 
 Two reachable implementations:
 
-- **(a) Delete the offer on depletion — the lazy one, and the default.** When the watcher sees the last unit sell, it deletes the item's offer (CLINK Manage `delete`, or the `DeleteUserOffer` RPC). The next request then returns `code: 1`, `"Offer recipient not found"` — a clean, spec-shaped decline that a buyer's client can display. Race window = the gap between the settling payment and the delete landing. No new infrastructure.
+- **(a) Delete the offer on depletion — was the default, and slice 3 did NOT ship it.** The idea: when the watcher sees the last unit sell, it deletes the item's offer (CLINK Manage `delete`, or the `DeleteUserOffer` RPC), so the next request returns `code: 1` — a clean, spec-shaped decline that a buyer's client can display. It is one RPC from code that already exists.
+
+  **Measured while building slice 3, and it is disqualifying as written** (`/docs/spike-findings.md` §13.17). `DeleteUserOffer` drops only the `UserOffer` row (`offerStorage.ts:27-29`); the settled invoices survive. But `GetUserOfferInvoices` looks the offer up first and throws `"Offer not found"` when it is gone (`offerManager.ts:89-93`), and that RPC is the **only** way the stored `payer_data` leaves the node — the sole other reader is the offer's own settlement `callback_url` (`paymentSideEffects.ts:27`), which our offers leave empty. So deleting a depleted offer permanently destroys the buyer's refund pointer for every invoice under it, and blinds the watcher to the item. An oversell *is* a payment that settles after depletion, so this would break slice 7 in exactly the case slice 7 exists for.
+
+  Two candidates that keep the invoice history, neither tested: `UpdateUserOffer` the price outside the payable range instead of deleting the row, or set a loopback `callback_url` at mint time so the pointer is delivered at settlement and never has to be read back. **Decide before slice 7.**
 - **(b) Hold the CLINK service key ourselves.** The shop daemon becomes the pubkey in the `noffer`'s TLV `0`, evaluates inventory, and only then asks the Pub for an invoice. True strict mode with no race — at the cost of making the daemon a required always-on component and moving the service identity off the Pub.
 
-v1 ships (a). "Strict" here honestly means "best-effort with a much smaller window," not "atomic" — do not oversell it on stage.
+v1 was going to ship (a) and now ships neither. The oversell window in slice 3 is what the storefront closes on its own — a sold item draws no Buy button — plus the watcher shouting `OVERSOLD` at the seller when a second settlement lands. "Strict" was always going to mean "best-effort with a much smaller window," not "atomic"; today it means best-effort. Do not oversell it on stage.
 
 ### 7.5 Restock / edit
 
@@ -391,7 +428,19 @@ Decide this before slice 6; until then, pickup is "seller looks up the sale in t
 
 ## 8. Inventory interface
 
-Both modes sit behind one interface so the choice is a config flag, not a rewrite.
+**Slice 3 built the watcher and did not build this interface. That is deliberate, and this
+section is now a record of why rather than a plan.** The sketch below has one implementation
+and always would have: strict mode turned out not to be a config flag on the node (§7.4), and
+§7.4(a) — the one alternative that needed no new infrastructure — is disqualified by
+`/docs/spike-findings.md` §13.17. An interface with one implementation, written for a second
+that cannot be built yet, is scaffolding; `/CLAUDE.md` says not to.
+
+What slice 3 shipped instead is 40 lines in `/spike/watch-sales.ts`: poll settled invoices per
+offer, derive remaining stock, publish the matching pre-signed listing. `reserve` and
+`releaseExpired` have no counterpart at all — nothing reserves, because the invoice's own
+expiry *is* the hold. Reintroduce an interface when a second policy actually exists.
+
+The original sketch, kept because the naming lesson under it is still live:
 
 ```ts
 interface InventoryPolicy {
@@ -414,12 +463,18 @@ has no Offers equivalent), and `wss://relay.lightning.pub` was observed replayin
 minutes-old kind `21001` events to a fresh subscriber before EOSE
 (`/docs/spike-findings.md` §13.1). A replayed request is indistinguishable from a fresh one.
 
+**Slice 3 goes one better and stores no key at all.** `GetUserOfferInvoices` returns the whole
+settled set for an item on every call, so remaining stock is `units − |distinct settled
+invoices|`, recomputed from the node each poll. There is no seen-set to persist, nothing to
+lose on restart, and a replayed request that never became a payment cannot move the count.
+
 Reservation TTL should track invoice expiry — the invoice lifetime *is* the hold. The payer
 asks for it with `expires_in_seconds` on the request; the BOLT11 expiry is what actually
 binds.
 
-In strict mode (§7.4a) `checkAvailable` is not a query the node performs — it is our
-watcher's decision, expressed by whether the item's offer still exists.
+In strict mode (§7.4a) `checkAvailable` would not be a query the node performs — it would be
+our watcher's decision, expressed by whether the item's offer still exists. See §7.4 for why
+expressing it that way costs the refund pointer.
 
 ---
 
@@ -610,9 +665,41 @@ purpose-made offer per buyable item on the local node and `/spike/seed-listings.
 the 30402s carrying them. The fixture is deliberately mixed: four items buyable, two sold, one
 priced in pesos (cash at the table), one free.
 
-**Slice 3 — Availability. NEXT.** Much of the groundwork is already measured — see
-`/docs/status.md` for what slice 3 does not have to rediscover.
- Page derives sold/remaining from the listing event alone. Watcher observes settlement from the node (`GetLiveUserOperations`, or the loopback `callback_url` experiment — §7.2) and republishes the `30402`. Idempotency keyed on the settled invoice, never the request event id (§8). *Demo: item flips to sold in front of the audience.*
+**Slice 3 — Availability. DONE 2026-08-21.** The page derives sold/remaining from the listing
+event alone — that half shipped with slice 1 and needed no change. The new work is
+`/spike/watch-sales.ts`, a ~40-line Node process on the seller's machine that polls
+`GetUserOfferInvoices` per offer over the kind 21000 transport, derives remaining stock from
+the count of settled invoices, and publishes the matching pre-signed kind 30402.
+
+**The first hour went to a blocker that is not in the line above**, the same shape as slice 2's
+missing `clink_offer` tag: republishing a listing means signing as the seller, and the watcher
+must not hold the seller's key. §7.2's "Who signs the republish" is the answer — a pre-signed
+**availability ladder**, one signed event per reachable stock state, cut at seed time. The
+watcher holds no signing key. That also demoted spike question 8 (§11) from blocking to
+slice-4-only: a bunker-signing watcher would prompt the seller's phone once per sale.
+
+What it covers, and what it deliberately does not:
+
+- **`/spike/ladder.ts`** — `atStock`, `unitsOf`, `targetStock`, 3 exported functions and a long
+  comment. Tested in `/spike/ladder.test.ts`, 8 tests / 20 assertions, `node --test`, same style
+  as the storefront's.
+- **`/spike/pub-rpc.ts`** — the kind 21000 RPC transport lifted out of `mint-offers.ts` rather
+  than re-derived, as `/docs/spike-findings.md` §13.13 asked. `mint-offers.ts` now imports it.
+- **The ladder goes through the storefront's own trust boundary before it is published.** The
+  watcher loads pre-signed events from a file on disk and treats them as hostile: each rung is
+  run through `parseListings()` from `storefront/src/listing.ts`, which deletes nostr-tools'
+  cached `verified` symbol before checking the signature (findings §13.10) and re-derives
+  stock/status from the tags rather than trusting the file's own index.
+- **No offer deletion on sellout.** §7.4(a) said to; measuring what `DeleteUserOffer` actually
+  does says otherwise — see §7.4 and findings §13.17.
+- **No `InventoryPolicy` interface.** See §8.
+- **No live storefront updates.** The page still reads once at load. A visitor standing on the
+  page while an item sells sees it after a refresh, which is what a printed flyer's QR gets
+  anyway. `storefront/src/nostr.ts` notes where a subscription would go.
+
+*Demo: `node watch-sales.ts` on the seller's machine, `node check-buy.ts <item> --pay` on a
+phone, refresh the page — the item flips to sold, or its count drops, with no server involved.
+The 6,000-sat `plants` payment from 2026-08-21 makes the first flip free.*
 
 **Slice 4 — Authoring.** Signer abstraction (NIP-07 + NIP-46), item form, photo upload to Blossom, publish 30402. *Demo: create a listing live.*
 
@@ -642,16 +729,19 @@ Full answers with citations live in `/docs/spike-findings.md`; field names live 
 | 5 | Settlement receipt on the wire? | **CLOSED, and worse than the source read suggested.** Kind `21001`, NIP-44 encrypted to the payer, `{"res":"ok"}`, **no preimage on a payment with `internal: 0`** — a real external settlement that a spec-following client would misread as internal (`clink-offers.md:333`). Not seller-readable. Rewrote §7.2 and §7.6 |
 | 6 | `payer_data` end-to-end? | **Node side now verified on the wire, not just in source** (findings §6): required key declared at mint, `code: 1` + `payer_data:["refund_pointer"]` when omitted, invoice when supplied. The key name is ours (§7.3). Wallet behaviour **OPEN — needs you**, and secondary: our page is the client |
 | 7 | nsite deploy + `/404.html` | **OPEN — needs you** (`nsyte` is a global install). NIP-5A itself read: `/404.html` confirmed required, plus the kind `10063` requirement in §6.4 |
-| 8 | Bunker prompt count for 10 items | **OPEN — needs you.** Levers found: batched Blossom auth and NIP-46 `perms` (§5) |
+| 8 | Bunker prompt count for 10 items | **ANSWERED 2026-08-21 from source.** **1 prompt** with `perms` granted at connect, **5** without — both Amber and nsec.app honour `perms` for arbitrary kinds, and both key a remembered grant on `(app, type, kind)`, so twenty Blossom auths of one kind cost one approval. Under the ~15 threshold on every path; slice 4 builds as planned. Unmeasured on hardware — one confirmation run remains in findings §8 |
 | 9 | Blossom auth per upload | **Batching is permitted** — multiple `x` tags in one kind `24242` event (§5) |
 | 10 | Credential scoping for the watcher | **Better than feared.** `admin.connect` is never needed. Three levels exist (Admin / User / Guest); the refund path should use a **CLINK Debit grant held by a separate watcher key**, with a node-enforced frequency cap and `BanDebit` as the kill switch. Residual: observation still needs a User-scoped key, which implies spend authority over that account — so keep the observe key and the refund key separate, and try the credential-free loopback `callback_url` (§7.2) |
 | 11 | Guest account with its own offer? | **Yes, and slice 2 did it with no human in the loop.** The dev key spoke to the guest `app.nprofile`, got an account auto-created by `NostrUserAuthGuard`, and minted four offers — no pairing, no approval. **This corrects the `AuthorizeManage` assumption**: that grant gates CLINK Manage (kind 21003) only, not the native `AddUserOffer` RPC (kind 21000, `auth_type = "User"`). See findings §13.4. CLINK Enroll (kind `21004`) is still **not implemented** by Lightning.Pub 0.0.37 |
 
-**Two items are still open** — 6 (the wallet half only) and 8 — and each has a `NEEDS HUMAN`
-block in the findings with the exact command to run. Question 7 closed in slice 1; 1, 2 and 5
-closed with the 2026-08-21 payment, along with the node-side half of 6.
+**One item is still open** — 6, the wallet half only — and it has a `NEEDS HUMAN` block in the
+findings with the exact command to run. Question 7 closed in slice 1; 1, 2 and 5 closed with the
+2026-08-21 payment, along with the node-side half of 6; 8 was answered from the signers' source
+the same day.
 
-**Both remaining questions need a phone, not a node, and neither blocks slice 3.**
+**What is left needs a phone, not a node**, and none of it blocks a slice. Question 8's residual
+is a confirmation run rather than a discovery: the source says the lever works, and nobody has
+watched it work.
 
 See also `/docs/runbook.md` for install gotchas already found (macOS `LND_LOG_DIR` crash loop, `.wallet_secret` permissions, pairing, uptime).
 
@@ -668,7 +758,7 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 - Treat every inbound event as hostile input: validate before parsing, bound sizes, verify signatures before acting.
 - Relays can withhold, delay, reorder, and replay — **confirmed, not theoretical**: `wss://relay.lightning.pub` replayed minutes-old kind `21001` events to a fresh subscriber before EOSE, and CLINK Offers defines no request-freshness rule and no single-use construct. Any retry path on the money side must be idempotent, **keyed on the settled invoice / payment hash, never the request event id**.
 - The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. Note the node's outbound is currently **6,000 sats**, all of it created by the one test sale — refunds cannot precede sales, so set the frequency cap against what has actually been sold rather than against a round number. **Let the node enforce both**: a CLINK Debit grant carries a frequency rule (`[number, unit, max]`) checked inside the payment transaction, and `BanDebit` revokes it in one tap. Our code should not be the only thing standing between a bug and the balance.
-- The watcher holds a **separate key** from the seller's identity and from the seller's Pub account where possible. "User" scope on Lightning.Pub is not read-only — the same credential that reads settlements can call `PayInvoice`.
+- The watcher holds **no signing key at all** — it publishes kind 30402 events the seller pre-signed (§7.2). It does hold a node credential to read settlements, and that one is a **separate key** from the seller's identity and Pub account where possible: "User" scope on Lightning.Pub is not read-only, and the same credential that reads settlements can call `PayInvoice`. Slice 3's watcher currently reuses the fixture seller's throwaway `.dev-key`, because on this fixture the seller identity and the node account are one key; slice 7's refund path must not reuse it.
 - Never publish the account's default offer: its id is the account pointer, and an unauthorised debit/manage request against a known pointer pushes an approval prompt to the seller's wallet (§6.1).
 - The seller's node is the only thing holding funds, and it is theirs.
 

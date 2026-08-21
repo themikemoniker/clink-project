@@ -5,6 +5,17 @@
 //
 // Dies with the rest of /spike when slice 4 lands a real Signer and real authoring.
 
+// Where this fixture sale lives. Shared so the seeder that publishes a listing and the watcher
+// that republishes it cannot end up pointing at different relays — a mismatch there is a
+// watcher that works perfectly and a storefront that never sees the update.
+// The storefront's own copy is in storefront/src/main.ts, which slice 5 will generate.
+export const SALE_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.nostr.band',
+  'wss://relay.primal.net',
+]
+
 export const SALE = {
   d: 'yardsale-2026-08',
   title: 'Moving Sale — Colonia Americana',

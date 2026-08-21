@@ -22,18 +22,20 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils'
-import { ITEMS, SALE, listingD, offerPriceSats } from './fixture.ts'
+import { ITEMS, SALE, SALE_RELAYS, listingD, offerPriceSats } from './fixture.ts'
+import { atStock, unitsOf } from './ladder.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const KEY_FILE = join(HERE, '.dev-key')
 const OFFERS_FILE = join(HERE, '.offers.json')
+const LADDER_FILE = join(HERE, '.ladder.json')
 const PHOTO_DIR = join(HERE, 'seed-photos')
 
 const arg = (name: string, fallback: string) => {
   const i = process.argv.indexOf(`--${name}`)
   return i === -1 ? fallback : process.argv[i + 1]
 }
-const RELAYS = arg('relays', 'wss://relay.damus.io,wss://nos.lol,wss://relay.nostr.band,wss://relay.primal.net').split(',')
+const RELAYS = arg('relays', SALE_RELAYS.join(',')).split(',')
 const BLOSSOM = arg('blossom', 'https://blossom.band,https://cdn.satellite.earth').split(',')
 
 // --- the throwaway identity -------------------------------------------------------------
@@ -169,39 +171,67 @@ const imagesFor = (d: string) => {
     : []
 }
 
-const listings = ITEMS.map(item => finalizeEvent({
-  kind: 30402,
-  created_at: now,
-  tags: [
-    ['d', listingD(item)],
-    ['title', item.title],
-    // NIP-99 99.md:38 ["price","<number>","<currency>","<frequency>"?]. We never write frequency.
-    ['price', item.price[0], item.price[1]],
-    ['published_at', String(now)],
-    // GammaMarkets spec.md:119-121 — ["type","simple","physical"]; default is digital, and a
-    // yard sale is emphatically not digital.
-    ['type', 'simple', 'physical'],
-    ...(item.summary ? [['summary', item.summary]] : []),
-    // GammaMarkets spec.md:124 — `stock`, "Available quantity as integer". This is the
-    // standardised name; do not invent `quantity`.
-    ...(item.stock !== undefined ? [['stock', item.stock]] : []),
-    // NIP-99 99.md:43 — optional, "active" or "sold". Kept alongside `stock` because generic
-    // NIP-99 clients read this one and know nothing about GammaMarkets.
-    ['status', item.status ?? (item.stock === '0' ? 'sold' : 'active')],
-    ['location', SALE.location],
-    ['g', SALE.g],
-    ['t', 'yardsale'],
-    // GammaMarkets spec.md:148 — products point at their collection for discoverability.
-    ['a', `30405:${pk}:${SALE.d}`],
-    // Our own tag. `clink_offer` is the name CLINK standardises for a kind 0 metadata field and
-    // for NIP-05 (clink-offers.md:58-83); no spec puts an noffer on a listing, so we reuse the
-    // standard name rather than invent a second one. Purpose-made per item — never the
-    // account's default offer, whose id IS the account pointer (/docs/spike-findings.md §3).
-    ...(OFFERS[listingD(item)] ? [['clink_offer', OFFERS[listingD(item)]!.noffer]] : []),
-    ...imagesFor(item.d),
-  ],
-  content: item.summary ?? '',
-}, sk))
+const tagsFor = (item: (typeof ITEMS)[number]): string[][] => [
+  ['d', listingD(item)],
+  ['title', item.title],
+  // NIP-99 99.md:38 ["price","<number>","<currency>","<frequency>"?]. We never write frequency.
+  ['price', item.price[0], item.price[1]],
+  ['published_at', String(now)],
+  // GammaMarkets spec.md:119-121 — ["type","simple","physical"]; default is digital, and a
+  // yard sale is emphatically not digital.
+  ['type', 'simple', 'physical'],
+  ...(item.summary ? [['summary', item.summary]] : []),
+  // GammaMarkets spec.md:124 — `stock`, "Available quantity as integer". This is the
+  // standardised name; do not invent `quantity`.
+  ...(item.stock !== undefined ? [['stock', item.stock]] : []),
+  // NIP-99 99.md:43 — optional, "active" or "sold". Kept alongside `stock` because generic
+  // NIP-99 clients read this one and know nothing about GammaMarkets.
+  ['status', item.status ?? (item.stock === '0' ? 'sold' : 'active')],
+  ['location', SALE.location],
+  ['g', SALE.g],
+  ['t', 'yardsale'],
+  // GammaMarkets spec.md:148 — products point at their collection for discoverability.
+  ['a', `30405:${pk}:${SALE.d}`],
+  // Our own tag. `clink_offer` is the name CLINK standardises for a kind 0 metadata field and
+  // for NIP-05 (clink-offers.md:58-83); no spec puts an noffer on a listing, so we reuse the
+  // standard name rather than invent a second one. Purpose-made per item — never the
+  // account's default offer, whose id IS the account pointer (/docs/spike-findings.md §3).
+  ...(OFFERS[listingD(item)] ? [['clink_offer', OFFERS[listingD(item)]!.noffer]] : []),
+  ...imagesFor(item.d),
+]
+
+const listings = ITEMS.map(item =>
+  finalizeEvent({ kind: 30402, created_at: now, tags: tagsFor(item), content: item.summary ?? '' }, sk),
+)
+
+// --- 2b. the pre-signed availability ladder ----------------------------------------------
+// Every future state of every buyable item, signed here and now, so slice 3's watcher can
+// publish availability without ever holding a key. The reasoning is in ./ladder.ts; the two
+// properties that make it safe are below.
+const ladder: Record<string, { units: number; steps: ReturnType<typeof finalizeEvent>[] }> = {}
+for (const item of ITEMS) {
+  if (offerPriceSats(item) === undefined) continue // not buyable: nothing can sell, nothing to step
+  const units = unitsOf(item.stock)
+  ladder[listingD(item)] = {
+    units,
+    // steps[i] is the listing after i+1 units have sold, so the last step is stock 0 / sold.
+    //
+    // created_at STRICTLY INCREASES as stock falls, and that is load-bearing rather than
+    // cosmetic. NIP-01 keeps only the newest event per (kind, pubkey, d) — with a tie broken
+    // on the lowest id, which is why equal timestamps would be a coin flip — so a watcher that
+    // published these out of order, or replayed an early one after a late one, changes
+    // nothing: the relay keeps the later state. Availability cannot run backwards, by
+    // construction rather than by the watcher behaving.
+    steps: Array.from({ length: units }, (_, i) =>
+      finalizeEvent(
+        { kind: 30402, created_at: now + i + 1, tags: atStock(tagsFor(item), units - i - 1), content: item.summary ?? '' },
+        sk,
+      ),
+    ),
+  }
+}
+writeFileSync(LADDER_FILE, JSON.stringify(ladder, null, 2) + '\n')
+console.log(`# pre-signed ${Object.values(ladder).reduce((n, l) => n + l.steps.length, 0)} ladder step(s) for ${Object.keys(ladder).length} item(s) -> ${LADDER_FILE}`)
 
 // GammaMarkets spec.md:213-236. This is the sale itself: one signed event carrying the
 // masthead (title/summary/location) and the member list. Replaces the `t`-tag grouping that

@@ -22,14 +22,10 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomBytes } from 'node:crypto'
-import { SimplePool, finalizeEvent, getPublicKey, nip19 } from 'nostr-tools'
-import { hexToBytes, bytesToHex } from '@noble/hashes/utils.js'
-import { sha256 } from '@noble/hashes/sha256.js'
-import { secp256k1 } from '@noble/curves/secp256k1.js'
-import { xchacha20 } from '@noble/ciphers/chacha.js'
-import { base64 } from '@scure/base'
+import { getPublicKey, nip19 } from 'nostr-tools'
+import { hexToBytes } from '@noble/hashes/utils.js'
 import { ITEMS, listingD, offerPriceSats } from './fixture.ts'
+import { arg, connectPub } from './pub-rpc.ts'
 
 // The one payer_data key this project defines, decided in slice 2 because offers are minted
 // here and getting it wrong means re-minting every offer (/docs/spec.md §7.3). CLINK enumerates
@@ -42,10 +38,6 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const KEY_FILE = join(HERE, '.dev-key')
 const OUT_FILE = join(HERE, '.offers.json')
 
-const arg = (name: string, fallback: string) => {
-  const i = process.argv.indexOf(`--${name}`)
-  return i === -1 ? fallback : (process.argv[i + 1] ?? fallback)
-}
 const DRY = process.argv.includes('--dry')
 
 if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — run seed-listings.ts first`)
@@ -54,63 +46,9 @@ const pk = getPublicKey(sk)
 
 // The guest pairing string: nprofile, no token. /CLAUDE.md rule 3 — the narrowest credential
 // that works. `admin.connect` is nprofile:token and must never come near this file.
-const pairing = arg('nprofile', join(homedir(), 'lightning_pub', 'app.nprofile'))
-const nprofile = (existsSync(pairing) ? readFileSync(pairing, 'utf8') : pairing).trim()
-const decoded = nip19.decode(nprofile)
-if (decoded.type !== 'nprofile') throw new Error('--nprofile must be an nprofile1… or a file holding one')
-const APP_PUB = decoded.data.pubkey
-const RELAYS = decoded.data.relays?.length ? decoded.data.relays : ['wss://relay.lightning.pub']
-console.log(`# node app pubkey ${APP_PUB.slice(0, 12)}… on ${RELAYS.join(', ')}`)
+const { appPub, relays, rpc, close } = connectPub(sk, arg('nprofile', join(homedir(), 'lightning_pub', 'app.nprofile')))
+console.log(`# node app pubkey ${appPub.slice(0, 12)}… on ${relays.join(', ')}`)
 console.log(`# acting as       ${nip19.npubEncode(pk)}`)
-
-// --- kind 21000 transport ----------------------------------------------------------------
-// Lightning.Pub's own RPC envelope, and it is neither NIP-04 nor NIP-44: xchacha20 keyed on
-// sha256 of the ECDH x-coordinate, payload = base64(0x01 ‖ nonce[24] ‖ ciphertext).
-// Source: ~/lightning_pub/src/services/nostr/nip44v1.ts, used at nostrPool.ts:111,177.
-const shared = sha256(secp256k1.getSharedSecret(sk, hexToBytes('02' + APP_PUB)).slice(1, 33))
-const seal = (plaintext: string) => {
-  const nonce = randomBytes(24)
-  const body = new TextEncoder().encode(plaintext)
-  return base64.encode(new Uint8Array([1, ...nonce, ...xchacha20(shared, nonce, body)]))
-}
-const open = (payload: string) => {
-  const buf = base64.decode(payload)
-  if (buf[0] !== 1) throw new Error(`unsupported envelope version ${buf[0]}`)
-  return new TextDecoder().decode(xchacha20(shared, buf.subarray(1, 25), buf.subarray(25)))
-}
-
-const pool = new SimplePool()
-const pending = new Map<string, (res: any) => void>()
-// One filter OBJECT — nostr-tools 2.24.3 (/docs/spike-findings.md §13.9).
-pool.subscribeMany(RELAYS, { kinds: [21000], '#p': [pk], authors: [APP_PUB] }, {
-  onevent: e => {
-    let res: any
-    try {
-      res = JSON.parse(open(e.content))
-    } catch (err) {
-      return console.log(`#   undecryptable response: ${String(err).slice(0, 80)}`)
-    }
-    pending.get(res.requestId)?.(res)
-  },
-})
-
-const rpc = async (rpcName: string, body: unknown, timeoutMs = 15_000): Promise<any> => {
-  const requestId = bytesToHex(randomBytes(16))
-  // nostrMiddleware.ts:92 rejects the request unless authIdentifier equals the event pubkey.
-  const content = seal(JSON.stringify({ rpcName, authIdentifier: pk, requestId, body }))
-  const event = finalizeEvent(
-    { kind: 21000, created_at: Math.floor(Date.now() / 1000), tags: [['p', APP_PUB]], content },
-    sk,
-  )
-  const answered = new Promise<any>((resolve, reject) => {
-    pending.set(requestId, resolve)
-    setTimeout(() => reject(new Error(`${rpcName}: no response in ${timeoutMs}ms`)), timeoutMs)
-  })
-  await Promise.any(pool.publish(RELAYS, event))
-  const res = await answered.finally(() => pending.delete(requestId))
-  if (res.status !== 'OK') throw new Error(`${rpcName}: ${res.reason ?? JSON.stringify(res)}`)
-  return res
-}
 
 // --- mint --------------------------------------------------------------------------------
 type OfferConfig = {
@@ -170,5 +108,5 @@ if (!DRY) {
   console.log(`\n# wrote ${Object.keys(offers).length} noffer(s) to ${OUT_FILE}`)
   console.log('# now run: node seed-listings.ts   (republishes the 30402s carrying clink_offer)')
 }
-pool.close(RELAYS)
+close()
 process.exit(0)

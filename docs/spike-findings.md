@@ -409,21 +409,30 @@ Therefore:
   challenge with the ephemeral payer key that appears in the invoice's
   `clink_requester_pub`), not something CLINK hands us.
 
-**What the seller can actually observe.** Three options, cheapest first:
+**What the seller can actually observe.** Three options — **and the ranking below was wrong;
+slice 3 corrected it. See §13.16.** Corrected order:
 
-1. **`GetLiveUserOperations`** — Lightning.Pub pushes a live `UserOperation`
+1. **`GetUserOfferInvoices`** — poll per offer; returns `invoice`, `offer_id`,
+   `paid_at_unix`, `amount`, and `data` (the stored `payer_data`)
+   (`offerManager.ts:89-104`). **This is the watcher's feed**, and it is the only one of the
+   three that answers *which item sold*. It is also the refund path's only route to the
+   buyer's pointer. `include_unpaid: false` makes the storage layer filter on
+   `paid_at_unix > 0` (`paymentStorage.ts:527-533`), so the response is exactly the settled
+   set for one item.
+2. **`GetLiveUserOperations`** — Lightning.Pub pushes a live `UserOperation`
    (`INCOMING_INVOICE`, amount, `operationId`, `internal` flag, `latest_balance`) over
    Nostr to the account's own key on every settlement
-   (`paymentSideEffects.ts:34-44`, `101-112`). Nostr-native, no HTTP. **This is the
-   watcher's feed.**
-2. **`GetUserOfferInvoices`** — poll per offer; returns `invoice`, `offer_id`,
-   `paid_at_unix`, `amount`, and `data` (the stored `payer_data`)
-   (`offerManager.ts:89-104`). This is how the refund path gets the buyer's pointer.
+   (`paymentSideEffects.ts:34-44`, `101-112`). Nostr-native, no HTTP, and lower latency —
+   but `UserOperation` carries **no `offer_id`** (`structs.proto:634-646`), so it cannot
+   attribute a payment to an item on its own and has to be followed by (1) anyway. It also
+   pushes once, so a watcher that was asleep never learns. A nudge, not a feed.
 3. **`callback_url`** — HTTP GET on settlement. Loopback addresses are explicitly
    **allowed** (`safeOutboundFetch.ts:121-131`: `isLoopbackIPv4`/`isLoopbackIPv6` return
    *not blocked*, while private ranges 10/8, 172.16/12, 192.168/16, 100.64/10, link-local
    and cloud-metadata IPs are blocked). So `http://127.0.0.1:<port>/paid?inv={invoice}` on
-   the seller's own machine works. Useful, but it is an HTTP listener — prefer (1).
+   the seller's own machine works, needs no credential, and is the one path that carries
+   `payerData` out of the node without an RPC (`paymentSideEffects.ts:27`). But it is an
+   HTTP listener, and it is push-once like (2).
 
 **Consequence for spec §7.2:** the static page **cannot** derive availability from relay
 receipts. Availability must come from the seller republishing the kind `30402` with updated
@@ -652,37 +661,113 @@ Paste the two `nak` outputs and the curl status lines.
 
 ---
 
-## 8. Signature prompt count for a 10-item publish — `NEEDS HUMAN`
+## 8. Signature prompt count for a 10-item publish — **ANSWERED 2026-08-21 from source**
 
-Cannot be measured without a bunker and a phone. But the spike found the lever that decides
-the answer, and it is not in spec §5.
+**Both Amber and nsec.app honour `perms` for arbitrary kinds, and Amber's default sign policy
+is the one that does. A 10-item publish costs 1 approval, or 5 if `perms` is ignored entirely.
+Under the ~15 threshold on every path, so the publish flow does not need redesigning.**
 
-**Floor, if nothing is batched:** 10 listings + 1 manifest + 1 kind `10063` (§7) + N photo
-uploads. With one Blossom auth per photo and 2 photos per item that is **32 prompts** —
-over the ~15 threshold, so this matters.
+Read from the signers' source rather than measured on a phone — see NEEDS HUMAN below, which is
+now a confirmation rather than a discovery.
 
-**Lever 1 — Blossom auth batching is allowed by the spec.** See §9: one kind `24242` event
-can carry **many `x` tags** and authorise every upload in the batch. That collapses N photo
-prompts to **1**.
+**The NIP is no help, and that was the right read.** NIP-46 defines `perms` as "a comma-separated
+list of permissions the _client_ is requesting be approved by the _remote-signer_", format
+`method[:params]`, "optional parameter for `sign_event` is the kind number" (`nips/46.md`). No
+MUST, no SHOULD. It is a request, so the answer lives entirely in the two implementations.
 
-**Lever 2 — NIP-46 `perms`.** A bunker connection can be opened with pre-granted
-permissions as a comma-separated `method[:params]` list, where the param for `sign_event`
-is the kind number (`nips/46.md:113`), e.g.
-`perms=sign_event:30402,sign_event:15128,sign_event:24242,sign_event:10063`. If the signer
-honours it, a 10-item publish is **1 approval at connect time**, not 12.
+**Amber** (`greenart7c3/Amber`, `master`, read 2026-08-21):
 
-Whether Amber / nsec.app actually honour `perms` for arbitrary kinds is
-**UNVERIFIED** — it is a signer-implementation question, not a NIP question.
+- Parses `perms` out of the `nostrconnect://` query into `Permission(type, kind)` —
+  `service/NostrConnectUtils.kt:71-92`. Each defaults to `checked = true`
+  (`models/Permission.kt:24`).
+- `configureSignPolicy` (`service/AmberUtils.kt:196-247`) branches on the account's sign policy:
+  - **0, "Approve basic actions"** — *discards the request* and installs `basicPermissions`
+  - **1, "Manually approve each permission"** — writes every requested perm with
+    `RememberType.ALWAYS` and `acceptUntil = Long.MAX_VALUE / 1000`, i.e. granted forever
+  - **2, "I fully trust this application"** — signs everything, no per-kind rows at all
+- At request time `isRemembered` (`service/IntentUtils.kt:1105-1119`) returns `true` when
+  `acceptUntil > now && acceptable`, and the bunker screen auto-approves on a kind-matched row
+  (`ui/components/BunkerSingleEventHomeScreen.kt:764-785`). No prompt is drawn.
+- **The default account sign policy is 1** — `LocalPreferences.kt:789`,
+  `getInt(PrefKeys.SIGN_POLICY.key, 1)`. The default is the mode that honours `perms`.
 
-**NEEDS HUMAN — what to run**
+**nsec.app** (`nostrband/noauth`, `main`, last pushed 2025-05-26):
 
-1. Pair the builder (or any NIP-46 client) with your bunker using a `nostrconnect://` URI
-   including `perms=sign_event:30402,sign_event:15128,sign_event:10063,sign_event:24242`.
-2. Publish 10 listings with 2 photos each.
-3. Report: signer name + version, and the **prompt count**. Also say whether the signer
-   showed the requested perms at connect time and whether it then stopped prompting.
+- Reads `perms` from the `nostrconnect://` query (`client/src/hooks/useHandleNostrConnect.ts:25-34`)
+  and from the `connect` method's third param.
+- The connect modal defaults to `ACTION_TYPE.REQUESTED` whenever the app asked for perms
+  (`client/src/components/Modal/ModalConfirmConnect/ModalConfirmConnect.tsx:95-101`) and saves
+  them with `remember: true`.
+- `getDecision` (`backend/src/backend.ts:551-578`) exact-matches `sign_event:<kind>` and returns
+  `ALLOW` — the request never reaches a prompt.
 
-**Threshold:** if over ~15, redesign the publish flow before building the UI.
+**Neither signer's "basic" bundle contains a single kind this project uses.** Amber's
+`basicPermissions` (`models/BasicPermissions.kt:3-30`) is kinds 0, 1, 3, 4, 5, 6, 7, 9734, 9735,
+10000, 10002, 10003, 10013, 22242, 27235, 30023, 30078, 31234; nsec.app's `packageToPerms(BASIC)`
+(`common/src/helpers.ts:38-60`) is a shorter version of the same list. `30402`, `30405`, `15128`,
+`10063` and `24242` are in neither. `30078` — slice 6's NIP-78 private shop state — is in Amber's,
+which is luck rather than design.
+
+**The count, for 10 items with 2 photos each:**
+
+| Path | Prompts |
+|---|---|
+| `perms` requested and granted at connect | **1** — the connect screen itself |
+| No `perms`, seller taps "remember always" on each new kind | **5** — one per distinct kind |
+| No `perms`, seller never remembers | **33** — 10 + 1 + 1 + 1 + 20 |
+
+The middle row is the one this section previously missed, and it is the one that actually
+retires the question. Both signers key a remembered grant on `(app, type, kind)`, so the twenty
+Blossom auths are all kind `24242` and cost **one** approval between them — with or without
+`perms`. There is no path to 33 that does not require the seller to decline to remember
+anything, thirty-three times.
+
+**The perms string the builder should send:**
+
+```
+perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078
+```
+
+Two things that bite:
+
+- **There is no "all kinds".** `NostrConnectUtils.kt:128` drops any `sign_event` perm carrying no
+  kind. Every kind must be enumerated at connect time; a kind added later costs one prompt, then
+  is remembered.
+- **`30405` is easy to forget.** The sale collection is a separate kind from the listings, and
+  spec §5's original example string omitted it.
+
+One item is on our side rather than the signer's: a NIP-46 grant is keyed to the **client's**
+pubkey. A builder that mints a fresh client key on every page load makes the seller re-approve
+the connection every session. Persist it in `localStorage` — slice 4.
+
+**Lever 1 is dead, and this section was stale about it.** The earlier text claimed Blossom auth
+batching collapses N photo prompts to 1. §9 and §13.11 measured otherwise: batching is permitted
+by BUD-11 but blossom.band misattributes every blob after the first, so we budget one auth per
+photo. It does not change the answer — the twenty auths are one kind and therefore one grant —
+but the old floor of "32 prompts, and the only remaining lever is `perms`" was wrong twice over.
+
+**NEEDS HUMAN — confirmation, not discovery**
+
+The residual risk is a UI one: Amber's policy 0 silently discards the requested perms and gives
+you the no-`perms` path with no error. Worth one run to confirm the connect screen behaves as the
+source says.
+
+1. Pair any NIP-46 client with your bunker using a `nostrconnect://` URI carrying the perms
+   string above.
+2. Report: signer name + version, whether the connect screen pre-selected "Manually approve each
+   permission", whether all requested perms were listed and pre-checked, and the prompt count
+   for a 10-item publish.
+
+**Threshold:** was "if over ~15, redesign the publish flow before building the UI." Not reached
+on any path, so slice 4 builds as planned.
+
+**Scope narrowed 2026-08-21 (slice 3): this no longer gates slice 3, only slice 4.** It was
+briefly the worse question, because a watcher that signed each stock update through a bunker
+would push an approval prompt to the seller's phone on every sale, during their own yard sale.
+That watcher does not exist: slice 3's watcher holds no signing key at all and publishes kind
+30402 events the seller pre-signed at seed time (`/spike/ladder.ts`). Signing happens at the
+desk, before the sale, whatever `perms` turns out to do. The publish-flow question is unchanged
+and still needs a phone.
 
 ---
 
@@ -802,6 +887,14 @@ switch" — is satisfiable **by the node**, which is far better than by our own 
 the refund path as a kind `21002` debit from the watcher key against the seller's `ndebit`
 pointer, capped by a frequency rule (e.g. 50 000 sats/day). A bug in our watcher then costs
 at most one day's cap, and the seller can revoke without touching the node.
+
+**The signing side needs no credential at all — answered in slice 3.** This section was
+written about spend authority and missed the other half: republishing a kind `30402` means
+signing *as the seller*, and no delegated key can do it, because a listing's authority is its
+signature (§11: identity comes from the listing signature, never from the payment pointer).
+The resolution is that the watcher does not sign. A yard-sale item has a finite set of future
+states — stock 3 can only become 2, 1, 0 — so the seller signs all of them at publish time and
+the watcher holds a bundle of already-signed events. See `/spike/ladder.ts` and spec §7.2.
 
 **Residual, and it is unavoidable today:** the *observation* side still needs a "User"
 credential on the seller's account, which implies spend authority over that account's
@@ -1009,3 +1102,44 @@ invalidate.
     custom domain, or accepting QR-only — but a custom domain is the infrastructure this
     project claims to remove, so this is a tension to name on stage rather than paper over.
     Decide by slice 9.
+
+16. **`GetLiveUserOperations` cannot attribute a payment to an item, so spec §7.2's ranking was
+    backwards.** `UserOperation` (`~/lightning_pub/proto/service/structs.proto:634-646`) carries
+    `paidAtUnix`, `type`, `inbound`, `amount`, `identifier`, `operationId`, `service_fee`,
+    `network_fee`, `confirmed`, `tx_hash`, `internal` — and **no `offer_id`**. For a settled
+    invoice `identifier` is the bolt11 (`paymentSideEffects.ts:36`), which is a fine idempotency
+    key and tells you nothing about which item sold. Anything wanting per-item availability has
+    to call `GetUserOfferInvoices` regardless, so the live feed is at best a latency nudge in
+    front of the call that does the real work. It is also push-once: `sendOperationToNostr`
+    fires at settlement (`paymentSideEffects.ts:101-112`) and a watcher that was asleep never
+    learns, whereas `GetUserOfferInvoices` returns the whole settled set on every call and is
+    therefore restart-safe with no persisted state of our own. Slice 3's watcher polls.
+
+    Two smaller details worth having: the live push arrives on the kind 21000 RPC channel with
+    the **fixed** `requestId: "GetLiveUserOperations"` (`paymentSideEffects.ts:107`), so an RPC
+    client that routes on `requestId` simply drops it — which is what `/spike/pub-rpc.ts` does.
+    And `GetUserOfferInvoices` takes `{ offer_id, include_unpaid }` (`structs.proto:893-896`);
+    with `include_unpaid: false` the storage query filters on `paid_at_unix > 0`
+    (`paymentStorage.ts:527-533`), so the response is exactly the settled set for one item.
+
+17. **Deleting a depleted offer destroys the buyer's refund pointer. Spec §7.4(a) is more
+    expensive than it looks.** §7.4(a) makes "the watcher deletes the item's offer on depletion"
+    v1's strict mode. `DeleteUserOffer` drops only the `UserOffer` row
+    (`offerStorage.ts:27-29`); the settled `UserReceivingInvoice` rows survive with their
+    `offer_id` and their stored `payer_data`. The damage is to who can still read them:
+
+    - `GetUserOfferInvoices` looks the offer up first and throws `"Offer not found"` when it is
+      gone (`offerManager.ts:89-93`). The watcher goes blind on that item at exactly the moment
+      the late settlement it cares about would arrive.
+    - That RPC is the **only** way the stored `payer_data` leaves the node. `grep`ing every
+      reader leaves one other: the offer's own settlement `callback_url`
+      (`paymentSideEffects.ts:27`), which our offers set to `''`.
+
+    So deleting the offer permanently destroys the refund pointer for every invoice under it.
+    An oversell *is* a payment that settles after depletion, and slice 7 exists to refund it —
+    shipping a sellout that throws the pointer away would break the slice that sends the money
+    back. **Slice 3's watcher does not delete offers.** Strict mode needs a mechanism that does
+    not take the invoice history with it; the untested candidate is `UpdateUserOffer` to a
+    price outside the payable range, which leaves the row (and the history) in place. Or set a
+    loopback `callback_url` at mint time so the pointer is delivered at settlement and never
+    has to be read back. Decide before slice 7.
