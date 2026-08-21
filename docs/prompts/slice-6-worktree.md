@@ -1,3 +1,10 @@
+> **SUPERSEDED.** This brief covers running slice 6 in a parallel worktree while a
+> second agent works in the main checkout. That is not the plan — development
+> continues in the main directory once the review agent finishes. Use
+> **`slice-6-after-review.md`** instead. Kept for the case where two agents do end
+> up working at once; the missing-gitignored-files inventory below is still
+> accurate and is the part worth re-reading if that happens.
+
 Read these in full before writing any code:
 
 1. `/docs/status.md`   — start here
