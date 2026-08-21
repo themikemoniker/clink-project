@@ -766,8 +766,9 @@ briefly the worse question, because a watcher that signed each stock update thro
 would push an approval prompt to the seller's phone on every sale, during their own yard sale.
 That watcher does not exist: slice 3's watcher holds no signing key at all and publishes kind
 30402 events the seller pre-signed at seed time (`/spike/ladder.ts`). Signing happens at the
-desk, before the sale, whatever `perms` turns out to do. The publish-flow question is unchanged
-and still needs a phone.
+desk, before the sale. `perms` would in fact have covered the bunker-signing watcher — see the
+answer above — but a standing `sign_event:30402` grant sitting next to an always-on process is a
+worse posture than a watcher that holds no key at all, so the ladder is still the right shape.
 
 ---
 
@@ -819,6 +820,16 @@ seeded storefront rendered eight items with one image.
 
 Note the status codes are the tell: `201` = stored, `200` = "already have that hash". Under
 the batched token both were 200 because the server believed both were couch.
+
+**Update 2026-08-21: `cdn.satellite.earth` came out of the seeder's default.** It had been the
+second entry in `seed-listings.ts`'s `--blossom` list since slice 1 and never once accepted a
+blob — 401 for HTML, and on *images* it does not answer at all, so each of 21 uploads burned the
+full 20s `AbortSignal.timeout`. That was ~7 of every seed run's 8 minutes, spent on a server that
+has never stored a byte for us. The default is now `https://blossom.band` alone. This is not a
+decision to stop mirroring; it is deleting a server that was never a mirror. **Blobs are now on
+exactly one server**, which §9 already calls one garbage collection away from a broken
+storefront, so finding a second one that accepts anonymous uploads is unchanged as the
+highest-value infrastructure task.
 
 Other servers, same date: `cdn.satellite.earth` returns `401 {"message":"Permission denied:
 blossom.upload required"}` — it needs an account, so it is not a drop-in mirror.

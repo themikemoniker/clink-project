@@ -704,9 +704,19 @@ What it covers, and what it deliberately does not:
   page while an item sells sees it after a refresh, which is what a printed flyer's QR gets
   anyway. `storefront/src/nostr.ts` notes where a subscription would go.
 
-*Demo: `node watch-sales.ts` on the seller's machine, `node check-buy.ts <item> --pay` on a
-phone, refresh the page — the item flips to sold, or its count drops, with no server involved.
-The 6,000-sat `plants` payment from 2026-08-21 makes the first flip free.*
+**Proven with real money on 2026-08-21, for 2,000 sat.** The fixture gained `mugs` — 1,000 sat,
+`stock 3`, the same shape as `lamp` at 1/30th the cost per settlement — precisely so the
+multi-unit path could be exercised without spending 60,000 sats. Two payments produced
+`1 sold -> stock 2` then `2 sold -> stock 1`, each landing on the relays at base+1 and base+2 and
+each reading back through the storefront's own parser. What that closed, and the tests could not,
+is that the node reports **two distinct settled invoices against one `offer_id`** and the watcher
+counts them as two.
+
+*Demo: `node watch-sales.ts` on the seller's machine, `node check-buy.ts yardsale-2026-08-mugs
+--pay` on a phone, refresh the page — the count drops, with no server involved. One `mugs` unit
+is deliberately unsold so the last rung (sold, `clink_offer` dropped) is available on stage for
+1,000 sat. Better still: re-seed first, and watch the watcher put `plants` back to sold on its
+own — availability is recomputed from the node, never remembered.*
 
 **Slice 4 — Authoring.** Signer abstraction (NIP-07 + NIP-46), item form, photo upload to Blossom, publish 30402. *Demo: create a listing live.*
 

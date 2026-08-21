@@ -36,7 +36,14 @@ const arg = (name: string, fallback: string) => {
   return i === -1 ? fallback : process.argv[i + 1]
 }
 const RELAYS = arg('relays', SALE_RELAYS.join(',')).split(',')
-const BLOSSOM = arg('blossom', 'https://blossom.band,https://cdn.satellite.earth').split(',')
+// blossom.band only. `cdn.satellite.earth` was in this default until 2026-08-21 and never once
+// accepted a blob: it returns 401 for HTML (findings §7) and simply times out on images, so every
+// seed paid 21 x 20s of AbortSignal.timeout for nothing — ~7 minutes of the run. Removing it is
+// not a decision to stop mirroring; it is deleting a server that was never a mirror. The flag is
+// still here, and the moment a second server that accepts anonymous uploads is found it belongs
+// in this string, because blobs on one server are one garbage collection from a broken
+// storefront (/docs/spec.md §14, findings §9).
+const BLOSSOM = arg('blossom', 'https://blossom.band').split(',')
 
 // --- the throwaway identity -------------------------------------------------------------
 if (!existsSync(KEY_FILE)) {

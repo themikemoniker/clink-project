@@ -16,8 +16,7 @@ takes Lightning payments by sending CLINK invoice requests to the seller's own n
 settlement receipt that nobody else can decrypt. A watcher on the seller's machine now closes
 the loop: it observes settlement on the node and republishes the listing, **holding no signing
 key**, so `plants` reads as sold on the relays today. There is no server of ours anywhere in it.
-Next up is slice 4: the Signer abstraction and real authoring — which is where spike question 8
-finally has to be answered.
+Next up is slice 4: the Signer abstraction and real authoring.
 
 ---
 
@@ -27,18 +26,19 @@ finally has to be answered.
 |---|---|
 | Storefront | `https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.nsite.lol/` |
 | Seller pubkey (throwaway) | `fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0` |
-| Sale | kind 30405 `yardsale-2026-08`, 8 items on 4 public relays |
+| Sale | kind 30405 `yardsale-2026-08`, 9 items on 4 public relays |
 | Node | local Lightning.Pub 0.0.37 + LND, 1 private channel |
-| Node liquidity | **92,160 inbound / 6,000 outbound** — drifts with every sale |
-| Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **6,000 sats** |
+| Node liquidity | **90,160 inbound / 8,000 outbound** — drifts with every sale |
+| Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** |
 | Bundle | 30.9 KB gzip cold + 3.9 KB QR chunk on demand. Budget is **gzip** |
 
-Three items are buyable; the rest deliberately are not:
+Four items are buyable; the rest deliberately are not:
 
 | item | price | state |
 |---|---|---|
-| `plants` | 6,000 sat | paid 2026-08-21, and **the watcher has now marked it sold on the relays** |
-| `lamp` | 30,000 sat | buyable, `stock 3` — the multi-unit demo item |
+| `mugs` | 1,000 sat | **`stock 1` of 3 — two units bought for real on 2026-08-21.** The cheap demo item |
+| `plants` | 6,000 sat | paid 2026-08-21, and **the watcher has marked it sold on the relays** |
+| `lamp` | 30,000 sat | buyable, `stock 3` — the expensive one, still untouched |
 | `bike` | 180,000 sat | has an offer, but priced **above inbound** — invoice issues, payment cannot settle |
 | `couch` | 210,000 sat | same |
 | `records` | 80 MXN | fiat, cash at the table, no offer by design |
@@ -78,8 +78,10 @@ curl -s http://127.0.0.1:1776/api/health
 **Ordering matters.** `mint-offers.ts` → `seed-listings.ts` → `watch-sales.ts`. The seeder cuts
 the pre-signed ladder from the listings it publishes, so any edit to a price, a title or a photo
 means re-seeding before the watcher runs, or the watcher would republish the old text over the
-new. `seed-listings.ts` takes ~7 minutes, almost all of it `cdn.satellite.earth` timing out on
-21 blobs; blossom.band takes them all.
+new. `seed-listings.ts` takes ~1 minute since `cdn.satellite.earth` came out of its default on
+2026-08-21 — it had never accepted a single blob and cost 21 x 20s of timeout per run. **Blobs
+now live on exactly one server**, which is one garbage collection from a broken storefront; a
+second server that takes anonymous uploads is still the highest-value infrastructure find.
 
 `spike/.dev-key` and `spike/.offers.json` are gitignored and **not reproducible from the repo**.
 Losing `.dev-key` loses the seller identity, the storefront's npub, and access to the 6,000 sats
@@ -90,8 +92,8 @@ to delete it at slice 4.
 
 ## What is genuinely blocked, and on what
 
-Two spike questions remain, **both need a phone.** Neither blocked slice 3; question 8 blocks
-slice 4. Full `NEEDS HUMAN` blocks with exact commands live in `/docs/spike-findings.md`.
+One spike question remains, and it **needs a phone.** Nothing blocks a slice. Full `NEEDS HUMAN`
+blocks with exact commands live in `/docs/spike-findings.md`.
 
 ### Question 6, wallet half — does a third-party wallet supply `payer_data`?
 
@@ -108,19 +110,26 @@ no wallet can supply the key, every offer we mint is unpayable by anything but o
 and an item-QR sticker must point at the item page rather than the offer. We have already
 assumed that worst case in the design.
 
-### Question 8, bunker prompt count — the highest-value unknown left, and now slice 4's
+### Question 8, bunker prompt count — **ANSWERED 2026-08-21 from source**
 
-Pair a NIP-46 bunker (Amber, nsec.app) using a `nostrconnect://` URI carrying
-`perms=sign_event:30402,sign_event:15128,sign_event:10063,sign_event:24242`, publish 10 listings
-with 2 photos each, and report the **prompt count** plus the signer's name and version.
+**1 prompt** for a 10-item publish with `perms` granted at connect, **5** if `perms` is ignored
+entirely. Both Amber and nsec.app honour `perms` for arbitrary kinds, Amber's *default* sign
+policy is the one that persists them, and both key a remembered grant on `(app, type, kind)` — so
+twenty kind-`24242` Blossom auths cost one approval between them. The old 33-prompt floor assumed
+a seller who declines to remember anything thirty-three times. Nothing is over the ~15 threshold,
+so **slice 4 builds the publish flow as planned.**
 
-**If it exceeds ~15, the publish flow needs redesigning before slice 4 builds a UI on top of
-it.** It briefly looked like it gated slice 3 as well — a watcher signing each stock update
-through a bunker would prompt the seller's phone during their own yard sale. Slice 3's watcher
-signs nothing, so this is a slice-4 question again. Blossom auth batching is dead (findings §9), so NIP-46 `perms` is the only remaining lever
-and nobody has verified any signer honours it for arbitrary kinds. There is no probe script for
-this yet; writing one is ~40 lines against `nostr-tools/nip46` and does not require the real
-Signer abstraction.
+Send this at connect — note `30405`, and note that neither signer accepts a bare `sign_event`
+with no kind:
+
+```
+perms=get_public_key,nip44_encrypt,nip44_decrypt,sign_event:30402,sign_event:30405,sign_event:15128,sign_event:10063,sign_event:24242,sign_event:30078
+```
+
+Read from source, not measured on hardware. One confirmation run remains, and the residual risk
+is a UI one: Amber's "Approve basic actions" policy silently discards the requested perms and
+gives you the no-`perms` path with no error. Citations and the exact code paths are in findings
+§8.
 
 ---
 
@@ -150,8 +159,11 @@ Consequences worth carrying forward:
 
 - **The watcher holds no signing key.** Not "the narrowest credential" — none. It still holds a
   node credential to *read* settlements, and that one is not read-only (findings §10).
-- **Spike question 8 no longer gates slice 3, only slice 4.** A bunker-signing watcher would
-  have prompted the seller's phone once per sale, mid-yard-sale. This one signs nothing.
+- **Spike question 8 never applied to slice 3.** A bunker-signing watcher would have prompted
+  the seller's phone once per sale, mid-yard-sale. This one signs nothing. (q8 was separately
+  answered from source the same day — `perms` is honoured — which makes that watcher buildable
+  but not preferable: a standing `sign_event:30402` grant next to an always-on process is what
+  holding no key avoids.)
 - **No persisted idempotency state.** Remaining stock = `units − |distinct settled invoices|`,
   recomputed from the node each poll. The node holds the state; a restart recomputes it; a
   replayed kind 21001 that never became a payment cannot move it.
@@ -182,19 +194,33 @@ Two things measured while building that changed the spec:
 cd spike && npm test                     # 8/8
 cd storefront && npm test                # 27/27, unchanged
 cd spike && node mint-offers.ts --dry    # transport still talks to the node after the lift
-cd spike && node seed-listings.ts        # 6 ladder steps for 4 items
-cd spike && node watch-sales.ts --once   # -> plants: 1 sold -> stock 0 (SOLD), 2/4 relays
+cd spike && node seed-listings.ts        # 9 ladder steps for 5 items
+cd spike && node watch-sales.ts          # then pay something
 ```
 
-Then read back off the public relays through the storefront's own parser: `plants` is
-`sold=true`, `buyable=no`, `created_at` exactly one second after the base listing. **The gap
-this slice was pointed at is closed** — the 6,000-sat payment from 2026-08-21 now shows on the
-page.
+**Proven with real money, 2026-08-21, for 2,000 sat total.** `mugs` exists precisely so this did
+not cost 60,000: same shape as `lamp` (sats-priced, `stock 3`, identical ladder) at 1/30th the
+cost per settlement. Two payments through `check-buy.ts yardsale-2026-08-mugs --pay`:
 
-**Not yet proven with money: the multi-unit decrement.** `lamp` (30,000 sat, `stock 3`) is
-inside inbound and is the demo item, but nobody has paid it. The arithmetic and the rung
-selection are covered by the tests; what is unproven is a second settled invoice on one offer.
-`node check-buy.ts yardsale-2026-08-lamp --pay` costs 30,000 real sats — ask before running it.
+```
+02:34:12  yardsale-2026-08-mugs: 1 sold -> stock 2, 3/4 relays
+02:35:51  yardsale-2026-08-mugs: 2 sold -> stock 1, 3/4 relays
+```
+
+Read back off the public relays through the storefront's own parser after each: `stock=2` then
+`stock=1`, both `buyable=yes`, `created_at` at base+1 and base+2 — the ladder's rungs, in order.
+
+What the money closed that the tests could not: **the node reports two distinct settled invoices
+against one `offer_id`, and `settledCount` counts them as 2.** That was the last untested link;
+everything else on the path was already covered by `ladder.test.ts`.
+
+**The watcher also self-healed, unplanned and worth demoing.** Re-seeding republished `plants` as
+available with a fresh `created_at`; the watcher put it straight back to sold on its first tick,
+because remaining stock is recomputed from the node rather than remembered. That is a better
+stage beat than the sellout — it shows where the state actually lives.
+
+`mugs` has **one unit left on purpose**: a 1,000-sat item to sell live on stage instead of a
+30,000-sat one. Paying it takes the ladder to its last rung — sold, `clink_offer` tag dropped.
 
 ---
 

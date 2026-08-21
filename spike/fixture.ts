@@ -51,6 +51,14 @@ export const ITEMS: FixtureItem[] = [
     summary: 'Recently serviced. New chain and bar tape.', photo: true },
   { d: 'lamp',    title: 'Brass floor lamp',            price: ['30000', 'sats'],  stock: '3',
     summary: 'Three of these. Rewired, all work.', photo: true },
+  // The cheap multi-unit item, added 2026-08-21 to prove slice 3's decrement with real money
+  // without spending 30,000 sats a go. Same shape as `lamp` — priced in sats, stock 3, so it
+  // exercises the identical ladder — at 1/30th the cost per settlement. Two payments prove the
+  // decrement and that the node reports two DISTINCT settled invoices against one offer, which
+  // is the only part of watch-sales.ts money had not yet touched. The third unit is deliberately
+  // left unsold: it is a 1,000-sat item to sell live on stage instead of a 30,000-sat one.
+  { d: 'mugs',    title: 'Coffee mugs, mismatched',     price: ['1000', 'sats'],   stock: '3',
+    summary: 'Three left, none of them a matching pair. All survived the move.', photo: true },
   // priced in pesos: cash only, no offer, no Buy button
   { d: 'records', title: 'Records, jazz and salsa',     price: ['80', 'MXN'],      stock: '24',
     summary: 'Priced each, cash at the table. Mostly VG+, a few beat up — dig through the crate.', photo: true },
