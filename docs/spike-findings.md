@@ -1154,3 +1154,24 @@ invalidate.
     price outside the payable range, which leaves the row (and the history) in place. Or set a
     loopback `callback_url` at mint time so the pointer is delivered at settlement and never
     has to be read back. Decide before slice 7.
+
+18. **A NIP-46 bunker cannot drive Lightning.Pub's kind 21000 RPC, which forces spec §14's
+    "Manage or native?" question.** `nostrPool.ts:110-113` branches on kind:
+    `if (e.kind === 21000) content = decryptV1(..., getConversationKeyV1(app.privateKey, e.pubkey))`
+    — the custom `nip44v1` envelope of §13.13, keyed on `sha256` of the raw ECDH x-coordinate —
+    `else` standard NIP-44 v2. NIP-46 exposes `sign_event`, `nip04_*`, `nip44_*`, `get_public_key`
+    and `ping`; it never exposes raw ECDH or a private key, so a browser holding only a bunker
+    connection **cannot construct a kind 21000 request at all**. `/spike/mint-offers.ts` and
+    `/spike/pub-rpc.ts` only work because the spike holds a raw key in `/spike/.dev-key`.
+
+    CLINK's own kinds are unaffected: `21001`–`21004` all carry NIP-44 encrypted content
+    (`/docs/clink-notes.md` §1, quoting `clink-offers.md:103-108`, `clink-debits.md:105-110`,
+    `clink-manage.md:20-25`, `clink-enroll.md:44-53`), which is exactly what a bunker does expose.
+
+    ⇒ **Slice 4 must mint offers over CLINK Manage (kind 21003), not the native RPC.** It is not
+    a preference between a portable path and a convenient one, as spec §14 framed it — the
+    convenient one is unreachable the moment the seller's key lives in a signer instead of a file,
+    and rule 2 says it always will. Budget the one `AuthorizeManage` prompt (§13.4), and expect
+    the `fields` wrapper disagreement (§13.3). The alternative — a browser-generated key with its
+    own account on the seller's node — is worse than it looks: the offers, and therefore the
+    money, would belong to *that* account rather than the seller's.

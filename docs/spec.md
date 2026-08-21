@@ -92,6 +92,124 @@ These are not preferences. Violating them destroys the pitch.
 4. **We have no backend, no database, no accounts.** All persistent state is signed Nostr events on public relays plus Blossom blobs.
 5. **The builder itself deploys as an nsite.** If our own app needs a server, the thesis is false.
 6. **Any always-on process (the watcher/shop daemon) is run by the seller, not by us.**
+7. **We do not custody a seller's funds by default, and never silently.** Their money lands on a
+   node we do not operate unless they have explicitly chosen otherwise. See §3.1 for the models
+   and §3.2 for the one case where we do hold funds and what that costs. This is a different axis
+   from rules 1 and 2 — satisfying those does not satisfy this.
+
+### 3.1 Custody model
+
+**Decided 2026-08-21.** The word "custody" appeared exactly once in this project before that date
+(`/CLAUDE.md`, "no-key-custody"), and it referred to keys. Nobody had written down who holds the
+*money*. The architecture already assumed an answer in §1, §4 and §12; §6.6 and §11 q11 quietly
+assumed a different one. This section settles it.
+
+**The rule: by default, the seller's money lands on a node we do not operate.**
+
+| Model | Who holds the sats | Status |
+|---|---|---|
+| **1. Seller runs their own Pub** | Seller | **Default, and what the demo runs on.** What §1, §4 and §12 describe |
+| **2. Subaccount on our Pub** | **Us** | **Opt-in fallback only.** Never a silent default. Constraints in §3.2 |
+| **3. Seller uses somebody else's Pub** | That operator | **Supported, and named.** The app is agnostic; the seller is not |
+
+**What model 2 actually means, from the source rather than from principle.** Lightning.Pub's
+multi-tenancy is real (§11 q11) and it is custodial. On a Pub we operate:
+
+- A guest seller's balance is `balance_sats`, an integer column, beside `locked`, a boolean — that
+  is the entire `User` entity (`~/lightning_pub/src/services/storage/entity/User.ts:4-22`). Their
+  money is a number in our database and a freeze switch we hold.
+- The sats are in **our** channels. Payouts run through our LND (`paymentManager.ts:476+`), and an
+  account-to-account transfer is `PayInternalInvoice` — a database move, no Lightning involved.
+- We would hold `GetSeed`, `BanUser`, `CloseChannel` and the rest of the 21 Admin-scoped RPCs
+  (`proto/service/methods.proto`, `auth_type = "Admin"`; see `/docs/spike-findings.md` §10).
+- Lightning.Pub's own admin dashboard reports the aggregate of guest balances as `users_balance`
+  alongside LND assets in `GetAssetsAndLiabilities` (`adminManager.ts:382-402`). The software books
+  them as **liabilities** because that is the accounting term for money you are holding for
+  someone else.
+
+Holding other people's money and paying it out on request is the activity money-transmission
+regimes are written about. Whether any particular jurisdiction reaches a small community Pub is a
+lawyer's question and not ours. What is ours to state plainly: model 2 creates the pooled balance
+§12's threat model is built around not having, and it narrows §1's claim from "no custodian exists"
+to "no custodian by default." **Both remain true statements. Only the second one is true of a
+seller who took the fallback**, and the pitch must not blur them.
+
+**Rules 1 and 2 do not protect against this.** They are about keys, and they hold under every
+model — a guest seller's nostr identity key never touches our infrastructure. Custody of funds is
+a separate axis, and the shared-Pub design hands us the second without ever touching the first.
+That is why it needed its own rule.
+
+**What the single Pub instance in this repo is.** It is the *seller's* node, and the seller is us:
+the throwaway identity in `/spike/.dev-key` owns the account, and the ~6,000 sats sitting in it are
+our own. That is model 1 and it stays model 1. It becomes model 2 the moment a second person's sats
+live in it — not when we add a feature, but when someone else's balance appears in that table.
+Anyone we knowingly hand the guest `app.nprofile` to is someone we have agreed to hold money for;
+that can be a defensible thing to do for people you know, and it is not a product.
+
+**What keeps us out of custody, structurally.** The storefront pays whatever `noffer` the listing
+carries, and never learns anything about the destination beyond TLV 0's service pubkey and TLV 1's
+relay. The builder's job is to publish a pointer, not to be the destination. Provisioning therefore
+stays behind one swappable function (`/docs/spike-findings.md` §11): paste-a-pairing-string today,
+CLINK Enroll (kind `21004`) when Lightning.Pub implements it. Nothing in the code needs to know
+whose node it is, which is precisely what makes "not ours" cheap to hold to.
+
+**What model 3 costs, and it is a disclosure cost, not an architectural one.** A seller on somebody
+else's Pub is custodied by that operator, and the buyer cannot see it: every seller on one Pub
+shares a service pubkey in TLV 0 and differs only in TLV 2 (`/docs/spike-findings.md` §11). The
+storefront already handles this correctly — a listing's authority is its own signature, never its
+payment pointer (`storefront/src/listing.ts`) — so no code changes. What is owed is honesty: the
+builder must tell a seller pasting a pairing string that the operator of that node holds their
+money until they withdraw it, and the pitch must not describe such a seller as self-custodial.
+
+**On stage:** "the seller's node" means a node the seller controls, and that is what the demo
+shows. The honest sentence about the fallback is that a seller who has no node can borrow ours,
+that this makes us their custodian for as long as a balance sits there, and that the architecture's
+point is that **nobody has to be one** — not that nobody is.
+
+### 3.2 The subaccount fallback (model 2)
+
+**Decided 2026-08-21, after §3.1.** A seller with no Lightning node needs some way to take money,
+and "go run a node first" is not a product. So we offer a subaccount on our Pub. This section is
+the price of that decision, written down before the code exists.
+
+**The default when a seller pastes no pointer is still "no Buy button", and that is already built.**
+`buyableOffer()` (`storefront/src/listing.ts`) returns nothing without a decodable `clink_offer`, so
+the item renders as cash-at-the-table — the same path `records` and `boxes` exercise in the fixture.
+For a yard sale that is a normal outcome, not a failure. **The subaccount is a thing a seller
+chooses, never a thing that happens to them because a field was blank.**
+
+Seven constraints. They are not optional; a fallback without them is the pooled-liquidity target
+`/CLAUDE.md` says this project exists in response to.
+
+1. **Explicit opt-in, with the sentence said out loud.** One screen, plain words: *your money sits
+   in a node we run until you withdraw it; we can see the balance and we could freeze it.* If that
+   sentence is not on the screen, the feature is not shipped.
+2. **The subaccount is owned by the seller's own pubkey.** `NostrUserAuthGuard` auto-creates an
+   account for whatever key asks (`nostrMiddleware.ts:13-18`, findings §11), so the account belongs
+   to the key that signs their listings. We hold the funds; we do not hold the credential. They can
+   reach the account from any CLINK client without us.
+3. **Withdrawal is CLINK Debits (kind 21002), not the native RPC.** Findings §13.18: a bunker-held
+   key cannot construct a kind 21000 request, so `PayInvoice`/`PayAddress` are unreachable from our
+   builder. Debits are NIP-44 and therefore reachable. Whether Lightning.Pub requires an account
+   owner to hold a self-grant before debiting their own subaccount is **`UNVERIFIED`** — check it
+   before any UI promises a withdraw button, because a subaccount you cannot withdraw from is not a
+   fallback, it is a trap.
+4. **Sweep, do not vault.** Collect a payout pointer at signup — same shape as the buyer's
+   `refund_pointer`, and `render.ts` already validates that shape (Lightning address or `noffer`).
+   Forward each settlement to it so the resting balance is minutes of exposure rather than the
+   length of a yard sale. A pass-through is a much smaller thing to be than a wallet.
+5. **Cap it, and let the node enforce the cap.** Same requirement §12 puts on the refund path, same
+   mechanism: a Debit grant carries a frequency rule checked inside the payment transaction, and
+   `BanDebit` is the kill switch (findings §10). Our code must not be the only thing between a bug
+   and other people's money.
+6. **A stated exit, and it is cheap.** When a seller gets their own node they re-mint offers there
+   and republish their `30402`s. The `noffer` is a tag, so migrating custody is a republish, not a
+   migration. Say this at signup — a fallback nobody can leave is not a fallback.
+7. **It does not scale, for reasons that have nothing to do with custody.** Every seller on our Pub
+   draws inbound from the same rented channel — 98,160 sat, leased to 2026-11-19 (findings §1). Two
+   active sellers exhaust it, and an exhausted channel hands buyers valid invoices that cannot
+   settle. Cap the number of fallback sellers at what the channel can carry, and put the lease
+   expiry where someone will see it.
 
 ---
 
@@ -315,7 +433,27 @@ Therefore, in order of preference:
 
 Lightning.Pub supports guest accounts natively: `app.nprofile` is a non-admin pairing string, and anyone who pastes it into ShockWallet gets an account on that node. This is the "Uncle Jim" pattern — friends and family get Lightning without running anything.
 
-This matters for scope. If a guest account can hold its own independently-addressable CLINK offer, then one community Pub can host an entire market of sellers, and "builder others can use" no longer requires every seller to run a node. If it can't, each seller needs their own node and the addressable market is much smaller. See §11 spike question 11 — this is now on the critical path.
+**Answered in slice 2 (§11 q11): yes, a guest account holds its own independently-addressable
+offer.** One community Pub can therefore host an entire market of sellers.
+
+**This section used to stop there, and stopping there was the mistake.** It read as pure unlocked
+scope — "builder others can use no longer requires every seller to run a node" — and never priced
+what running that Pub would mean. It means custody. A guest seller's balance is an integer and a
+freeze flag in the operator's database, the sats are in the operator's channels, and the Pub books
+the aggregate as a liability. **§3.1 is now the governing section**, and §3.2 scopes the one case
+where we do it: an opt-in fallback for a seller with no node, never a silent default.
+
+What survives here is the capability, not the business: a seller may use *somebody else's* Pub
+(§3.1 model 3), and the app is deliberately agnostic about whose node answers an `noffer`. Two
+consequences to design around, both from `/docs/spike-findings.md` §11:
+
+1. **Identity does not come from the payment pointer.** Every seller on one Pub shares a service
+   pubkey in TLV 0 and differs only in TLV 2, so a buyer cannot tell from an `noffer` which seller
+   they are paying — only which node. Authority comes from the signature on the kind `30402`.
+   `storefront/src/listing.ts` already works this way.
+2. **Liveness and custody are shared.** One Pub down is every seller on it down, and one operator
+   holds every balance on it. The builder must say so, in words, to a seller pasting a pairing
+   string.
 
 ---
 
@@ -749,7 +887,7 @@ Full answers with citations live in `/docs/spike-findings.md`; field names live 
 | 8 | Bunker prompt count for 10 items | **ANSWERED 2026-08-21 from source.** **1 prompt** with `perms` granted at connect, **5** without — both Amber and nsec.app honour `perms` for arbitrary kinds, and both key a remembered grant on `(app, type, kind)`, so twenty Blossom auths of one kind cost one approval. Under the ~15 threshold on every path; slice 4 builds as planned. Unmeasured on hardware — one confirmation run remains in findings §8 |
 | 9 | Blossom auth per upload | **Batching is permitted** — multiple `x` tags in one kind `24242` event (§5) |
 | 10 | Credential scoping for the watcher | **Better than feared.** `admin.connect` is never needed. Three levels exist (Admin / User / Guest); the refund path should use a **CLINK Debit grant held by a separate watcher key**, with a node-enforced frequency cap and `BanDebit` as the kill switch. Residual: observation still needs a User-scoped key, which implies spend authority over that account — so keep the observe key and the refund key separate, and try the credential-free loopback `callback_url` (§7.2) |
-| 11 | Guest account with its own offer? | **Yes, and slice 2 did it with no human in the loop.** The dev key spoke to the guest `app.nprofile`, got an account auto-created by `NostrUserAuthGuard`, and minted four offers — no pairing, no approval. **This corrects the `AuthorizeManage` assumption**: that grant gates CLINK Manage (kind 21003) only, not the native `AddUserOffer` RPC (kind 21000, `auth_type = "User"`). See findings §13.4. CLINK Enroll (kind `21004`) is still **not implemented** by Lightning.Pub 0.0.37 |
+| 11 | Guest account with its own offer? | **Yes, and slice 2 did it with no human in the loop.** *Custody consequence settled in §3.1–§3.2: the capability is real, and we use it only as an opt-in fallback for a seller with no node — never as a default.* The dev key spoke to the guest `app.nprofile`, got an account auto-created by `NostrUserAuthGuard`, and minted four offers — no pairing, no approval. **This corrects the `AuthorizeManage` assumption**: that grant gates CLINK Manage (kind 21003) only, not the native `AddUserOffer` RPC (kind 21000, `auth_type = "User"`). See findings §13.4. CLINK Enroll (kind `21004`) is still **not implemented** by Lightning.Pub 0.0.37 |
 
 **One item is still open** — 6, the wallet half only — and it has a `NEEDS HUMAN` block in the
 findings with the exact command to run. Question 7 closed in slice 1; 1, 2 and 5 closed with the
@@ -812,5 +950,5 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 - Do we ship a hosted gateway convenience URL, or force gateway choice? (A hosted one is a centralization we should at least name.)
 - Is `blind` on a Lightning.Pub offer worth using? It exists in the entity and reaches invoice creation, and is in no CLINK spec. `UNVERIFIED` — find out before enabling it; it may affect receive reliability. Slice 2 mints offers with it unset.
 - What is the `p:` offer-id prefix? It routes to a separate "product" system that bypasses `payer_data` validation and amount checks, and is in no CLINK spec. Slice 2 did **not** use it, and the `payer_data` bypass alone probably disqualifies it — a product offer cannot carry a refund pointer, so it cannot be refunded. Confirm before anyone reaches for it.
-- **Should the builder mint offers over CLINK Manage (21003) or the native RPC (21000)?** Slice 2 used the native RPC because it needs no grant and the seeder is throwaway. Manage is the portable path, is what "Best Use of CLINK" would reward, and costs one `AuthorizeManage` prompt. Decide before slice 4 writes the authoring UI, and note the spec/implementation disagreement in findings §13.3 (`fields` wrapper) if you take it.
+- ~~Should the builder mint offers over CLINK Manage (21003) or the native RPC (21000)?~~ **Answered 2026-08-21: Manage, and it is forced rather than chosen.** The native kind 21000 uses Lightning.Pub's custom `nip44v1` envelope, keyed on the raw ECDH x-coordinate (`nostrPool.ts:110-113`), and NIP-46 never exposes raw ECDH or a private key — so a builder holding only a bunker connection cannot construct a 21000 request at all. CLINK's own `21001`–`21004` are standard NIP-44, which a bunker does expose. Slice 2 got away with the native RPC only because `/spike/.dev-key` is a raw key on disk. Budget one `AuthorizeManage` prompt (findings §13.4) and expect the `fields` wrapper disagreement (§13.3). Full evidence: findings §13.18.
 - **Does the printed flyer need the item QRs now?** design.md §4's item stickers encode the item's `noffer`, which exists as of slice 2. But a raw-QR payer supplies no `refund_pointer`, so the node declines them outright — an item sticker today is a QR that cannot be paid. Either the sticker points at the item's page (`#/item/<d>`), or slice 8's fallback path changes what "required" means.
