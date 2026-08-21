@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-21**, end of slice 8 — the fallback path, and the page stopped having dead ends.
+Last updated: **2026-08-21**, end of slice 9 — the builder stopped publishing our neighbourhood into other people's listings.
 
 ---
 
@@ -26,7 +26,13 @@ event encrypted to the seller's own key. There is no server of ours anywhere in 
 closed the loop the other way: the watcher now sends money back.** An oversold item is refunded
 automatically over a CLINK Debit (kind 21002) from a separate key that holds no funds and no
 identity, capped by the seller's own node rather than by our code — and the cap and the `BanDebit`
-kill switch have both been watched firing. **Slice 8 answered the fallback question and the answer was "there is no second payment path,
+kill switch have both been watched firing. **Slice 9 was the last build slice, and its headline is that the builder had no sale of its own.**
+It imported `/spike/fixture.ts`'s and stamped our `d` prefix, our neighbourhood and our geohash on
+every item anybody authored — into a kind 30405 that nothing in the builder ever published. The
+builder authors the sale now. §10's map was cut rather than built (a basemap is a third-party
+hostname on every page load); what replaced it is the sale's own geohash as a `geo:` link, which
+found that the fixture's had been 5.94 km wrong since slice 1 because nothing had ever decoded
+one. **Slice 8 answered the fallback question and the answer was "there is no second payment path,
 and that is the design".** BOLT12 does not exist anywhere in this stack — not in Lightning.Pub,
 not even in this LND build's `lncli` — so §10's one-line description was corrected rather than
 attempted. What was left was the real question: three tiers of buyer, and we serve exactly one on
@@ -71,8 +77,8 @@ now a deliberate boundary rather than an accident.
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
 | Blossom | **four** servers, verified — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
-| Storefront bundle | **31.61 KB gzip JS** + 2.05 CSS + 2.4 HTML cold, + 3.91 KB QR chunk on Buy. Budget raised to 32 in slice 8, with reasoning — spec §9 |
-| Builder bundle | **57.3 KB gzip cold** (+4.3 for slice 6), + a built storefront in `public/site` (~99 KB raw) |
+| Storefront bundle | **32.01 KB gzip JS** + 2.12 CSS + 2.4 HTML cold, + 3.91 KB QR chunk on Buy. Budget raised to 33 in slice 9, with reasoning — spec §9 |
+| Builder bundle | **59.49 KB gzip cold** (+2.12 for slice 9), + a built storefront in `public/site` (~99 KB raw) |
 
 Four items are buyable; the rest deliberately are not:
 
@@ -96,14 +102,14 @@ Nothing here needs a build step; Node 24 runs the `.ts` files directly.
 ```bash
 # storefront
 cd storefront
-npm test            # 30 tests, node --test, no framework
+npm test            # 58 tests, node --test, no framework
 npm run build       # tsc --noEmit && vite build
 npm run size        # raw + gzip per asset
 npm run dev         # http://localhost:5173
 
 # the money path, against the running node
 cd spike
-npm test                               # 10 tests / 35 assertions, node --test — the ladder
+npm test                               # 27 tests, node --test — the ladder and the refund journal
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
 node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
                                        # --pay REFUSES without --pointer as of slice 8: a settled
@@ -131,7 +137,9 @@ node watch-sales.ts --refunds          # slice 3's watcher, armed. Off without t
 
 # slice 6: the admin panel
 node check-admin.ts [<npub>]           # drives /builder's admin module against the LIVE sale.
-                                       # No key, no node, publishes nothing. Free
+                                       # No key, no node, publishes nothing. Free.
+                                       # Slice 9: also reports the kind 30405 it read, and says
+                                       # so loudly if there isn't one
 node sales-report.ts [--json]          # settled sales: amounts, timestamps, refund pointers.
                                        # Reads .dev-key. The browser CANNOT do this — findings §13.25
 node sales-report.ts --outgoing        # money OUT: every refund the node has sent. Slice 8.
@@ -218,11 +226,11 @@ blocks with exact commands live in `/docs/spike-findings.md`.
 verified to derive the same seller pubkey). **That backup is on this machine only — get a copy
 off it.**
 
-**`spike/.dev-key.nsec` and `spike/.dev-key.qr.svg` are still in the working tree** — the seller's
-private key in two more formats, chmod 600 and gitignored. Asked again in slice 7 and the answer
-was to leave them because the import is imminent. **Delete both the moment the scan is done**;
-`node spike/export-key-qr.ts --yes` regenerates them in seconds if it is not. Losing this key loses the seller identity, the storefront's npub and nsite URL, and
-access to the sats in the node account.
+~~**`spike/.dev-key.nsec` and `spike/.dev-key.qr.svg` are still in the working tree**~~ —
+**DELETED 2026-08-21 in slice 9's Phase 0, after being asked in slices 7, 8 and 9.** The Amber
+import has happened, so the two extra readable copies of the seller's key had no remaining job.
+`node spike/export-key-qr.ts --yes` regenerates both in seconds if the import ever needs redoing.
+Both were gitignored and neither ever reached a commit.
 
 The import itself is unrun and needs a phone. `node spike/export-key-qr.ts --yes` writes the nsec
 and a scannable QR, both gitignored and chmod 600; delete them straight after. Amber is the right
@@ -1016,6 +1024,100 @@ never been rendered in a browser, so that session now covers five slices of unru
 
 ---
 
+## Slice 9 — what shipped, and the line that was wrong in three of its five items
+
+The last build slice, and the one where §10's description was least useful: of *"geohash map of
+nearby sales, printable item-sticker QR sheet, masthead editing, 404 page, empty states"*, **one
+was already done, one could not be built without putting a hostname on every page load, and one
+was not polish at all — it was the builder stamping our address on strangers' listings.**
+
+| file | what |
+|---|---|
+| `builder/src/sale.ts` | **new** — the sale as an event the builder authors: `saleTags`, `saleTemplate`, `draftFromSale`, `saleD`, `listingD`, `geohashOf`, `normaliseGeohash` |
+| `builder/src/stickers.ts` | **new** — the printable sticker sheet, design.md §4 |
+| `builder/src/sale.test.ts` | **new** — 14 tests over both, plus the cross-package geohash round trip |
+| `builder/src/listing.ts` | the fixture import is gone; `listingTags`/`eventsToSign` take the sale |
+| `builder/src/admin.ts` | `loadItems` returns the sale it reads; `draftFrom` takes the prefix |
+| `builder/src/publish.ts` | `publishSale` — one signature, no new bunker approval |
+| `builder/index.html`, `main.ts`, `style.css` | §3 the sale form, the sticker sheet, the print block |
+| `storefront/src/render.ts` | `geoUri`, `missingItemNote` |
+| `storefront/src/listing.ts` | `Sale.geo` — the `g` tag reaches the page for the first time |
+| `spike/fixture.ts` | the geohash, which was 5.94 km wrong |
+| `spike/check-admin.ts`, `check-manage.ts` | follow the new signatures; check-admin now reports the sale |
+
+### 1. The builder had no sale, and that is a much bigger thing than "masthead editing"
+
+`builder/src/listing.ts:13` was `import { SALE } from '../../spike/fixture.ts'`. Every item
+anybody authored — in the app a stranger opens at `npub1qqm97k4…nsite.lol` — got our `d` prefix,
+our `location`, our `g`, and an `a` tag pointing at `30405:<their own pubkey>:yardsale-2026-08`.
+
+The second half is worse than the first. `grep 30405` and the only writer in the repo was
+`/spike/seed-listings.ts:273`. **The builder signed items into a collection that did not exist for
+any seller but us**, and `check-deploy.ts` printed `(no kind 30405 — the page falls back to its
+own name)` for exactly that case, which reads like a graceful fallback rather than a missing
+feature. Verified fixed in the shipped bundle, not just the source:
+
+```
+$ grep -o 'Colonia Americana[^"]*\|9ewmr4z\|yardsale-2026-08' builder/dist/assets/index-*.js | sort -u
+(nothing)
+```
+
+**The sale's `d` is deliberately not a form field.** It is also every item's `d` prefix, and
+`draftFrom` refuses to edit an item outside it, so a text box for it is a box that orphans a whole
+sale on one typo. It is read back off the seller's own kind 30405 — which the panel already
+fetches in the same query — so the live fixture keeps `yardsale-2026-08` with nobody typing it.
+
+### 2. The map could not be built, and cutting it found a six-kilometre bug
+
+Findings §31 has the argument in full; the short version is that a basemap is a third-party
+hostname on a page whose only network calls are two relay subscriptions to one known author, that
+"nearby" means rendering events from strangers, and that the multi-precision `g` convention which
+would make the query expressible at all is specified in **NIP-CC, the geocaching draft**
+(`CC.md:53`), not in NIP-99 — and we emit one `g` tag anyway.
+
+What shipped instead is `geoUri`: the sale's own geohash, decoded in the page, as an RFC 5870
+`geo:` link around the neighbourhood. The OS opens the buyer's own map app; no tile is fetched.
+
+**And it immediately found that the fixture's `g` had been wrong since slice 1.** `9ewmr4z`
+decodes to 20.6261, -103.3930 — Guadalajara, **5.94 km from Colonia Americana**, which is what
+the `location` tag beside it says. It had been on four public relays for eight slices, and
+nothing had ever decoded it. Corrected to `9ewmxg9` (±76 m). *A tag nothing reads is a tag nothing
+checks.*
+
+### 3. The empty state slice 9 owed is the one slice 9 created
+
+`main.ts` `route()` fell through to the index in silence when `byD.get()` missed. The way a person
+reaches that state is by scanning a sticker off a physical object — which is the thing this slice
+prints. The mug sells, the seller takes the listing down, the sticker stays on the mug.
+`missingItemNote` says so, and refuses to guess between "gone" and "the relays did not answer"
+when nothing came back at all.
+
+### 4. The byte budget went 10 bytes over, and that is a disclosure rather than a rounding
+
+31.61 → **32.01** against a 32.00 ceiling set one slice ago. Two trims were taken because they
+were also simplifications and gzip did not move; the third was refused on §9's own precedent —
+the only lever left is copy, and shrinking the sentence that explains a dead sticker to improve a
+statistic is the trade §9 already refuses for `verifyEvent`. **Ceiling moves to 33 with ~1 KB of
+headroom and the same condition attached.** Spec §9 has the row.
+
+### Verified how
+
+```
+cd storefront && npm test          # 58/58 (+7), tsc clean, 32.01 KB gzip (+0.40)
+cd builder    && npm test          # 58/58 (+17), tsc clean, 59.49 KB gzip (+2.12)
+cd spike      && npm test          # 27/27, unchanged
+cd spike      && node check-admin.ts   # ALL CHECKS PASSED — and now reports the sale it read
+cd spike      && node check-buy.ts     # 5/5 free path against the live node, unchanged
+grep -o 'Colonia Americana\|9ewmr4z\|yardsale-2026-08' builder/dist/assets/index-*.js   # empty
+```
+
+### What is NOT proven, and it is the same two things as slice 8
+
+**No refund has been paid**, and **the browser half is unrun** — now across slices 4 through 9,
+which for the first time includes markup that only exists on paper. See below.
+
+---
+
 ## Traps that will cost an hour each
 
 - **`AuthorizeDebit` is commented out, and `EditDebit` cannot create a grant either.** It throws
@@ -1113,6 +1215,27 @@ never been rendered in a browser, so that session now covers five slices of unru
 - **`npm run build` and `npm run size` report different gzip numbers** (~0.7% apart, different
   compression levels). Every figure in the docs is vite's, i.e. `npm run build`. Mixing them is
   how a slice appears to have shrunk the bundle by changing which command it ran.
+- **`/docs/spec.md` §10's slice lines are a plan written before the answers, not a to-do list.**
+  Slice 8's claimed BOLT12, which does not exist in this stack. Slice 9's listed a 404 page that
+  had shipped in slice 1 and a map that cannot be built. **Check whether each item already exists
+  before building it, and check whether it can exist before scoping it.**
+- **The builder no longer imports `SALE` from `/spike/fixture.ts`, and must not start again.**
+  `REFUND_POINTER` and `SALE_RELAYS` are still shared on purpose (two spellings of the first is a
+  sale where half the items cannot be refunded). `SALE` is four fields and all four are wrong for
+  anybody who is not us. There is a bundle grep in the slice-9 section that catches a relapse.
+- **The sale's `d` is every item's `d` prefix.** Changing it orphans every item the seller has
+  published — the `a` tags point at a collection that no longer exists AND `admin.ts` `draftFrom`
+  stops recognising the items. That is why it is not a form field.
+- **A kind 30405 is a replacement, so publishing it sends every member every time.** A short read
+  from the relays means "Publish my sale" quietly un-lists whatever did not come back. They are
+  not deleted — `orderBySale` renders them as strays at the foot — but they move.
+- **The NIPs repo is NOT on this machine.** Findings' Sources table pins `656cecc`, re-fetched
+  2026-08-21 for §31. Anything cited from it must be re-fetched, never recalled.
+- **The multi-precision geohash convention is NIP-CC (geocaching), not NIP-99.** `CC.md:53`. And
+  nostr tag filters match exactly, with no prefix match (`01.md:33`) — so one `g` tag is not
+  findable by proximity, by construction.
+- **Build stickers AFTER deploying**, not before. They encode `<siteUrl>#/item/<d>` from the
+  gateway field, so a sheet printed before the first deploy points at a site that does not exist.
 - **Never guess a CLINK kind, field, tag, or error code.** They are in `/docs/clink-notes.md`
   with citations. Write `UNVERIFIED` and ask.
 

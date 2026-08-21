@@ -25,7 +25,14 @@ import { getPublicKey, finalizeEvent, type EventTemplate, type VerifiedEvent } f
 import { decrypt, encrypt, getConversationKey } from 'nostr-tools/nip44'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import { createOffer, decodeNmanage, listOffers, mintOffer } from '../builder/src/manage.ts'
-import { eventsToSign, listingD, type Draft } from '../builder/src/listing.ts'
+import { eventsToSign, type Draft } from '../builder/src/listing.ts'
+import { listingD, type SaleDraft } from '../builder/src/sale.ts'
+import { SALE } from './fixture.ts'
+
+// Slice 9: the sale is a parameter now (builder/src/sale.ts). This script drives the builder's
+// modules against the LIVE fixture sale, so it passes the fixture's — which is exactly the split
+// slice 9 made: /spike keeps its fixture, /builder stops borrowing it.
+const CHECK_SALE: SaleDraft = { d: SALE.d, title: SALE.title, summary: SALE.summary, location: SALE.location, g: SALE.g }
 import { parseListings } from '../storefront/src/listing.ts'
 import type { Signer } from '../builder/src/signer.ts'
 import { arg, connectPub } from './pub-rpc.ts'
@@ -140,11 +147,11 @@ const draft: Draft = {
   servers: [],
 }
 
-const events = eventsToSign(draft, pk, Math.floor(Date.now() / 1000)).map(t => finalizeEvent(t, sk))
+const events = eventsToSign(draft, pk, Math.floor(Date.now() / 1000), CHECK_SALE).map(t => finalizeEvent(t, sk))
 const parsed = events.map(e => parseListings([e], pk)[0])
 
 check(parsed.every(Boolean), `${events.length} events (1 listing + ${events.length - 1} ladder rungs) survive the storefront parser`)
-check(parsed[0]?.d === listingD('check-manage'), `d tag is ${parsed[0]?.d}`)
+check(parsed[0]?.d === listingD(CHECK_SALE.d, 'check-manage'), `d tag is ${parsed[0]?.d}`)
 check(!!parsed[0]?.offer, 'the storefront would draw a Buy button — the listed price and the minted offer agree')
 check(parsed[0]?.offer?.priceSats === SATS, `and it would pay ${parsed[0]?.offer?.priceSats} sats`)
 check(parsed.map(p => p?.stock).join(',') === '2,1,0', `ladder walks stock ${parsed.map(p => p?.stock).join(' -> ')}`)

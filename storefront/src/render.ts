@@ -53,6 +53,69 @@ export const formatPrice = (price: Money | undefined): string | undefined => {
 export const stockNote = (item: Item): string | undefined =>
   item.stock !== undefined && item.stock > 1 ? `${item.stock} available` : undefined
 
+// Geohash base32 (Niemeyer): no a, i, l or o, so a hand-typed one cannot be confused with a
+// digit. Not a nostr thing and not in any NIP — the NIPs only ever say "a geohash" and point at
+// Wikipedia (99.md:53, 52.md:24).
+const GEO32 = '0123456789bcdefghjkmnpqrstuvwxyz'
+
+/**
+ * The sale's own `g` tag, as a link a phone can open. This is ALL that is left of spec §10's
+ * "geohash map of nearby sales", and the deletion is the finding rather than a shortfall —
+ * /docs/spike-findings.md §31, spec §10 slice 9.
+ *
+ * A map needs a basemap and a basemap is a tile server: a third-party hostname fetched by every
+ * visitor, on a page whose entire claim is that it has no server behind it. "Nearby" also means
+ * rendering kind 30405s from authors nobody vetted, and every relay query this page makes is
+ * `authors: [<one pubkey>]` by construction (nostr.ts, buy.ts). A `geo:` URI needs none of that:
+ * RFC 5870 is resolved by the operating system, so the map app the buyer already trusts opens on
+ * the driveway and this page never learns that it happened.
+ *
+ * Returns undefined rather than a broken link for anything that is not a geohash — including the
+ * empty string, and including `a`, `i`, `l` and `o`, which are the four letters the alphabet
+ * deliberately omits and therefore the four that mark a typo.
+ */
+export const geoUri = (geohash: string | undefined): string | undefined => {
+  if (!geohash || !/^[0-9bcdefghjkmnpqrstuvwxyz]{1,12}$/.test(geohash)) return undefined
+  // Alternating bisection, longitude first, five bits per character.
+  const lat: [number, number] = [-90, 90]
+  const lon: [number, number] = [-180, 180]
+  let evenBit = true
+  for (const ch of geohash) {
+    const n = GEO32.indexOf(ch)
+    for (let bit = 4; bit >= 0; bit--) {
+      const box = evenBit ? lon : lat
+      const mid = (box[0] + box[1]) / 2
+      if ((n >> bit) & 1) box[0] = mid
+      else box[1] = mid
+      evenBit = !evenBit
+    }
+  }
+  // Decimals from the box the geohash actually resolves to, not a fixed five. A 3-character
+  // geohash is a ±78 km square, and printing 19.40922 for one claims a doorway.
+  const at = (box: [number, number]) =>
+    (((box[0] + box[1]) / 2)).toFixed(Math.max(1, Math.min(6, Math.ceil(-Math.log10(box[1] - box[0])) + 1)))
+  return `geo:${at(lat)},${at(lon)}`
+}
+
+/**
+ * A deep link to a `d` this sale does not have — which is what a **sticker outlives its item**
+ * produces, and slice 9 is the slice that prints the stickers (design.md §4).
+ *
+ * Before this, `main.ts` `route()` fell through to `renderIndex` in silence: somebody scanned a
+ * QR off a physical object and got an index page with no acknowledgement that they had asked for
+ * anything. The item count is the whole distinction, because with zero items the honest answer is
+ * that the page cannot tell a removed item from a relay that did not answer.
+ */
+export const missingItemNote = (d: string, itemCount: number): string => {
+  // Bounded once. It arrives from location.hash, i.e. from whoever typed or scanned it — h() puts
+  // it in the DOM through textContent so markup is inert either way, but a 40 KB URL would
+  // otherwise become a 40 KB paragraph.
+  const what = `“${d.slice(0, 80)}”`
+  return itemCount === 0
+    ? `Nothing came back from the relays, so ${what} may be gone or may just be unreachable. Try again in a moment.`
+    : `${what} is not in this sale. A sticker outlives the thing it was stuck to — this one has probably sold. What is left is below.`
+}
+
 const photo = (item: Item, sizes: string): HTMLElement => {
   const s = srcset(item)
   // The box is reserved whether or not a photo exists, so nothing on the page moves as blobs
@@ -77,6 +140,11 @@ const photo = (item: Item, sizes: string): HTMLElement => {
 
 const soldStamp = () => h('span', { class: 'stamp', 'aria-label': 'Sold' }, 'sold')
 
+const whereLink = (sale: Sale): Node | string => {
+  const uri = geoUri(sale.geo)
+  return uri ? h('a', { class: 'where-link', href: uri }, sale.location!) : sale.location!
+}
+
 export const renderMasthead = (sale: Sale | undefined, npub: string): HTMLElement =>
   h(
     'header',
@@ -86,21 +154,32 @@ export const renderMasthead = (sale: Sale | undefined, npub: string): HTMLElemen
     // GammaMarkets. The collection's `summary` is where the seller writes them for now; slice 6
     // needs to decide whether that stays a freeform line or earns a tag.
     sale?.summary && h('p', { class: 'dateline' }, sale.summary),
-    sale?.location && h('p', { class: 'dateline' }, sale.location),
+    // The neighbourhood, and — when the sale's `g` decodes — a link that opens it in whatever map
+    // app the buyer's phone already has. `geo:` is handed to the OS, so no tile server is fetched
+    // and nothing of ours is told that a buyer looked. On a laptop with no handler registered the
+    // link does nothing, which is why the text stays the text and the link is only ever wrapped
+    // around it. See geoUri() above.
+    sale?.location && h('p', { class: 'dateline' }, whereLink(sale)),
     // No npub when the page cannot tell whose sale it is (main.ts) — a byline reading
     // "Published by" with nothing after it is worse than no byline.
     npub && h('p', { class: 'byline' }, 'Published by ', h('code', {}, npub), ` · made with ${SITE_NAME}`),
   )
 
-export const renderIndex = (items: Item[]): HTMLElement => {
+/**
+ * The sale.
+ *
+ * `missingD` is set when the URL asked for an item this sale does not have — see
+ * missingItemNote() for why that is a state worth having and not just a redirect.
+ */
+export const renderIndex = (items: Item[], missingD?: string): HTMLElement => {
+  const main = h('main', { class: items.length ? 'items' : 'items empty' })
+  if (missingD) main.append(h('p', { class: 'missing' }, missingItemNote(missingD, items.length)))
   if (items.length === 0) {
-    return h(
-      'main',
-      { class: 'items empty' },
-      h('p', {}, 'Nothing is listed here yet, or the relays did not answer in time.'),
-    )
+    // Only when nothing was asked for: with a missing `d` the note above already covers the
+    // relay ambiguity, and saying it twice reads as two separate faults.
+    if (!missingD) main.append(h('p', {}, 'Nothing is listed here yet, or the relays did not answer in time.'))
+    return main
   }
-  const main = h('main', { class: 'items' })
   for (const item of items) {
     const price = formatPrice(item.price)
     const note = stockNote(item)

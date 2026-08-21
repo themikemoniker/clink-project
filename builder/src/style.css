@@ -129,3 +129,76 @@ output { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
 #items button { padding: 0.3rem 0.7rem; font-size: 0.85rem; }
 #items textarea { margin-top: 0.5rem; font-size: 0.9rem; }
 #cancel-edit { width: 100%; margin-top: 0.5rem; }
+
+/* --- slice 9: the sale, and the sticker sheet ---------------------------------------------- */
+
+#sale-state:empty { display: none; }
+#sale-geo { font: 0.95rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+#sale-locate { white-space: nowrap; }
+
+/* The sheet is built into the DOM and hidden on screen — there is nothing to look at, and a
+   wall of QR codes above the fold would bury the tool. Print is where it exists. */
+#sticker-sheet { display: none; }
+
+/* design.md §4: one per item, ≥2cm square, name and price above the code. Scan the thing, pay
+   for the thing.
+
+   @page is `auto` rather than a named size: the seller's printer knows whether it has A4 or
+   Letter and this sheet is a grid of fixed-width cells either way, so naming one would only ever
+   be wrong on the other continent. */
+@media print {
+  @page { margin: 10mm; }
+
+  /* The sheet is the ONLY thing that prints. Everything else on this page is a tool — a form,
+     a signer, a deploy button — and none of it means anything on paper. */
+  body > main { display: none; }
+
+  #sticker-sheet {
+    display: grid;
+    /* 45mm cells: a 25mm code plus its quiet zone, name and price. Four across on A4 or Letter
+       with 10mm margins, and `auto-fill` rather than a fixed count so a narrower page reflows
+       instead of clipping the last column. */
+    grid-template-columns: repeat(auto-fill, minmax(45mm, 1fr));
+    gap: 4mm;
+    color: #000;
+  }
+
+  .sticker {
+    /* design.md §3's rule, per sticker: nothing is worse than a QR split across two sheets.
+       Both spellings, because print engines are the last place either alias is safely dropped. */
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin: 0;
+    padding: 3mm;
+    border: 0.4pt dashed #000; /* the cut line */
+    text-align: center;
+  }
+
+  .sticker strong {
+    display: block;
+    font: 600 9pt/1.2 var(--sans, system-ui, sans-serif);
+    /* Two lines, then ellipsis. A long title must not push the code off its own sticker. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .sticker-price {
+    display: block;
+    font: 700 11pt/1.3 var(--sans, system-ui, sans-serif);
+    font-variant-numeric: tabular-nums;
+    margin: 0.5mm 0 1.5mm;
+  }
+
+  /* 25mm, comfortably over design.md §4's 2cm floor. At 43x43 modules for a deep link that is
+     0.58mm per module — the measurement in §4 was for the 2cm minimum, and there is room. */
+  .sticker-qr svg {
+    display: block;
+    width: 25mm;
+    height: 25mm;
+    margin: 0 auto;
+    fill: #000;
+    shape-rendering: crispEdges;
+  }
+}

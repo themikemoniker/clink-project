@@ -25,6 +25,7 @@ import { getPublicKey } from 'nostr-tools/pure'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import { draftFrom, imetaValues, loadItems, reusableOffer, soldCount } from '../builder/src/admin.ts'
 import { listingTags } from '../builder/src/listing.ts'
+import { draftFromSale, saleD } from '../builder/src/sale.ts'
 import { isStale } from './ladder.ts'
 import { SALE_RELAYS } from './fixture.ts'
 
@@ -56,10 +57,25 @@ console.log(`\n# ${npubEncode(pubkey)}`)
 console.log(`# ${SALE_RELAYS.join(', ')}\n`)
 
 const pool = new SimplePool()
-const owned = await loadItems(pool, SALE_RELAYS, pubkey)
+const { items: owned, sale: published } = await loadItems(pool, SALE_RELAYS, pubkey)
 pool.close(SALE_RELAYS)
 
+// SLICE 9. The builder authors the sale now rather than importing /spike/fixture.ts's, so this
+// script has to read the same one the panel would — its `d` is every item's `d` prefix and
+// therefore decides which items the edit form can even address.
+const sale = draftFromSale(published)
+sale.d = saleD(published)
+
 console.log('# 1. WHAT THE PANEL WOULD SHOW\n')
+// Slice 9's own check. `(no kind 30405)` used to read as a graceful fallback; it was the builder
+// never publishing one at all. If this line says "no sale", the masthead on the deployed
+// storefront is the site's own name and every item's `a` tag points at nothing.
+check(!!published, published
+  ? `sale "${published.title}" (${sale.d}) listing ${published.itemRefs.length} member(s)`
+  : `NO kind 30405 for this pubkey — the storefront falls back to its own name and every item's "a" tag points at a collection that does not exist. Publish the sale in the builder's section 3.`)
+check(!published || !!sale.g, sale.g
+  ? `its geohash is ${sale.g}, so the neighbourhood is a tappable geo: link`
+  : 'no geohash on the sale — the neighbourhood renders as plain text (optional)')
 check(owned.length > 0, `${owned.length} item(s) read off the relays, in the sale's own order`)
 for (const { item } of owned) {
   const units = ladder[item.d]?.units
@@ -75,7 +91,7 @@ for (const { item } of owned) {
 console.log('\n# 2. THE EDIT ROUND TRIP — what a Save would rewrite\n')
 let editable = 0
 for (const { item, event } of owned) {
-  const draft = draftFrom(item, event)
+  const draft = draftFrom(item, event, sale.d)
   if (!draft) {
     // Both refusals are deliberate and both protect the seller's data: this form speaks only
     // sats, and it can only address `d` tags inside this sale.
@@ -98,7 +114,7 @@ for (const { item, event } of owned) {
   const strip = (tags: string[][]) =>
     tags.filter(t => t[0] !== 'published_at').map(t => t.join(' ')).sort()
   const before = strip(event.tags)
-  const after = strip(listingTags(draft, pubkey, event.created_at))
+  const after = strip(listingTags(draft, pubkey, event.created_at, sale))
   const lost = before.filter(t => !after.includes(t))
   const added = after.filter(t => !before.includes(t))
   check(

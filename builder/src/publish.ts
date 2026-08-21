@@ -6,10 +6,11 @@
 import { SimplePool } from 'nostr-tools/pool'
 import type { Event } from 'nostr-tools/pure'
 import { SALE_RELAYS } from '../../spike/fixture.ts'
-import { parseListings } from '../../storefront/src/listing.ts'
+import { parseListings, parseSales } from '../../storefront/src/listing.ts'
 import { unitsOf } from '../../spike/ladder.ts'
 import { mintOffer, type ManagePointer } from './manage.ts'
-import { eventsToSign, listingD, type Draft } from './listing.ts'
+import { eventsToSign, type Draft } from './listing.ts'
+import { listingD, saleTemplate, type SaleDraft } from './sale.ts'
 import type { Signer } from './signer.ts'
 
 export const RELAYS = SALE_RELAYS
@@ -53,10 +54,11 @@ export const publish = async (
   signer: Signer,
   node: ManagePointer | null,
   draft: Draft,
+  sale: SaleDraft,
   onStep: (step: Step) => void,
 ): Promise<Published> => {
   const pubkey = await signer.getPublicKey()
-  const d = listingD(draft.slug)
+  const d = listingD(sale.d, draft.slug)
 
   // --- 1. the offer, over CLINK Manage (kind 21003) -------------------------------------
   // Only for an item that can actually be bought. An item at stock 0 is published sold and
@@ -108,7 +110,7 @@ export const publish = async (
   // because before slice 3 nothing pre-signed availability, and before slice 4 the ladder was
   // cut by a script holding a raw key.
   const now = Math.floor(Date.now() / 1000)
-  const templates = eventsToSign({ ...draft, noffer }, pubkey, now)
+  const templates = eventsToSign({ ...draft, noffer }, pubkey, now, sale)
   const signed: Event[] = []
   for (const [i, template] of templates.entries()) {
     onStep({
@@ -170,6 +172,62 @@ export const publish = async (
     relaysOk,
     ladder: { [d]: { units: unitsOf(String(draft.stock)), noffer, steps } },
   }
+}
+
+/**
+ * Publish the sale itself — the kind 30405 that carries the masthead and lists the members.
+ *
+ * SLICE 9, and it is the feature spec §10 called "masthead editing". Before this, `listingTags`
+ * wrote `["a","30405:<seller>:yardsale-2026-08"]` on every item and **nothing in the builder ever
+ * published a kind 30405 at all** — the only writer in the repo was `/spike/seed-listings.ts`. So
+ * every seller who was not us had items pointing into a collection that did not exist, and their
+ * storefront fell back to rendering its own name as the masthead. `spike/check-deploy.ts` prints
+ * `(no kind 30405 — the page falls back to its own name)` for exactly this and it reads like a
+ * graceful degradation rather than the missing half of a feature.
+ *
+ * ONE signature, and **no new bunker approval**: `sign_event:30405` has been in `signer.ts`
+ * `PERMS` since slice 4, and both Amber and nsec.app key a remembered grant on (app, type, kind)
+ * — findings §8. So a seller who connected before this shipped can publish a sale without
+ * touching their phone.
+ *
+ * It is a replacement like any other (NIP-01 replaces on kind/pubkey/d), which means the caller
+ * has to hand over EVERY member every time. Dropping one here silently un-lists it: the item
+ * survives on the relays and `orderBySale` renders it as a stray at the foot of the page, which
+ * is a demotion nobody asked for rather than a deletion. That is why this takes the panel's full
+ * item list rather than a diff.
+ */
+export const publishSale = async (
+  signer: Signer,
+  sale: SaleDraft,
+  itemDs: string[],
+  onStep: (step: Step) => void,
+): Promise<{ event: Event; relaysOk: number }> => {
+  const pubkey = await signer.getPublicKey()
+  onStep({ kind: 'sign', text: 'Signing the sale…', done: 0, total: 1 })
+  const event = await signer.signEvent(saleTemplate(sale, pubkey, itemDs, Math.floor(Date.now() / 1000)))
+
+  // Through the storefront's own parser, exactly as a listing is. A collection whose `title` did
+  // not survive encoding is a masthead that renders as the site's fallback name, and the seller
+  // would have no way to tell that from "the relay dropped it".
+  const parsed = parseSales([event], pubkey)[0]
+  if (!parsed || parsed.d !== sale.d) throw new Error('The sale we just signed does not survive our own parser. Nothing was published.')
+  if (parsed.title !== sale.title) throw new Error('The sale title was altered in encoding. Nothing was published.')
+  if (parsed.itemRefs.length !== itemDs.length) {
+    throw new Error(`${itemDs.length - parsed.itemRefs.length} of your items would have been dropped from the sale. Nothing was published.`)
+  }
+
+  onStep({ kind: 'publish', text: `Publishing the sale to ${RELAYS.length} relays…` })
+  const pool = new SimplePool()
+  const results = await Promise.allSettled(
+    pool
+      .publish(RELAYS, event)
+      .map(p => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8_000))])),
+  )
+  pool.close(RELAYS)
+  const relaysOk = results.filter(r => r.status === 'fulfilled').length
+  if (relaysOk === 0) throw new Error('No relay accepted the sale. It is signed but nobody can see it — try again.')
+  onStep({ kind: 'done', text: `Sale published to ${relaysOk}/${RELAYS.length} relays.` })
+  return { event, relaysOk }
 }
 
 /**

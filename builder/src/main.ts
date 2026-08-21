@@ -16,14 +16,22 @@
 // and it should not look AI-generated either — warm paper neutrals, one accent, high contrast.
 import './style.css'
 import { SimplePool } from 'nostr-tools/pool'
-import { SALE } from '../../spike/fixture.ts'
 import { draftFrom, loadItems, reusableOffer, soldCount, type Owned } from './admin.ts'
+import {
+  draftFromSale,
+  geohashOf,
+  listingD as saleListingD,
+  normaliseGeohash,
+  saleD as saleDOf,
+  type SaleDraft,
+} from './sale.ts'
+import { buildSheet, stickerItems } from './stickers.ts'
 import { loadNotes, saveNotes, MAX_NOTE, type Notes } from './notes.ts'
-import { approvalCount, listingD, normaliseSlug, type Draft } from './listing.ts'
+import { approvalCount, normaliseSlug, type Draft } from './listing.ts'
 import { decodeNmanage, type ManagePointer } from './manage.ts'
 import { BLOSSOM, resize, upload } from './photos.ts'
-import { deploy, DEFAULT_GATEWAY, loadStorefront, storefrontPaths, type DeployStep } from './deploy.ts'
-import { downloadLadder, ladderFile, publish, RELAYS, type LadderFile, type Step } from './publish.ts'
+import { deploy, DEFAULT_GATEWAY, loadStorefront, siteUrl, storefrontPaths, type DeployStep } from './deploy.ts'
+import { downloadLadder, ladderFile, publish, publishSale, RELAYS, type LadderFile, type Step } from './publish.ts'
 import {
   awaitBunkerScan,
   bunkerConnectURI,
@@ -63,6 +71,11 @@ let editing: { d: string; noffer?: string } | null = null
 let uploads = 0
 let owned: Owned[] = []
 let notes: Notes = {}
+// SLICE 9. The sale this browser authors under. It used to be `SALE`, imported from the spike
+// fixture, which meant every seller published our neighbourhood, our geohash and an `a` tag
+// pointing at a collection only we had ever published (./sale.ts). It is loaded from the
+// seller's own kind 30405 when the panel reads the relays, and defaults until then.
+let sale: SaleDraft = draftFromSale(undefined)
 // One pool for the panel's reads and the note publish. publish() and deploy() open their own.
 const pool = new SimplePool()
 
@@ -100,6 +113,7 @@ const showSigner = () => {
   $('#signed-in').hidden = !signer
   $('#connect').hidden = !!signer
   $('#publish').toggleAttribute('disabled', !signer)
+  $('#publish-sale').toggleAttribute('disabled', !signer)
   $('#deploy').toggleAttribute('disabled', !signer)
   $('#refresh-items').toggleAttribute('disabled', !signer)
   $('#save-notes').toggleAttribute('disabled', !signer)
@@ -266,8 +280,8 @@ const doPublish = async (event: SubmitEvent) => {
 
   $('#publish').toggleAttribute('disabled', true)
   try {
-    const wasEdit = editing?.d === listingD(draft.slug)
-    const result = await publish(signer, node, draft, onStep)
+    const wasEdit = editing?.d === saleListingD(sale.d, draft.slug)
+    const result = await publish(signer, node, draft, sale, onStep)
     ladder = { ...ladder, [result.d]: result.ladder[result.d]! }
     saveLadder()
     resetItem()
@@ -285,6 +299,112 @@ const doPublish = async (event: SubmitEvent) => {
     say(err instanceof Error ? err.message : String(err), 'bad')
   } finally {
     $('#publish').toggleAttribute('disabled', !signer)
+  }
+}
+
+// --- the sale (slice 9) ----------------------------------------------------------------------
+//
+// The masthead, and the collection every item's `a` tag points at. spec §10 called this "masthead
+// editing"; what it actually was is that the builder had no sale at all — it imported the spike
+// fixture's and stamped it on everybody's items. See ./sale.ts.
+
+const readSale = (): SaleDraft => ({
+  // NOT a form field, deliberately: it is also every item's `d` prefix, so a typo here orphans
+  // everything the seller has ever published. ./sale.ts `saleD`.
+  d: sale.d,
+  title: $<HTMLInputElement>('#sale-title').value.trim(),
+  summary: $<HTMLInputElement>('#sale-summary').value.trim(),
+  location: $<HTMLInputElement>('#sale-location').value.trim(),
+  g: normaliseGeohash($<HTMLInputElement>('#sale-geo').value),
+})
+
+const showSale = () => {
+  $<HTMLInputElement>('#sale-title').value = sale.title
+  $<HTMLInputElement>('#sale-summary').value = sale.summary
+  $<HTMLInputElement>('#sale-location').value = sale.location
+  $<HTMLInputElement>('#sale-geo').value = sale.g
+  refreshSaleCost()
+}
+
+// Same honesty as the item form's count, and the number is the interesting part: ONE signature,
+// and no new approval on the phone. `sign_event:30405` has been in PERMS since slice 4 and both
+// Amber and nsec.app remember a grant per (app, type, kind) — findings §8 — so a seller who
+// connected before this feature existed can publish a sale without touching their signer.
+const refreshSaleCost = () => {
+  const n = owned.length
+  $('#sale-cost').textContent =
+    `1 signature. It lists ${n} item${n === 1 ? '' : 's'} in the order shown below, and it is a ` +
+    `replacement — nostr has no edit — so publishing it again replaces what is there now.`
+}
+
+const doPublishSale = async (event: SubmitEvent) => {
+  event.preventDefault()
+  if (!signer) return
+  const draft = readSale()
+  if (!draft.title) return say('Give the sale a name — it is the masthead.', 'bad')
+  // A geohash the seller typed that is not one. Silently dropping it would publish a sale with no
+  // location link and no explanation of why the field they filled in did nothing.
+  const typed = $<HTMLInputElement>('#sale-geo').value.trim()
+  if (typed && !draft.g) {
+    return say('That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.', 'bad')
+  }
+
+  $('#publish-sale').toggleAttribute('disabled', true)
+  try {
+    // EVERY member, every time. A kind 30405 is addressable, so this replaces the one on the
+    // relays outright — handing it a subset silently un-lists the rest, which `orderBySale`
+    // renders as strays at the foot of the storefront rather than dropping.
+    const { relaysOk } = await publishSale(signer, draft, owned.map(o => o.item.d), onStep)
+    sale = draft
+    $('#sale-state').textContent =
+      `“${draft.title}” is live on ${relaysOk}/${RELAYS.length} relays as ${draft.d}, listing ${owned.length} item(s).` +
+      (draft.g ? ' Its neighbourhood is now a tappable map link on your storefront.' : '')
+  } catch (err) {
+    say(err instanceof Error ? err.message : String(err), 'bad')
+  } finally {
+    $('#publish-sale').toggleAttribute('disabled', !signer)
+  }
+}
+
+// Native geolocation, because the alternative — typing a neighbourhood and having something turn
+// it into coordinates — is a geocoding request to a third party, which is the exact dependency
+// spec §10's "map of nearby sales" died on (/docs/spike-findings.md §31). This asks the browser,
+// the browser asks the person, and nothing leaves the machine.
+const locate = () => {
+  if (!navigator.geolocation) return say('This browser has no geolocation. Type the geohash instead.', 'bad')
+  say('Asking your browser where you are…')
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      // 7 characters is ±76 m — the driveway, not the house. Publishing more precision than that
+      // to four public relays is a decision nobody asked for.
+      const g = geohashOf(pos.coords.latitude, pos.coords.longitude)
+      $<HTMLInputElement>('#sale-geo').value = g
+      say(`Geohash ${g} — about 76 metres across. Nothing was sent anywhere; publish the sale to use it.`, 'ok')
+    },
+    err => say(`Could not read your location: ${err.message}. Type the geohash instead.`, 'bad'),
+    { enableHighAccuracy: false, timeout: 10_000 },
+  )
+}
+
+// --- the sticker sheet (slice 9, design.md §4) ------------------------------------------------
+const doStickers = async () => {
+  const items = owned.map(o => o.item)
+  if (!signer) return
+  try {
+    $('#make-stickers').toggleAttribute('disabled', true)
+    say('Encoding one QR per item…')
+    const url = siteUrl(await signer.getPublicKey(), gateway())
+    const n = await buildSheet($('#sticker-sheet'), items, url)
+    $('#sticker-sheet').hidden = n === 0
+    $('#print-stickers').hidden = n === 0
+    $('#stickers-state').textContent = n
+      ? `${n} sticker(s) ready, each ≥2cm square. They point at ${url} — which is where your storefront will be, so build these AFTER you deploy, or the codes lead nowhere.`
+      : 'Every item is sold, so there is nothing to sticker.'
+    say(n ? 'Sticker sheet built. Press Print.' : 'Nothing to sticker.', n ? 'ok' : 'bad')
+  } catch (err) {
+    say(err instanceof Error ? err.message : String(err), 'bad')
+  } finally {
+    $('#make-stickers').toggleAttribute('disabled', false)
   }
 }
 
@@ -328,7 +448,7 @@ const renderItems = () => {
 
     const row = document.createElement('div')
     row.className = 'row'
-    const editable = draftFrom(item, own.event)
+    const editable = draftFrom(item, own.event, sale.d)
     if (editable) {
       const edit = document.createElement('button')
       edit.type = 'button'
@@ -350,7 +470,7 @@ const renderItems = () => {
       why.textContent =
         item.price && item.price.currency !== 'sats'
           ? `Priced in ${item.price.currency}. This form only speaks sats, and republishing it here would re-price it.`
-          : 'Published outside this sale, so this form cannot address it without orphaning the original.'
+          : `Published outside “${sale.d}”, so this form cannot address it without orphaning the original.`
       row.append(why)
     }
 
@@ -377,13 +497,25 @@ const loadPanel = async (withNotes = true) => {
   $('#refresh-items').toggleAttribute('disabled', true)
   try {
     $('#items-state').textContent = 'reading the relays…'
-    owned = await loadItems(pool, RELAYS, await signer.getPublicKey())
+    const loaded = await loadItems(pool, RELAYS, await signer.getPublicKey())
+    owned = loaded.items
+    // SLICE 9. The sale comes off the relays rather than off the spike fixture, and its `d` is
+    // what every item's `d` is prefixed with — so this has to land before the panel renders, or
+    // `draftFrom` measures each item against the wrong prefix and every Edit button disappears.
+    sale = draftFromSale(loaded.sale)
+    sale.d = saleDOf(loaded.sale)
+    showSale()
     // The notes come second and only on a full load: re-reading them mid-session would throw
     // away edits the seller has typed and not yet saved.
     if (withNotes) notes = await loadNotes(signer, pool, RELAYS)
     renderItems()
-    $('#items-state').textContent = `${owned.length} item(s) on ${RELAYS.length} relays`
+    $('#items-state').textContent =
+      `${owned.length} item(s) on ${RELAYS.length} relays` +
+      (loaded.sale ? ` · sale “${loaded.sale.title}”` : ' · no sale published yet — section 3')
     $('#notes-wrap').hidden = owned.length === 0
+    $('#stickers-wrap').hidden = owned.length === 0
+    $('#stickers-cost').textContent = `0 signatures. ${stickerItems(owned.map(o => o.item)).length} unsold item(s) get a sticker; sold ones do not, because the thing is gone.`
+    refreshSaleCost()
     $('#refresh-items').textContent = 'Reload my items'
     $('#notes-cost').textContent =
       '1 signature, however many notes you changed — they are one encrypted event, not one each.'
@@ -487,7 +619,8 @@ const doDeploy = async () => {
       gateway: gateway(),
       // NIP-5A 5A.md:39-41 — both optional, both free, and they are what makes the manifest
       // legible to anything that indexes nsites.
-      meta: { title: SALE.title, description: SALE.summary },
+      // The seller's own masthead, not the fixture's. 5A.md:39-41 — both optional, both free.
+      meta: { title: sale.title, description: sale.summary },
     }, onDeployStep)
 
     $('#deployed').hidden = false
@@ -539,6 +672,10 @@ $('#title').addEventListener('blur', () => {
   const slug = $<HTMLInputElement>('#slug')
   if (!slug.value) slug.value = normaliseSlug($<HTMLInputElement>('#title').value)
 })
+$('#sale').addEventListener('submit', e => void doPublishSale(e as SubmitEvent))
+$('#sale-locate').addEventListener('click', locate)
+$('#make-stickers').addEventListener('click', () => void doStickers())
+$('#print-stickers').addEventListener('click', () => window.print())
 $('#refresh-items').addEventListener('click', () => void loadPanel())
 $('#save-notes').addEventListener('click', () => void doSaveNotes())
 $('#cancel-edit').addEventListener('click', () => {
@@ -556,6 +693,7 @@ if (saved) {
   setNode(saved, false)
 }
 showSigner()
+showSale()
 refreshCost()
 void refreshDeployCost()
 void resumeBunker().then(s => s && useSigner(s))

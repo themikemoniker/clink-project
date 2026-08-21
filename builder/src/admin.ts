@@ -34,11 +34,14 @@ import {
   parseSales,
   type Item,
   type Photo,
+  type Sale,
 } from '../../storefront/src/listing.ts'
-import { SALE } from '../../spike/fixture.ts'
 import type { Blob, Draft } from './listing.ts'
 
 export type Owned = { item: Item; event: Event }
+
+/** What `loadItems` found: the seller's items, and the sale event they belong to if there is one. */
+export type Loaded = { items: Owned[]; sale: Sale | undefined }
 
 const SHA256 = /^[0-9a-f]{64}$/
 // A relay is hostile input. A yard sale does not have this many items, and an `imeta` tag does
@@ -96,9 +99,13 @@ const serverOf = (url: string): string => url.slice(0, url.lastIndexOf('/'))
  *   * A fiat price. Sats only, everywhere in this project — there is no conversion and no
  *     oracle (/docs/spec.md §6.1) — so republishing `80 MXN` through a sats-only form would
  *     write `80 sats`, a silent 99.99% discount on an item somebody might then buy.
+ *
+ * `saleD` was the spike fixture's `SALE.d` until slice 9. It is now the seller's own — see
+ * ./sale.ts `saleD`, and note that this function is precisely why the sale's `d` is not a form
+ * field: change it and every item the seller has stops being editable, in silence.
  */
-export const draftFrom = (item: Item, event: Event): Draft | null => {
-  const prefix = `${SALE.d}-`
+export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null => {
+  const prefix = `${saleD}-`
   if (!item.d.startsWith(prefix)) return null
   const slug = item.d.slice(prefix.length)
   if (!slug) return null
@@ -160,21 +167,31 @@ export const soldCount = (units: number | undefined, item: Item): number | undef
   return Math.max(0, Math.min(units, units - left))
 }
 
-/** Every item this seller has on the relays, in the sale's own order, each with its raw event. */
+/**
+ * Every item this seller has on the relays, in the sale's own order, each with its raw event —
+ * **and the sale itself**, which slice 9 needed and slice 6 threw away.
+ *
+ * It used to pick the sale with `s.d === SALE.d`, i.e. it only ever recognised the spike
+ * fixture's collection. Any seller who was not us had their own kind 30405 fetched, parsed,
+ * verified and then discarded, and the panel ordered their items by nothing. Now the first sale
+ * this pubkey has published wins: one root site per pubkey (5A.md:16) means one sale per seller
+ * in v1, so "the first one" is "the one".
+ */
 export const loadItems = async (
   pool: SimplePool,
   relays: string[],
   pubkey: string,
-): Promise<Owned[]> => {
+): Promise<Loaded> => {
   const events = await pool.querySync(relays, { kinds: [LISTING_KIND, SALE_KIND], authors: [pubkey] })
   // parseListings verifies every signature and keeps the newest per address; `item.id` is that
   // winning event's id, so this pairing cannot pick up a superseded version.
   const byId = new Map(events.map(ev => [ev.id, ev]))
-  const sale = parseSales(events, pubkey).find(s => s.d === SALE.d)
-  return orderBySale(parseListings(events, pubkey), sale)
+  const sale = parseSales(events, pubkey)[0]
+  const items = orderBySale(parseListings(events, pubkey), sale)
     .slice(0, MAX_ITEMS)
     .flatMap(item => {
       const event = byId.get(item.id)
       return event ? [{ item, event }] : []
     })
+  return { items, sale }
 }

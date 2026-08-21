@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Item } from './listing.ts'
-import { declineText, formatPrice, noBuyReason, sats, stockNote } from './render.ts'
+import { declineText, formatPrice, geoUri, missingItemNote, noBuyReason, sats, stockNote } from './render.ts'
 
 const item = (over: Partial<Item> = {}): Item => ({
   id: 'a'.repeat(64),
@@ -167,4 +167,76 @@ test('a sold item says nothing, because the stamp already said it twice', () => 
   assert.equal(noBuyReason(item({ sold: true, price: { amount: 1000, currency: 'sats' } })), undefined)
   assert.equal(noBuyReason(item({ sold: true, price: { amount: 80, currency: 'MXN' } })), undefined)
   assert.equal(noBuyReason(item({ sold: true, price: undefined })), undefined)
+})
+
+// --- slice 9 ---------------------------------------------------------------------------------
+
+test('the geohash decodes to where it actually is', () => {
+  // Checked against the two geohashes with published reference values rather than against this
+  // implementation's own output, because "it round-trips with itself" proves nothing about the
+  // bit order. u4pruydqqvj is the canonical Wikipedia example (57.64911, 10.40744) and ezs42 the
+  // movable-type one (42.605, -5.603) that NIP-73 links to at 73.md:49.
+  const at = (gh: string) => geoUri(gh)!.slice('geo:'.length).split(',').map(Number) as [number, number]
+  const [lat1, lon1] = at('u4pruydqqvj')
+  assert.ok(Math.abs(lat1 - 57.64911) < 0.0001, `lat was ${lat1}`)
+  assert.ok(Math.abs(lon1 - 10.40744) < 0.0001, `lon was ${lon1}`)
+  const [lat2, lon2] = at('ezs42')
+  assert.ok(Math.abs(lat2 - 42.605) < 0.05, `lat was ${lat2}`)
+  assert.ok(Math.abs(lon2 - -5.603) < 0.05, `lon was ${lon2}`)
+  assert.match(geoUri('9ewmxg9')!, /^geo:-?\d+\.\d+,-?\d+\.\d+$/)
+})
+
+test('the fixture sale lands in the neighbourhood its location tag names', () => {
+  // This assertion is why the fixture's `g` changed in slice 9. It was `9ewmr4z` from slice 1,
+  // which is Guadalajara but 5.9 km from Colonia Americana — a plausible wrong value that sat on
+  // four public relays for eight slices because NOTHING IN THIS PROJECT HAD EVER DECODED ONE.
+  // Colonia Americana is ~20.674, -103.368; the tolerance below is about a kilometre.
+  const [lat, lon] = geoUri('9ewmxg9')!.slice('geo:'.length).split(',').map(Number) as [number, number]
+  assert.ok(Math.abs(lat - 20.674) < 0.01, `lat was ${lat}`)
+  assert.ok(Math.abs(lon - -103.368) < 0.01, `lon was ${lon}`)
+})
+
+test('precision follows the geohash, because a 1-character one is a continent', () => {
+  // "s" is a quarter of the planet. Printing 0.00000,0.00000 for it would be a lie with a
+  // decimal point in it. Fewer characters, fewer decimals.
+  const coarse = geoUri('s')!.split(',')[0]!.split('.')[1]!.length
+  const fine = geoUri('9ewmr4z')!.split(',')[0]!.split('.')[1]!.length
+  assert.ok(coarse < fine, `${coarse} decimals for one character vs ${fine} for seven`)
+})
+
+test('anything that is not a geohash gets no link at all', () => {
+  // a, i, l and o are the four letters the Niemeyer alphabet omits, so they are exactly the
+  // characters a typo or a mis-scan produces. A geo: URI built from one points somewhere real
+  // and wrong, which is worse than no link.
+  for (const bad of ['', 'colonia americana', '9ewmr4a', '9ewmr4i', '9ewmr4l', '9ewmr4o', '9EWMR4Z', '9ewmr4z9ewmr4z']) {
+    assert.equal(geoUri(bad), undefined, `${JSON.stringify(bad)} should not decode`)
+  }
+  assert.equal(geoUri(undefined), undefined)
+})
+
+test('a deep link to an item that is gone says a sticker outlived its item', () => {
+  // The reachable case: slice 9 prints stickers, the mug sells, the seller takes the listing
+  // down, the sticker stays on the mug. Somebody scans it tomorrow.
+  const note = missingItemNote('yardsale-2026-08-mugs', 8)
+  assert.match(note, /sticker/i)
+  assert.match(note, /yardsale-2026-08-mugs/)
+  // It must not claim the sale is empty or the relays failed — eight items came back.
+  assert.doesNotMatch(note, /relay/i)
+})
+
+test('with nothing at all from the relays the note refuses to pick a cause', () => {
+  // Zero items means the page genuinely cannot tell "this item was removed" from "the relays
+  // did not answer", and inventing either one sends the buyer to the wrong remedy.
+  const note = missingItemNote('yardsale-2026-08-mugs', 0)
+  assert.match(note, /relays/i)
+  assert.doesNotMatch(note, /sticker/i)
+  assert.match(note, /again/i)
+})
+
+test('the missing d is bounded before it reaches the page', () => {
+  // It arrives from location.hash, which is whoever typed or scanned it. h() puts it in the DOM
+  // through textContent so markup is inert either way — this is about a 40 KB URL becoming a
+  // 40 KB paragraph.
+  const note = missingItemNote('x'.repeat(5_000), 3)
+  assert.ok(note.length < 300, `note was ${note.length} characters`)
 })

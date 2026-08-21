@@ -17,7 +17,7 @@ Where this file disagrees with `/docs/spec.md`, this file wins. Corrections are 
 | Source | Version pinned |
 |---|---|
 | CLINK specs — `github.com/shocknet/CLINK` | commit `442b7ae`, branch `main`, fetched 2026-08-20 |
-| NIPs — `github.com/nostr-protocol/nips` | fetched 2026-08-20 |
+| NIPs — `github.com/nostr-protocol/nips` | commit `656cecc`, branch `master`, **re-fetched 2026-08-21** for §31. The repo is not kept on this machine; anything cited from it must be re-fetched, never recalled |
 | Blossom BUDs — `github.com/hzrd149/blossom` | fetched 2026-08-20 |
 | Lightning.Pub source | the **running local install**, `~/lightning_pub`, `package.json` version `0.0.37` |
 | `@shocknet/clink-sdk` | `1.5.5` bundled in Lightning.Pub; `1.7.0` current on npm |
@@ -1622,3 +1622,80 @@ invalidate.
     ⇒ **Spec §10's "BOLT11/BOLT12" was corrected rather than attempted.** BOLT11 is what this
     project already produces on every buy, so the fallback slice was never about a payment format
     — see §7.3 and §10 for what it turned out to be about.
+
+31. **A geohash map of nearby sales cannot be built without a third-party hostname on every page
+    load, so spec §10's slice-9 line was cut rather than attempted — and what replaced it is one
+    `geo:` link.** Verified 2026-08-21, before anything was built on it, which is the same
+    discipline §30 applied to BOLT12 one slice earlier and for the same reason: §10's one-line
+    slice descriptions are a plan written before the answers were known.
+
+    Three obstacles, each disqualifying on its own.
+
+    **(a) A map needs a basemap, and a basemap is somebody's server.** OSM tiles, Mapbox, Carto,
+    Protomaps — every one of them is HTTP to a host we do not control, fetched by every visitor.
+    That is not literally /CLAUDE.md rule 1, which forbids a server *of ours*; it is worse in the
+    place this project is judged. Measured on the tree as it stands:
+
+    ```
+    $ grep -rn 'subscribeMany\|querySync\|fetch(' storefront/src/*.ts | grep -v test
+    storefront/src/buy.ts:236     pool.subscribeMany(... authors: [offer.pubkey] ...)
+    storefront/src/nostr.ts:37    pool.subscribeMany(... authors: [pubkey] ...)
+    ```
+
+    Two relay subscriptions and **no HTTP fetch at all** — the photos are `<img>` elements the
+    browser resolves. The only third-party server anywhere in the project is the LNURL host in
+    `spike/refund.ts`, which the *seller's machine* contacts and the buyer's page never does. Spec
+    §7.3 already has the line for this: *a Lightning address is a hostname, and a hostname is a
+    server.* A map puts a hostname on the storefront, permanently, for everyone.
+
+    **(b) "Nearby" means reading events from strangers, and this page has never done that.**
+    Every filter above is `authors: [<one known pubkey>]`, and `listing.ts` `trusted()` re-checks
+    `ev.pubkey === pubkey` before verifying the signature. Discovery means rendering kind 30405s
+    from arbitrary authors, which does not extend the trust boundary — it moves it. /CLAUDE.md's
+    "treat every inbound event as hostile" is a much harder promise to keep when the author is
+    not known in advance and the payload is a location a stranger chose.
+
+    **(c) The query is not expressible with what we publish, and the convention that would make
+    it expressible is in a geocaching NIP.** This is the part that was `UNVERIFIED` in the slice
+    brief and is now cited. Re-fetched from `nostr-protocol/nips@656cecc`:
+
+    - **Tag filters match exact values.** `01.md:33` — "In the case of tag attributes such as
+      `#e`, for which an event may have multiple values, the event and filter condition values
+      must have at least one item in common." There is no prefix match, so `#g: ["9ewm"]` does
+      not find `9ewmxg9`.
+    - **NIP-99 says nothing about precision.** `99.md:53` lists `"g"` under *"Other common tags
+      that might be useful"* — one line, no proximity semantics. NIP-52, which is where `g` is
+      actually introduced (`52.md:24`), says only "geohash to associate calendar event with a
+      searchable physical location".
+    - **The multi-precision convention IS specified — in NIP-CC, Geocaching.** `CC.md:53`:
+      "`g` (required) - geohash of cache location. **To allow for a proximity search, include
+      multiple geohash tags at different precision levels (3-9 characters)**", and `CC.md:246`
+      repeats it for collections at 3-6. NIP-CC is `draft` `optional`, kind 37516, and is about
+      hiding tupperware in woods.
+
+    ⇒ So proximity search is a real convention with a real citation, and adopting it would mean a
+    classifieds event borrowing a geocaching NIP's tag discipline. **We emit exactly one `g` tag**
+    — `spike/seed-listings.ts:220`, `:280` and `builder/src/listing.ts` — so nothing we publish is
+    findable by proximity today regardless.
+
+    **(d) And the byte budget has 0.4 KB of headroom.** Spec §9 raised the storefront to 32 KB
+    gzip in slice 8 and measured 31.61. A slippy-map library is one to two orders of magnitude
+    over that on its own, before tiles.
+
+    ⇒ **Cut, and §10's line is rewritten rather than deferred.** What shipped instead is
+    `storefront/src/render.ts` `geoUri`: the sale's own `g`, decoded in the page, rendered as an
+    RFC 5870 `geo:` link around the neighbourhood on the masthead. The operating system resolves
+    it, so the buyer's own map app opens on the driveway, **no tile is fetched from anybody**, and
+    the page never learns that it happened. It needs no basemap, no library, no cross-author query
+    and no second `g` tag. It is not "a map of nearby sales" — it is "where this sale is", which
+    is a different and much better-scoped feature that §6.1's tag already supported.
+
+    **It also immediately found a bug that eight slices of not-reading the tag had hidden.** The
+    fixture's `g` was `9ewmr4z` from slice 1. Decoded: **20.6261, -103.3930 — Guadalajara, but
+    5.94 km from Colonia Americana**, which is what the `location` tag beside it says. It was
+    published on four public relays and read by nothing, so nothing ever disagreed with it.
+    Corrected to `9ewmxg9` (20.6742, -103.3683, ±76 m) in `spike/fixture.ts`, with the assertion
+    in `storefront/src/render.test.ts`. **A tag nothing reads is a tag nothing checks** — which is
+    the same lesson as findings §13.11 ("a 200 is not evidence") pointed at our own output rather
+    than at a server's.
+

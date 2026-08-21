@@ -137,10 +137,10 @@ body {
   display: block;
 }
 
-/* ponytail: a flat tone, not a blurhash. design.md §2.5 wants a placeholder rendered inline
-   from the listing event, but no tag in NIP-99 or GammaMarkets carries one — NIP-92 `imeta`
-   is where blurhash lives, and nothing is authored with it until slice 4 uploads photos.
-   Choose the tag there, then render it here. */
+/* A flat hatch, not a blurhash, and slice 9 closed this as a decision. NIP-92 `imeta` is where
+   blurhash lives and slice 4 pinned the citation (findings §13.21) while deliberately not
+   writing the field: decoding one here costs bytes inside a 32 KB budget to replace a
+   placeholder that already works. design.md §2.5 now says so rather than describing a plan. */
 .shot-empty { background: repeating-linear-gradient(45deg, #eeeae4 0 6px, #e6e1da 6px 12px); }
 
 /* ---- sold ----------------------------------------------------------------------------
@@ -191,6 +191,22 @@ body {
 
 .empty { color: var(--ink-soft); padding: 2rem 0; }
 
+/* Slice 9. "You scanned a sticker for something that is not here." It sits inside the items
+   grid, so it has to span it — a note in one column of three reads as an item. Not an error
+   colour: a sold item whose sticker is still on the mug is the system working. */
+.missing {
+  grid-column: 1 / -1;
+  margin: 0 0 1.5rem;
+  padding-left: 0.85rem;
+  border-left: 3px solid var(--rule);
+  font: 0.9rem/1.5 var(--sans);
+  color: var(--ink-soft);
+}
+
+/* The masthead's neighbourhood, when the sale's `g` decoded into a geo: URI. Underlined rather
+   than coloured — there is one accent in this palette and it is the price. */
+.where-link { color: inherit; text-underline-offset: 0.15em; }
+
 /* ---- the flyer ------------------------------------------------------------------------
    design.md §3. The seller prints this, tapes it to a lamppost, and the QR goes to the live
    version where sold items have already gone. Paper that stays current. */
@@ -205,8 +221,13 @@ body {
   body { background: #fff; font-size: 10.5pt; }
   #app { max-width: none; padding: 0; }
 
-  /* Interactive chrome has no meaning on paper. */
-  .back, .byline { display: none; }
+  /* Interactive chrome has no meaning on paper. `.missing` is about a URL somebody typed or
+     scanned, which the sheet of paper in your hand did not. */
+  .back, .byline, .missing { display: none; }
+
+  /* The neighbourhood still prints; the link under it does not, because paper cannot open a
+     map app and an underline that does nothing is just an underline. */
+  .where-link { text-decoration: none; }
 
   .items { grid-template-columns: 1fr 1fr; gap: 0 10mm; }
 
@@ -218,9 +239,14 @@ body {
 
   .item-link { text-decoration: none; }
 
-  /* ponytail: grayscale + hard contrast, not a real 1-bit halftone. design.md §2.2 wants
-     dithered thumbs, which have to be generated where the photo is uploaded — slice 4. This
-     approximates them on any printer until that exists. */
+  /* grayscale + hard contrast, not a 1-bit halftone, and as of slice 9 that is the decision
+     rather than a wait. design.md §2.2 asked for dithered thumbs and §3 listed them as a print
+     requirement; slice 4 shipped the upload pipeline without them and slice 9 corrected both
+     sections instead of building a fourth rendition to make a slice-0 document true. A halftone
+     would be one more blob per photo, one more kind 24242 signature and one more `thumb` tag, to
+     look better on a laser printer and worse on the screen where every buyer actually sees it.
+     This costs nothing. Whether it is good ENOUGH on paper is the one open question and it needs
+     a print preview, not a slice — /docs/prompts/browser-verify-and-deploy.md. */
   .shot img { filter: grayscale(1) contrast(1.45) brightness(1.06); }
   .shot { background: #fff; border: 0.4pt solid #000; }
 

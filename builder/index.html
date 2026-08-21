@@ -71,9 +71,51 @@
         </p>
       </section>
 
-      <!-- 3. the item ----------------------------------------------------------------- -->
+      <!-- 3. the sale ------------------------------------------------------------------ -->
       <section>
-        <h2>3 · The item</h2>
+        <h2>3 · Your sale</h2>
+        <p class="hint">
+          This is the masthead at the top of your storefront, and it is one signed event that
+          every item points at. Publish it once, then again whenever the details change or you
+          want a new item listed in order.
+        </p>
+        <form id="sale">
+          <label for="sale-title">Sale name</label>
+          <input id="sale-title" type="text" required maxlength="200" placeholder="Moving sale — Colonia Americana" />
+
+          <label for="sale-summary">Date and hours</label>
+          <input id="sale-summary" type="text" maxlength="600" placeholder="Saturday 23 August, 8am–2pm. Cash, or Lightning." />
+          <p class="hint">
+            No nostr event has a field for a sale’s date or its opening hours — not NIP-99, not
+            the collection spec. This line is where they live, and it prints on the flyer under
+            the masthead.
+          </p>
+
+          <label for="sale-location">Neighbourhood</label>
+          <input id="sale-location" type="text" maxlength="200" placeholder="Colonia Americana, Guadalajara" />
+
+          <label for="sale-geo">Geohash <span class="optional">optional; makes the neighbourhood tappable</span></label>
+          <div class="row">
+            <input id="sale-geo" type="text" maxlength="12" autocomplete="off" spellcheck="false" placeholder="9ewmxg9" />
+            <button type="button" id="sale-locate">Use my location</button>
+          </div>
+          <p class="hint" id="sale-geo-state">
+            Your storefront turns this into a <code>geo:</code> link, which your buyer’s phone
+            hands to whatever map app it already has — no map is loaded from anybody’s server, and
+            nothing of ours learns that they looked. “Use my location” reads the browser’s own
+            geolocation and rounds it to about 76 metres. Leave it empty and the neighbourhood
+            is just text.
+          </p>
+
+          <p class="cost" id="sale-cost"></p>
+          <button type="submit" id="publish-sale" disabled>Publish my sale</button>
+          <p class="hint" id="sale-state"></p>
+        </form>
+      </section>
+
+      <!-- 4. the item ----------------------------------------------------------------- -->
+      <section>
+        <h2>4 · The item</h2>
         <form id="item">
           <label for="title">Title</label>
           <input id="title" type="text" required maxlength="200" placeholder="Brass floor lamp" />
@@ -116,9 +158,9 @@
 
       <p id="status" role="status" aria-live="polite" data-tone="busy"></p>
 
-      <!-- 4. the sale so far ---------------------------------------------------------- -->
+      <!-- 5. the sale so far ---------------------------------------------------------- -->
       <section id="admin">
-        <h2>4 · Your sale so far</h2>
+        <h2>5 · Your sale so far</h2>
         <p class="hint">
           Read straight off the public relays with no credential at all — the same events any
           visitor sees, which is why this list can exist in a page that holds no key.
@@ -139,6 +181,21 @@
           </p>
         </div>
 
+        <div id="stickers-wrap" hidden>
+          <p class="cost" id="stickers-cost"></p>
+          <div class="row">
+            <button type="button" id="make-stickers">Build the sticker sheet</button>
+            <button type="button" id="print-stickers" hidden>Print it</button>
+          </div>
+          <p class="hint">
+            One sticker per unsold item, each with the item’s name, its price and a QR that opens
+            that item’s page. Stick them on the things. Somebody scans a mug and lands on the mug,
+            where they can pay for it — a code that pays <em>directly</em> would have to skip the
+            refund address, and your node declines a payment it could not give back.
+          </p>
+          <p class="hint" id="stickers-state"></p>
+        </div>
+
         <p class="warn" id="sales-note">
           What is not here is what each sale was <em>worth</em>. CLINK Manage’s only resource is
           the offer — there is no invoice or settlement resource anywhere in CLINK — and the
@@ -150,9 +207,9 @@
         </p>
       </section>
 
-      <!-- 5. the ladder --------------------------------------------------------------- -->
+      <!-- 6. the ladder --------------------------------------------------------------- -->
       <section id="result" hidden>
-        <h2>5 · Give the watcher its ladder</h2>
+        <h2>6 · Give the watcher its ladder</h2>
         <p id="result-text"></p>
         <p>
           Every future stock state of this item is now signed and waiting. Your watcher publishes
@@ -163,9 +220,9 @@
         <button type="button" id="download-ladder">Download .ladder.json</button>
         <p class="hint" id="ladder-note"></p>
       </section>
-      <!-- 6. deploy ------------------------------------------------------------------ -->
+      <!-- 7. deploy ------------------------------------------------------------------ -->
       <section>
-        <h2>6 · Publish the sale as a website</h2>
+        <h2>7 · Publish the sale as a website</h2>
         <p class="hint">
           Your storefront is a handful of static files. They go to Blossom servers as blobs, and
           a signed manifest on the relays says which blob is which path. That manifest is the
@@ -194,6 +251,9 @@
         </div>
       </section>
     </main>
+    <!-- The sticker sheet. Empty and hidden until the seller builds it; the only thing that
+         prints, because @media print hides <main> outright. design.md §4. -->
+    <section id="sticker-sheet" hidden aria-label="Item stickers"></section>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

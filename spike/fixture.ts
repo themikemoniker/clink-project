@@ -37,7 +37,14 @@ export const SALE = {
   title: 'Moving Sale — Colonia Americana',
   summary: 'Saturday 23 August, 8am–2pm. Cash, or Lightning. Everything must go.',
   location: 'Colonia Americana, Guadalajara',
-  g: '9ewmr4z', // geohash, NIP-99 99.md:53
+  // Geohash, NIP-99 99.md:53. **Corrected in slice 9, and how it was wrong is the point.**
+  // It read `9ewmr4z` from slice 1 until 2026-08-21, which decodes to 20.6261, -103.3930 —
+  // Guadalajara, but 5.9 km south-west of Colonia Americana, which is what the `location` tag
+  // beside it says. Nothing in this project had ever DECODED a `g` tag, so a plausible-looking
+  // wrong value sat on four public relays for eight slices without anyone noticing. Slice 9 made
+  // the storefront render it (`render.ts` geoUri) and the error surfaced in the first test.
+  // `9ewmxg9` is 20.6742, -103.3683, ±76 m. A tag nothing reads is a tag nothing checks.
+  g: '9ewmxg9',
 }
 
 export type FixtureItem = {

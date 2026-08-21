@@ -10,7 +10,12 @@
 //   CLINK   clink_offer tag value (an noffer)        clink-offers.md (via /docs/clink-notes.md)
 import type { EventTemplate } from 'nostr-tools/pure'
 import { atStock, unitsOf } from '../../spike/ladder.ts'
-import { SALE } from '../../spike/fixture.ts'
+import { listingD, type SaleDraft } from './sale.ts'
+
+// `listingD` used to live here and derive the prefix from the spike fixture's `SALE.d`. It moved
+// to ./sale.ts in slice 9 with the rest of the sale, and is re-exported so nothing that already
+// imports it from here has to change.
+export { listingD } from './sale.ts'
 
 /** One photo, at one width, already on Blossom. */
 export type Blob = { url: string; w: number; h: number; sha256: string; type: string }
@@ -26,8 +31,6 @@ export type Draft = {
   blobs: Blob[] // widest first is not assumed; sorted here
   servers: string[] // every Blossom server that stored a complete copy
 }
-
-export const listingD = (slug: string) => `${SALE.d}-${slug}`
 
 // A slug is a `d` tag, which addresses the event forever: NIP-01 replaces on (kind, pubkey, d).
 // Two items that normalise to the same slug are one item, silently, with the second overwriting
@@ -86,14 +89,19 @@ export const imetaTag = (hero: Blob, servers: string[], alt: string): string[] =
  * the storefront's parser, the flyer and the availability ladder all keep working unchanged.
  * The two differences are `imeta` (above) and that the offer arrives from CLINK Manage.
  */
-export const listingTags = (draft: Draft, pubkey: string, now: number): string[][] => {
+export const listingTags = (
+  draft: Draft,
+  pubkey: string,
+  now: number,
+  sale: SaleDraft,
+): string[][] => {
   // Widest first: the storefront pairs the largest `image` with smaller `thumb`s and builds a
   // srcset from the set (storefront/src/listing.ts `srcset`).
   const photos = [...draft.blobs].sort((a, b) => b.w - a.w)
   const [hero, ...thumbs] = photos
 
   return [
-    ['d', listingD(draft.slug)],
+    ['d', listingD(sale.d, draft.slug)],
     ['title', draft.title],
     // 99.md:38 ["price","<number>","<currency>","<frequency>"?]. We never write frequency.
     // Always sats: there is no fiat conversion anywhere in this project, because a conversion
@@ -108,14 +116,20 @@ export const listingTags = (draft: Draft, pubkey: string, now: number): string[]
     // 99.md:43 — kept beside `stock` because a generic NIP-99 client reads this one and knows
     // nothing about GammaMarkets. Neither subsumes the other.
     ['status', draft.stock === 0 ? 'sold' : 'active'],
-    ['location', SALE.location],
-    ['g', SALE.g], // geohash, 99.md:53
+    // SLICE 9. These came off `/spike/fixture.ts` until now, which meant every item anybody
+    // authored anywhere was tagged with our neighbourhood and our geohash — see ./sale.ts. They
+    // come off the seller's own kind 30405 now, and an unset one writes no tag rather than an
+    // empty one: `["g",""]` is a pin at the equator for anything that decodes without checking.
+    ...(sale.location ? [['location', sale.location]] : []), // 99.md:37
+    ...(sale.g ? [['g', sale.g]] : []), // geohash, 99.md:53
     ['t', 'yardsale'],
     // Gamma spec.md:148 — products point at their collection for discoverability. The
     // collection is NOT re-signed here: storefront/src/listing.ts `orderBySale` renders
     // collection members in order and strays after, so a newly authored item appears at the
     // foot of the sale without costing a second signature. Slice 6 owns reordering.
-    ['a', `30405:${pubkey}:${SALE.d}`],
+    // Slice 9 made this true. It pointed at a kind 30405 nothing in the builder ever published,
+    // so every authored item claimed membership of a collection that did not exist.
+    ['a', `30405:${pubkey}:${sale.d}`],
     // Our own tag (/docs/spec.md §6.1) reusing CLINK's own kind-0/NIP-05 field name
     // (clink-offers.md:58-83) rather than inventing a second one. Purpose-made per item.
     ...(draft.noffer ? [['clink_offer', draft.noffer]] : []),
@@ -145,8 +159,13 @@ export const listingTags = (draft: Draft, pubkey: string, now: number): string[]
  * keeps only the newest event per (kind, pubkey, d), so a rung published out of order or
  * replayed is a no-op at the relay. Availability cannot run backwards by construction.
  */
-export const eventsToSign = (draft: Draft, pubkey: string, now: number): EventTemplate[] => {
-  const tags = listingTags(draft, pubkey, now)
+export const eventsToSign = (
+  draft: Draft,
+  pubkey: string,
+  now: number,
+  sale: SaleDraft,
+): EventTemplate[] => {
+  const tags = listingTags(draft, pubkey, now, sale)
   const content = draft.summary
   const units = unitsOf(String(draft.stock))
   return [

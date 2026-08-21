@@ -46,14 +46,31 @@ if (!seller) {
     // leaves a relay socket per item behind, listening for receipts nobody is waiting for.
     closeBuy()
     const match = /^#\/item\/(.+)$/.exec(location.hash)
-    const item = match?.[1] ? byD.get(decodeURIComponent(match[1])) : undefined
+    // Decoding a `d` off a URL can throw on a malformed percent escape (`#/item/%`), which a
+    // camera misreading a sticker is perfectly capable of producing. A bad escape is a `d` we do
+    // not have, which is exactly the case below.
+    let wanted: string | undefined
+    if (match?.[1]) {
+      try {
+        wanted = decodeURIComponent(match[1])
+      } catch {
+        wanted = match[1]
+      }
+    }
+    const item = wanted ? byD.get(wanted) : undefined
+    // SLICE 9. A `d` that is not in this sale used to fall through to the index in silence, and
+    // the way a person reaches that state is by scanning a sticker off a physical object — which
+    // is the thing slice 9 prints (design.md §4). The item sold, the seller took the listing
+    // down, the sticker stayed on the mug. Saying so costs one sentence; not saying so makes the
+    // page look broken to the one visitor who arrived from the real world.
     app.replaceChildren(
       renderMasthead(sale, seller.npub),
-      item ? renderDetail(item) : renderIndex(items),
+      item ? renderDetail(item) : renderIndex(items, item ? undefined : wanted),
       renderFlyerFoot(sale, location.origin),
     )
     document.title = item ? `${item.title} — ${sale?.title ?? SITE_NAME}` : (sale?.title ?? SITE_NAME)
-    if (item) window.scrollTo(0, 0)
+    // Also for a miss: the explanation is at the top and a deep link can land mid-scroll.
+    if (wanted) window.scrollTo(0, 0)
   }
 
   addEventListener('hashchange', route)

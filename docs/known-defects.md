@@ -54,6 +54,22 @@ Two rows, both small, both verified to reproduce. Slice 8 closed more than it op
 | **The refund journal is still the only record that a refund happened, and the startup reconcile was not built.** Slice 7's row named a buildable mitigation — reconcile against the node's outgoing payments at startup — and slice 8 built the *reporting* half of it (`matchingPayments`, `sales-report.ts --outgoing`, the pending-row print) and not the reconciling half. So the machinery to answer "has this already been paid?" now exists and nothing calls it at startup. | `spike/watch-sales.ts`, the block that loads the journal | Unchanged from slice 7: losing `spike/.refunds.json` can pay a refund twice, bounded by the node's frequency cap. | Doing it at startup means deciding, automatically, that a payment matched on **amount and time alone** is the refund in question — and the node stores no link back to the sale, so two refunds of the same amount in the window are indistinguishable. A heuristic is fine as evidence for a human and is a different thing as an input to whether money moves again. That is a decision about money, and the reporting half makes the manual version cheap enough that it was not worth forcing. | Read the node's outgoing payments once at startup, and for any journal row that is `pending`, print a **prompt** rather than a conclusion: "the node has one 1,000-sat payment 40 seconds after this row was written — mark it paid? [y/N]". The `--reconcile` mode slice 7's row already sketched. Everything it needs is now written and tested. |
 | **`noBuyReason` cannot tell a missing offer from a mismatched one, and neither can the buyer.** An item priced in sats above the floor with no usable `clink_offer` gets one sentence — "Not payable on this page" — whether the listing carries no offer tag at all or carries one whose TLV 4 price disagrees with its `price` tag. `listing.ts` `buyableOffer` collapses both to `undefined` before `render.ts` sees anything. | `storefront/src/render.ts` `noBuyReason`, against `storefront/src/listing.ts` `buyableOffer` | Nothing, for a buyer — the next step is the same either way, which is to ask the seller. It costs the **seller**, who may not know their listing and their offer disagree, and whose page silently stops selling one item. | Telling them apart in the page means `buyableOffer` returning a reason rather than `undefined`, which widens the trust boundary's return type for a distinction only a seller can act on — and the seller-facing tool already exists and runs where the key is. | Either leave it and rely on `node spike/check-admin.ts`, which does have both events and can say which; or have `buyableOffer` return `{offer}` / `{reason}` and let the admin panel surface it. The buyer's copy should not change either way. |
 
+
+---
+
+## Added by slice 9 (2026-08-21)
+
+Slice 9 closed more than it opened — the builder stopped publishing our neighbourhood into other
+people's listings, and a `g` tag that had been wrong for eight slices got read for the first
+time. What is left is three rows, and **the third is not a defect so much as the bill for
+everything above it.**
+
+| what breaks | where | what it costs a user | why it is deferred | what fixing it looks like |
+|---|---|---|---|---|
+| **Publishing the sale re-lists only the items the panel last managed to read.** A kind 30405 is a replacement, so `publishSale` has to send every member every time — and the member list it is handed is `owned`, which is whatever `loadItems` got back from four relays on the last press of "Load my items". One slow relay, or a `querySync` that returns early, and pressing "Publish my sale" quietly drops the items that did not come back. `publishSale` verifies that the parser reads back as many members as it was **handed**, which catches an encoding fault and cannot catch a short read. | `builder/src/publish.ts` `publishSale`, against `builder/src/main.ts` `doPublishSale` | Items fall out of the collection. They are **not deleted** — they survive on the relays and `storefront/src/listing.ts` `orderBySale` renders collection members first and strays after, so they drop to the foot of the sale page in `d` order. A demotion, not a loss, and invisible unless the seller counts. | The honest fix needs a number to compare against, and nothing on a relay records how many items a sale is *supposed* to have. The count is in the collection currently on the relays — which is the thing being replaced — so comparing against it means "refuse to shrink the sale", and shrinking the sale is also what removing an item legitimately looks like. Guessing wrong in that direction blocks a real edit. | Read the current kind 30405 immediately before signing (one relay read, no signature) and, if the new member list is **shorter**, name the items being dropped and ask. The panel already prints its own item count next to the sale name, so a seller who looks can see the discrepancy today — that is the mitigation, not the fix. |
+| **A new item does not appear in the sale's member list until the seller publishes the sale again.** Deliberate — `builder/src/listing.ts` says so and it saves a signature per item — but it is now a thing a seller has to know, where before slice 9 the collection was never published from the builder at all and the question could not arise. | `builder/src/listing.ts` `listingTags`, the `a` tag comment | A newly authored item renders at the **foot** of the storefront, after every collection member, rather than where the seller expects. Nothing is missing and nothing is unbuyable. | Re-signing the collection on every item publish costs one extra approval per item, on a budget (§5) that already had to grow a `1 + units` term. For a seller adding nine things in a row that is nine signatures to fix an ordering nobody has looked at yet. | Either publish the sale automatically after the *last* item rather than each one — which needs a notion of "last" that a form does not have — or say it in the publish result copy, which is one sentence and is the cheaper honest option. Not done: the copy in `#result-text` is already three sentences long. |
+| **Every pixel of slice 9 is unrendered, and slice 9 is the most visual slice in the project.** The sticker sheet has never been printed, the `@media print` block that hides `<main>` has never run, `missingItemNote` has never painted, and the `geo:` link has never been tapped. `render.ts` and `sale.ts` decisions are tested — 58 storefront, 58 builder — and **the markup is not, by the same boundary slice 8 wrote down.** | `builder/src/stickers.ts`, `builder/src/style.css` `@media print`, `storefront/src/render.ts` `renderIndex`'s missing branch | Unknown, which is the point. A print stylesheet that has never been previewed is the class of thing that is either perfect or comically broken with nothing in between. | It is not deferred so much as **assigned**: `/docs/prompts/browser-verify-and-deploy.md` is a session that already exists and now covers six slices of unrun DOM. It was deliberately not folded into this one. | Run that session. Its list should now include: print the storefront (is the grayscale approximation good enough on paper — design.md §2.2 asks and only a person can answer); build and print the sticker sheet; visit `#/item/does-not-exist`; and tap the masthead location on a phone. |
+
 ---
 
 ## Documentation drift
@@ -86,11 +102,24 @@ drift you actually walk through, do not open a documentation project inside a bu
   the offer" decision, so it owned the drift: both rows now carry the decision that landed —
   nothing is done to the offer at all, the sold listing drops its `clink_offer` tag, and the
   invoice history stays readable for slice 7. Spec §7.4 itself is rewritten with the reasoning.
-- **`docs/design.md` is a slice-0 document with one slice-5 patch.** §4 was updated for slice 5;
-  the rest was not. §5 (`design.md:9`, `:103-105`) still specifies React + Tailwind + shadcn/ui
-  and Radix; §2.5 (`design.md:62`) still specifies a blurhash or thumbhash placeholder, which
-  `builder/src/listing.ts:54-57` deliberately does not write; §2.2 (`design.md:59`) and §3
-  (`design.md:75`) still specify 1-bit dithered thumbnails.
+- ☑ **`docs/design.md` is a slice-0 document with patches. MOSTLY FIXED 2026-08-21 by slice 9**,
+  which was obliged to touch it because §3 is the print spec slice 9 implements and §4 is the
+  sticker spec. §5 was already corrected in slice 6. What slice 9 fixed and why it stopped being
+  cosmetic:
+  - **§2.2 and §3's "1-bit dithered thumbnails"** were a print *requirement* resting on a pipeline
+    stage that was never built, in the slice that implements §3. Both now say there is no
+    dithering, that what prints is `grayscale + contrast`, and — the part worth keeping — that
+    the open question is not "when do we add it" but "is the approximation good enough on paper",
+    which only a print preview answers. `style.css`'s two stale `ponytail:` comments pointing at
+    slice 4 were corrected with it. **The instruction not to build the dithering to make the
+    document true is now in the document.**
+  - **§2.5's blurhash/thumbhash placeholder** now records the decision (with findings §13.21's
+    citation) instead of describing a plan, and §2 as a whole marks which of its six items
+    shipped, in which slice, and which two are deliberate absences.
+  - **§4** carries the slice-9 decision about where the sticker sheet lives, and §1's masthead
+    paragraph says what "editable in the admin panel" turned out to actually require.
+  - Still standing: nothing in §2/§3/§4/§5. §6 ("theming: out of scope") is unexamined and was
+    always meant to be.
 - ☑ **The node account balance is both 6,000 and 8,000 sats. FIXED 2026-08-21, and measured
   rather than picked.** `node spike/sales-report.ts` reports **three settled invoices totalling
   8,000 sats** (`plants` 6,000, `mugs` 2×1,000) and `lncli listchannels` agrees on 8,000 local.

@@ -9,14 +9,26 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { parseListings } from '../../storefront/src/listing.ts'
-import { SALE } from '../../spike/fixture.ts'
+import { DEFAULT_SALE, listingD as saleListingD, type SaleDraft } from './sale.ts'
 import { blobFrom, draftFrom, imetaValues, reusableOffer, soldCount } from './admin.ts'
-import { approvalCount, eventsToSign, listingD, listingTags, type Blob, type Draft } from './listing.ts'
+import { approvalCount, eventsToSign, listingTags, type Blob, type Draft } from './listing.ts'
 import { parseNotes, MAX_NOTE } from './notes.ts'
 
 const sk = generateSecretKey()
 const pk = getPublicKey(sk)
 const NOW = 1_756_000_000
+
+// Slice 9. The builder no longer imports the spike fixture's sale — see ./sale.ts for why that
+// was the slice's real bug. A sale that is emphatically NOT ours keeps these honest: if any of
+// this leaks a Guadalajara geohash again, it will be because a test asserted one.
+const SALE: SaleDraft = {
+  ...DEFAULT_SALE,
+  d: 'sobras-de-mudanza',
+  title: 'Sobras de mudanza',
+  location: 'Barrio de Xochimilco, Oaxaca',
+  g: '9g4h2xz',
+}
+const listingD = (slug: string) => saleListingD(SALE.d, slug)
 
 // The same real noffer offer.test.ts uses: minted by the running Lightning.Pub 0.0.37 for the
 // fixture's `plants` at 6,000 sats. A golden vector from the node, not from our own encoder.
@@ -51,7 +63,7 @@ const draft = (over: Partial<Draft> = {}): Draft => ({
 })
 
 const publishedAs = (d: Draft) => {
-  const event = finalizeEvent(eventsToSign(d, pk, NOW)[0]!, sk)
+  const event = finalizeEvent(eventsToSign(d, pk, NOW, SALE)[0]!, sk)
   const item = parseListings([event], pk)[0]!
   return { event, item }
 }
@@ -65,7 +77,7 @@ test('a published item reads back as the draft that republishes it byte for byte
   const original = draft()
   const { event, item } = publishedAs(original)
 
-  const round = draftFrom(item, event)
+  const round = draftFrom(item, event, SALE.d)
   assert.ok(round)
   assert.equal(round.slug, original.slug)
   assert.equal(round.title, original.title)
@@ -81,13 +93,13 @@ test('a published item reads back as the draft that republishes it byte for byte
   // And the proof: the tags it would publish are the ones already on the relay. `published_at`
   // is the timestamp of the save and is expected to move.
   const strip = (tags: string[][]) => tags.filter(t => t[0] !== 'published_at')
-  assert.deepEqual(strip(listingTags(round, pk, NOW + 500)), strip(event.tags))
+  assert.deepEqual(strip(listingTags(round, pk, NOW + 500, SALE)), strip(event.tags))
 })
 
 test('an item with no photo and no offer round-trips too', () => {
   const original = draft({ blobs: [], servers: [], alt: '' })
   const { event, item } = publishedAs(original)
-  const round = draftFrom(item, event)!
+  const round = draftFrom(item, event, SALE.d)!
   assert.deepEqual(round.blobs, [])
   assert.deepEqual(round.servers, [])
   assert.equal(round.noffer, undefined)
@@ -98,7 +110,7 @@ test('a sold item reads back as stock 0, whichever way it says sold', () => {
   // listing seeded before either existed can carry only `status: sold`. Both must land on 0,
   // because the difference decides how many ladder rungs a re-publish signs.
   const { event, item } = publishedAs(draft({ stock: 0 }))
-  assert.equal(draftFrom(item, event)!.stock, 0)
+  assert.equal(draftFrom(item, event, SALE.d)!.stock, 0)
 
   const noStock = finalizeEvent(
     { kind: 30402, created_at: NOW, content: '', tags: [['d', listingD('mirror')], ['title', 'Mirror'], ['status', 'sold']] },
@@ -106,7 +118,7 @@ test('a sold item reads back as stock 0, whichever way it says sold', () => {
   )
   const parsed = parseListings([noStock], pk)[0]!
   assert.equal(parsed.stock, undefined)
-  assert.equal(draftFrom(parsed, noStock)!.stock, 0)
+  assert.equal(draftFrom(parsed, noStock, SALE.d)!.stock, 0)
 })
 
 // --- what it refuses to edit ------------------------------------------------------------------
@@ -119,7 +131,7 @@ test('a fiat-priced item is not editable here, because this form would silently 
     { kind: 30402, created_at: NOW, content: '', tags: [['d', listingD('records')], ['title', 'Records'], ['price', '80', 'MXN']] },
     sk,
   )
-  assert.equal(draftFrom(parseListings([ev], pk)[0]!, ev), null)
+  assert.equal(draftFrom(parseListings([ev], pk)[0]!, ev, SALE.d), null)
 })
 
 test('an item addressed outside this sale is not editable, because saving it would orphan the original', () => {
@@ -127,13 +139,13 @@ test('an item addressed outside this sale is not editable, because saving it wou
     { kind: 30402, created_at: NOW, content: '', tags: [['d', 'some-other-sale-chair'], ['title', 'Chair'], ['price', '10', 'sats']] },
     sk,
   )
-  assert.equal(draftFrom(parseListings([ev], pk)[0]!, ev), null)
+  assert.equal(draftFrom(parseListings([ev], pk)[0]!, ev, SALE.d), null)
   // …and the `d` tag that is nothing but the prefix has no slug to republish under.
   const bare = finalizeEvent(
     { kind: 30402, created_at: NOW, content: '', tags: [['d', SALE.d], ['title', 'The sale itself']] },
     sk,
   )
-  assert.equal(draftFrom(parseListings([bare], pk)[0]!, bare), null)
+  assert.equal(draftFrom(parseListings([bare], pk)[0]!, bare, SALE.d), null)
 })
 
 // --- the money path ---------------------------------------------------------------------------

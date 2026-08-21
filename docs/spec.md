@@ -309,7 +309,7 @@ Standard tags used:
 | `summary` | one-line description |
 | `published_at` | unix seconds, first publish |
 | `location` | human-readable, e.g. "Colonia Americana, Guadalajara" |
-| `g` | geohash — powers the "sales near me" map |
+| `g` | geohash. ~~powers the "sales near me" map~~ **There is no map — cut in slice 9, findings §31.** It powers one thing: the sale's own location as an RFC 5870 `geo:` link on the masthead, which the buyer's OS hands to their own map app. One tag, at 7 characters (±76 m). A proximity query would need several at decreasing precision, which is a NIP-CC geocaching convention (`CC.md:53`) and not a NIP-99 one. **Slice 9 is also the first thing that ever decoded this tag, and it found the fixture's had been 5.94 km wrong since slice 1** |
 | `price` | `["price", "<number>", "<currency>"]`, e.g. `["price", "800", "MXN"]`. NIP-99 also allows an optional 4th element `<frequency>` (`99.md:38-42`) — we never write it, but the parser must tolerate it |
 | `status` | `active` or `sold` |
 | `image` | NIP-58 shaped: URL + optional `WxH` |
@@ -417,6 +417,26 @@ Pub, identity comes from the listing signature, not the payment pointer).
 
 Note the collection has no field for a sale's **date or opening hours** — no NIP does. Slice 1
 renders them from the freeform `summary`. See `/docs/spike-findings.md` §13.12.
+
+**The builder authors this event as of slice 9, and until then nothing in it did.** `30405` was
+written by `/spike/seed-listings.ts` and by nothing else, while `builder/src/listing.ts` put
+`["a","30405:<seller>:yardsale-2026-08"]` on every item it published — so every seller who was
+not us signed items into a collection that existed only for us, and their storefront rendered its
+own fallback name as the masthead. `builder/src/sale.ts` + `publish.ts` `publishSale` close it:
+one signature, and no new bunker approval, because `sign_event:30405` has been in `PERMS` since
+slice 4 (findings §8).
+
+Two properties of this event that are load-bearing and easy to lose:
+
+- **It is a replacement, so every member goes in every time.** Publishing a subset silently
+  un-lists the rest — the items survive on the relays and `orderBySale` renders them as strays at
+  the foot of the page, which is a demotion nobody asked for rather than a deletion. `publishSale`
+  refuses to publish if the parser reads back fewer members than it was handed.
+- **Its `d` is every item's `d` prefix**, via `listingD`. That makes it the most dangerous string
+  in the builder: `admin.ts` `draftFrom` refuses to edit an item whose `d` falls outside the
+  prefix, so changing it orphans everything the seller has published. It is therefore **not a form
+  field** — it is read back off the seller's own published collection, and defaults to `sale` (no
+  date in it) for a seller who has none yet. §10 slice 9.
 
 ### 6.4 Site hosting — NIP-5A
 
@@ -807,8 +827,9 @@ React, Tailwind or shadcn/ui.**
 - Hand-written CSS, no component library. Newspaper classifieds aesthetic.
 - **No framework at all.** Slice 1 shipped Vite + TypeScript + hand-written DOM calls. Preact was
   not needed and was not added; revisit only if slice 2/3 state gets genuinely hairy.
-- Budget: ~~~30KB JS~~ **32 KB gzip JS cold**, ~10KB CSS. Justify every dependency. The number was
-  raised once, deliberately, in slice 8 — see "the budget moved" below rather than treating this
+- Budget: ~~~30KB JS~~ ~~32 KB~~ **33 KB gzip JS cold**, ~10KB CSS. Justify every dependency. The
+  number has been raised twice, deliberately and with the reasoning written down both times —
+  slice 8 (30 → 32) and slice 9 (32 → 33). See "the budget moved" below rather than treating this
   line as the whole story.
 - No three.js / R3F. No animation libraries.
 
@@ -888,10 +909,25 @@ worth fixing — a budget nobody restates is a budget nobody is keeping.
 | slice 5 | 31.0 KB | one build for any seller: a bech32 npub decode replacing a build-time constant |
 | slice 7 | 31.31 KB | `LN_ADDRESS` lifted so the page and the watcher agree, and honest hint text |
 | slice 8 | **31.61 KB** | `noBuyReason` and the §10 copy — two items on the live fixture stopped being dead ends |
+| slice 9 | **32.01 KB** | `geoUri` (0.15) — the sale's location, decoded and tappable, replacing §10's cut map — plus `missingItemNote` and the `g` parse: a scanned sticker for an item that is gone stops landing on a silent index |
 
-Measured 2026-08-21: **31.61 KB gzip JS** cold + 2.05 CSS + 2.4 HTML as deployed, plus a 3.91 KB
+Measured 2026-08-21: **32.01 KB gzip JS** cold + 2.12 CSS + 2.4 HTML as deployed, plus a 3.91 KB
 QR chunk fetched only by a buyer who taps Buy. So a visitor who browses pulls ~36 KB and a
 visitor who buys pulls ~40.
+
+**Slice 9 spent the headroom and then went 10 bytes past the line, and this is the disclosure
+rather than a rounding.** Slice 8 left "~0.4 KB of headroom" and said the next slice that wanted
+it had to say what it was spending it on; slice 9 spent 0.40 and landed at 32.01 against a 32.00
+ceiling. Two of the three obvious trims were taken because they were also simplifications — the
+masthead decodes the geohash once instead of twice, and the `d` bound is applied once instead of
+twice — and gzip did not move. **The third was refused on this section's own precedent**: the
+only remaining lever is copy, and shrinking the sentence that tells somebody who scanned a
+sticker why the thing is not there would be deleting an explanation to improve a statistic. That
+is the identical trade §9 already refuses for `verifyEvent`.
+
+⇒ **The ceiling moves to 33 KB, with the same condition attached.** ~1 KB of headroom, and the
+next slice that wants it says what it bought. If that ever stops being written down, the number
+has stopped being a budget — which is what this table exists to make visible.
 
 **Two commands, two numbers, and every figure in these docs is vite's.** `npm run build` reports
 31.61 kB; `npm run size` gzips at level 9 and reports 31,373 bytes. Both are correct and they
@@ -904,8 +940,9 @@ appears to have shrunk the bundle by changing which command it ran.
 there is no payment. Neither is negotiable, and the only remaining lever is copy — which means
 hitting 30 would mean deleting the sentences that tell a buyer why they are being asked for a
 refund pointer, in order to improve a statistic. That is the same trade §9 already refuses for
-`verifyEvent`, so it is refused here too. 32 is a real ceiling with ~0.4 KB of headroom, and the
-next slice that wants a KB has to say what it is spending it on.
+`verifyEvent`, so it is refused here too. 32 was a real ceiling with ~0.4 KB of headroom, and the
+next slice that wanted a KB had to say what it was spending it on. Slice 9 did, and the table
+above is where it said it.
 
 **Shared:**
 - TypeScript throughout
@@ -1389,7 +1426,59 @@ message, and it is tested. See §7.3.
   resolve*, which needs a human — rather than acquiring a second one.
 - **No fallback offer, no second `clink_offer` tag, no BOLT12.** See above.
 
-**Slice 9 — Polish.** Geohash map of nearby sales, printable item-sticker QR sheet (design §4), masthead editing, 404 page, empty states.
+**Slice 9 — Polish. DONE 2026-08-21, and the line above was wrong in three of its five items.**
+The original read: *"Geohash map of nearby sales, printable item-sticker QR sheet (design §4),
+masthead editing, 404 page, empty states."* Taken in order of how wrong each one was:
+
+- ~~**404 page.**~~ **Already done, since slice 1.** `storefront/public/404.html` is a complete
+  hand-written page, `builder/src/deploy.ts` **refuses to deploy a site without one** citing
+  NIP-5A `5A.md:196`, `deploy.test.ts` asserts the refusal, and both live nsites have one. It sat
+  on this list for eight slices as a thing to do. Slice 8's version of this line claimed BOLT12
+  and cost an afternoon of correction; the same line's "404 page" was already true and nobody
+  noticed. **§10 is a plan written before the answers, not a to-do list — check before building.**
+- ~~**Geohash map of nearby sales.**~~ **Cut, and the reasoning is `/docs/spike-findings.md` §31.**
+  Three disqualifiers, any one of them fatal: a basemap is a third-party hostname fetched by every
+  visitor, on a page whose only network calls today are two relay subscriptions to one known
+  author; "nearby" means rendering events from strangers, which moves the trust boundary rather
+  than extending it; and the proximity convention that would make the query expressible at all is
+  specified in **NIP-CC, the geocaching draft** (`CC.md:53` — "include multiple geohash tags at
+  different precision levels"), not in NIP-99, while we emit exactly one `g` tag. Plus a map
+  library is one to two orders of magnitude over §9's budget.
+
+  **What shipped instead is the scoped version**: the sale's own `g`, decoded in the page and
+  rendered as an RFC 5870 `geo:` link around the neighbourhood on the masthead
+  (`storefront/src/render.ts` `geoUri`). The OS hands it to whatever map app the buyer already
+  has — no tile server, no library, no cross-author query, and the page never learns they looked.
+  Renamed accordingly: **"where this sale is", not "a map of nearby sales."** It cost 0.15 KB
+  gzip and it found a 5.94 km error in the fixture's own geohash within a minute of existing,
+  because until slice 9 **nothing in this project had ever decoded one**.
+- **Masthead editing — this was the slice, and "editing" undersold it by a lot.** There was
+  nothing to edit: `builder/src/listing.ts` imported `SALE` from `/spike/fixture.ts` and stamped
+  it on every item anybody authored — `d` prefixed `yardsale-2026-08-`, `location` "Colonia
+  Americana, Guadalajara", `g` `9ewmr4z`, and an `a` tag pointing at
+  `30405:<their own pubkey>:yardsale-2026-08`. So a seller in Oaxaca published items tagged with
+  our neighbourhood, signed by their own key, permanently, on four public relays — **and the
+  collection those items claimed membership of did not exist**, because `30405` was written only
+  by `/spike/seed-listings.ts`. `spike/check-deploy.ts` had been printing
+  `(no kind 30405 — the page falls back to its own name)` for exactly this, which reads like a
+  graceful fallback rather than the missing half of a feature. New `builder/src/sale.ts` +
+  `publish.ts` `publishSale`: the builder authors the sale, one signature, **no new bunker
+  approval** because `sign_event:30405` has been in `PERMS` since slice 4 (findings §8).
+- **Printable item-sticker QR sheet — built, in the builder.** `builder/src/stickers.ts`, behind
+  the same dynamic `uqr` import the deploy button already uses. See design.md §4 for the decision
+  and why it is not a third `@media print` block in the storefront.
+- **Empty states — two of the three already existed; the one that was missing is the one slice 9
+  created the need for.** A `#/item/<d>` deep link for a `d` not in the sale fell through to the
+  index in silence — which is precisely what a **sticker that outlived its item** produces, and
+  slice 9 is the slice that prints the stickers. `render.ts` `missingItemNote`.
+
+**The sale's `d` is deliberately not a form field.** It is also every item's `d` prefix, and
+`admin.ts` `draftFrom` refuses to edit an item outside that prefix, so a text box for it is a box
+that — mistyped once — orphans every item the seller has ever published, in silence. It is read
+back off the seller's own kind 30405 instead, which costs nothing (the panel already fetches that
+event in the same query) and means the live fixture sale keeps `yardsale-2026-08` without anybody
+typing it. New sellers get `sale`, with no date in it: a date goes stale at the second sale, and
+changing it then would break every `a` tag and every prefix at once.
 
 ---
 

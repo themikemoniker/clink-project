@@ -79,6 +79,11 @@ export type Sale = {
   title: string
   summary?: string
   location?: string
+  // 99.md:53 lists `g` under "Other common tags that might be useful"; Gamma spec.md:213-262
+  // carries it on the collection too. ONE tag, at whatever precision the author wrote — see
+  // render.ts `geoUri` for what the page does with it and /docs/spike-findings.md §31 for the
+  // discovery feature it deliberately is not.
+  geo?: string
   itemRefs: string[] // "30402:<pubkey>:<d>" — Gamma spec.md:221
 }
 
@@ -202,6 +207,9 @@ const parseSale = (ev: Event): Sale | null => {
     title,
     summary: text(tagValue(ev, 'summary'), LIMITS.summary),
     location: text(tagValue(ev, 'location'), LIMITS.location),
+    // A geohash is at most 12 characters in any use anyone makes of one; the charset is checked
+    // in render.ts `geoUri`, which is the only thing that reads this.
+    geo: text(tagValue(ev, 'g'), 12),
     // Gamma spec.md:221 ["a","30402:<pubkey>:<d-tag>"]. Bounded, and shape-checked so a
     // malformed coordinate can never be used to build a relay filter.
     itemRefs: allTags(ev, 'a')

@@ -10,11 +10,23 @@ import test from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { parseListings } from '../../storefront/src/listing.ts'
 import { approvalCount, eventsToSign, imetaTag, listingTags, normaliseSlug, type Blob, type Draft } from './listing.ts'
+import { DEFAULT_SALE, type SaleDraft } from './sale.ts'
 import { renditionWidths, WIDTHS } from './photos.ts'
 
 const sk = generateSecretKey()
 const pk = getPublicKey(sk)
 const NOW = 1_756_000_000
+
+// Slice 9: the sale is a parameter now, not an import from /spike/fixture.ts. Deliberately NOT
+// the fixture's — these tests would have kept passing while every seller published our
+// neighbourhood, which is the bug slice 9 fixed (./sale.ts).
+const SALE: SaleDraft = {
+  ...DEFAULT_SALE,
+  d: 'sobras-de-mudanza',
+  title: 'Sobras de mudanza',
+  location: 'Barrio de Xochimilco, Oaxaca',
+  g: '9g4h2xz',
+}
 
 const blob = (w: number, h: number, sha: string): Blob => ({
   url: `https://blossom.band/${sha}.jpg`,
@@ -49,8 +61,8 @@ test('slug normalisation collapses what would silently overwrite an item', () =>
 })
 
 test('listing tags carry the standardised names, not invented ones', () => {
-  const tags = listingTags(draft(), pk, NOW)
-  strictEqual(tagValue(tags, 'd'), 'yardsale-2026-08-brass-lamp')
+  const tags = listingTags(draft(), pk, NOW, SALE)
+  strictEqual(tagValue(tags, 'd'), 'sobras-de-mudanza-brass-lamp')
   strictEqual(tagValue(tags, 'title'), 'Brass floor lamp')
   // Gamma spec.md:124 `stock`, not a custom `quantity` — /docs/spec.md §6.1.
   strictEqual(tagValue(tags, 'stock'), '3')
@@ -63,7 +75,7 @@ test('listing tags carry the standardised names, not invented ones', () => {
 })
 
 test('an item at stock 0 publishes sold and never advertises an offer', () => {
-  const tags = listingTags(draft({ stock: 0, noffer: 'noffer1xxx' }), pk, NOW)
+  const tags = listingTags(draft({ stock: 0, noffer: 'noffer1xxx' }), pk, NOW, SALE)
   strictEqual(tagValue(tags, 'status'), 'sold')
   strictEqual(tagValue(tags, 'stock'), '0')
 })
@@ -71,7 +83,7 @@ test('an item at stock 0 publishes sold and never advertises an offer', () => {
 test('the widest photo becomes `image`, the rest become `thumb`, whatever order they arrive in', () => {
   // draft() deliberately lists 480 before 1200. Getting this backwards means the index loads
   // the full-size blob and the detail view loads a thumbnail.
-  const tags = listingTags(draft(), pk, NOW)
+  const tags = listingTags(draft(), pk, NOW, SALE)
   deepStrictEqual(tags.find(t => t[0] === 'image'), ['image', `https://blossom.band/${'a'.repeat(64)}.jpg`, '1200x900'])
   const thumbs = tags.filter(t => t[0] === 'thumb')
   strictEqual(thumbs.length, 1)
@@ -97,18 +109,18 @@ test('an item is 1 + units signatures, and the count shown matches the events si
   // The term /docs/spec.md §5's budget did not have. A UI that says "1 approval" here is how a
   // seller abandons a publish halfway and leaves a listing with no ladder behind it.
   const d = draft({ stock: 3 })
-  strictEqual(eventsToSign(d, pk, NOW).length, 4) // listing + 3 rungs
+  strictEqual(eventsToSign(d, pk, NOW, SALE).length, 4) // listing + 3 rungs
   // 2 blobs + 1 offer + 1 listing + 3 rungs
   strictEqual(approvalCount(d, true), 7)
   strictEqual(approvalCount(d, false), 6)
-  strictEqual(eventsToSign(draft({ stock: 0 }), pk, NOW).length, 1) // sold: no future states
+  strictEqual(eventsToSign(draft({ stock: 0 }), pk, NOW, SALE).length, 1) // sold: no future states
 })
 
 test('ladder created_at strictly increases as stock falls', () => {
   // Load-bearing, not cosmetic: NIP-01 keeps the newest per (kind, pubkey, d), so a rung
   // published out of order or replayed is a no-op at the relay. Availability cannot run
   // backwards by construction rather than by the watcher behaving.
-  const events = eventsToSign(draft({ stock: 3 }), pk, NOW)
+  const events = eventsToSign(draft({ stock: 3 }), pk, NOW, SALE)
   const times = events.map(e => e.created_at)
   deepStrictEqual(times, [NOW, NOW + 1, NOW + 2, NOW + 3])
 })
@@ -119,7 +131,7 @@ test('every rung survives the storefront parser, and the last one drops the offe
   // Any string will do here: this test is about the ladder's shape, and whether the tag is a
   // decodable pointer is the next test's job.
   const noffer = 'noffer1qvqsxxxxxx'
-  const events = eventsToSign(draft({ stock: 3, noffer }), pk, NOW).map(t => finalizeEvent(t, sk))
+  const events = eventsToSign(draft({ stock: 3, noffer }), pk, NOW, SALE).map(t => finalizeEvent(t, sk))
   const parsed = events.map(e => parseListings([e], pk)[0])
 
   strictEqual(parsed.filter(Boolean).length, 4)
@@ -137,7 +149,7 @@ test('a listing whose price disagrees with its offer is not buyable, and we can 
   // publish.ts refuses to publish when it does. The price-disagreement case is the same code
   // path (buyableOffer compares TLV 4 against the price tag) and is exercised end-to-end against
   // a REAL minted noffer by /spike/check-manage.ts.
-  const events = eventsToSign(draft({ noffer: 'not-an-noffer' }), pk, NOW).map(t => finalizeEvent(t, sk))
+  const events = eventsToSign(draft({ noffer: 'not-an-noffer' }), pk, NOW, SALE).map(t => finalizeEvent(t, sk))
   const parsed = parseListings([events[0]!], pk)[0]
   ok(parsed)
   strictEqual(parsed.offer, undefined)
@@ -154,4 +166,35 @@ test('rendition widths never upscale, and never lose a real thumb to a collision
   // A thumbnail-sized source collapses to one blob rather than three `thumb` tags on one URL.
   deepStrictEqual(renditionWidths(120), [120])
   deepStrictEqual(renditionWidths(1200), WIDTHS)
+})
+
+// --- slice 9: the item belongs to the seller's sale, not to ours -----------------------------
+
+test('location and geohash come off the sale, not off a fixture in another package', () => {
+  // THE SLICE-9 BUG, as an assertion. `listingTags` imported SALE from /spike/fixture.ts, so a
+  // seller in Oaxaca published items tagged `Colonia Americana, Guadalajara` and `9ewmr4z`,
+  // signed by their own key, permanently, on four public relays.
+  const tags = listingTags(draft(), pk, NOW, SALE)
+  strictEqual(tagValue(tags, 'location'), 'Barrio de Xochimilco, Oaxaca')
+  strictEqual(tagValue(tags, 'g'), '9g4h2xz')
+  ok(!JSON.stringify(tags).includes('Guadalajara'))
+  ok(!JSON.stringify(tags).includes('9ewm'))
+})
+
+test('the a tag points at the sale this browser can actually publish', () => {
+  // It used to be `30405:<pubkey>:yardsale-2026-08` for everybody, and NOTHING in the builder
+  // ever published a kind 30405 — the only writer in the repo was /spike/seed-listings.ts. So
+  // every authored item claimed membership of a collection that did not exist.
+  const tags = listingTags(draft(), pk, NOW, SALE)
+  deepStrictEqual(tags.find(t => t[0] === 'a'), ['a', `30405:${pk}:sobras-de-mudanza`])
+})
+
+test('a sale with no location and no geohash writes neither tag', () => {
+  // Not empty ones. `["g",""]` decodes to the equator for anything that does not check, and
+  // `["location",""]` renders as a blank line under the masthead.
+  const tags = listingTags(draft(), pk, NOW, { ...SALE, location: '', g: '' })
+  strictEqual(tags.filter(t => t[0] === 'location').length, 0)
+  strictEqual(tags.filter(t => t[0] === 'g').length, 0)
+  // The `a` tag is not optional the same way: an item with no collection is a stray.
+  strictEqual(tags.filter(t => t[0] === 'a').length, 1)
 })

@@ -19,6 +19,19 @@ The metaphor is not decoration. NIP-99 is literally titled *Classified Listings*
 
 Sale name, date, hours, neighborhood. This is what makes the printed version a real flyer. Sourced from the seller's sale config, editable in the admin panel.
 
+**Built in slice 9, and "editable" turned out to be the smaller half.** There was no sale config
+to edit: the builder imported `/spike/fixture.ts`'s and stamped our neighbourhood and geohash on
+every item anybody authored, into a kind 30405 nothing in the builder ever published. It is a
+real form now (`builder/index.html` §3, `builder/src/sale.ts`) — name, the date-and-hours line
+that has nowhere else to live because no NIP carries one, neighbourhood, and an optional geohash
+with a "use my location" button that reads the browser's own geolocation and rounds to ±76 m.
+No geocoder: turning a neighbourhood name into coordinates is an HTTP call to a third party, and
+that is the exact dependency the geohash map died on (spec §10, findings §31).
+
+The neighbourhood renders as a `geo:` link when the geohash decodes, which is the whole surviving
+remnant of §10's "map of nearby sales" — the buyer's own map app, no tile server, nothing of ours
+told that they looked.
+
 ### Layout
 
 - Grid that evokes columns; do NOT use CSS `columns` (breaks with lazy images and interactive elements)
@@ -55,12 +68,40 @@ Strikethrough on the title plus a rotated stamp. **Do not hide sold items** — 
 
 A 4MB phone photo from a driveway will destroy load time. This is not a polish item — build it in Slice 1.
 
-1. **Resize client-side on upload** via canvas. Generate 2–3 widths per photo. Each width is its own Blossom blob.
-2. **Dithered thumbnails on the index.** 1-bit halftone: authentically newsprint, dramatically smaller than JPEG, prints perfectly on any printer.
-3. **Full-colour photo on the item detail view** — a buyer needs to judge whether the couch is stained.
-4. **Aspect-ratio boxes** so nothing shifts as blobs arrive.
-5. **Blurhash or thumbhash placeholder** rendered inline in the listing event while the blob fetches.
-6. **Lazy load** below the fold.
+**Corrected in slice 9, because §3 below is the print spec slice 9 implements and two of the six
+items here describe things that do not exist.** The render half shipped in slice 1
+(`storefront/src/listing.ts` `srcset`, `render.ts` `photo`); the generator half shipped in slice 4
+(`builder/src/photos.ts`). What is marked NOT BUILT is not a deferral with a slice on it — it is a
+decision, with the reasoning and a citation.
+
+1. **Resize client-side on upload** via canvas. Generate 2–3 widths per photo. Each width is its
+   own Blossom blob. **Shipped slice 4** — `photos.ts` `WIDTHS = [1200, 480, 160]`, jpeg q0.82,
+   never upscaled, original never uploaded.
+2. ~~**Dithered thumbnails on the index.** 1-bit halftone: authentically newsprint, dramatically
+   smaller than JPEG, prints perfectly on any printer.~~ **NOT BUILT, and not planned.** There is
+   no dithering anywhere in this project and nothing is scheduled to add it. What exists is a
+   print-only CSS approximation — `grayscale(1) contrast(1.45) brightness(1.06)`,
+   `style.css` in the first `@media print` block — which was written in slice 1 saying "until
+   slice 4 exists", and slice 4 came and went without it. The honest reason it never got built:
+   a 1-bit halftone is a **fourth rendition** to generate, upload, sign a kind 24242 for and carry
+   an extra `thumb` tag for, in exchange for a thumbnail that looks better on a laser printer and
+   worse on a screen — and the screen is where every buyer sees it. The CSS filter costs zero
+   bytes, zero blobs and zero signatures. **Whether it is good enough on paper is a question only
+   a print preview answers, and nobody has run one** — that is owed to
+   `/docs/prompts/browser-verify-and-deploy.md`, not to a future slice of this pipeline.
+3. **Full-colour photo on the item detail view** — a buyer needs to judge whether the couch is
+   stained. **Shipped slice 1**: the same srcset, larger `sizes`.
+4. **Aspect-ratio boxes** so nothing shifts as blobs arrive. **Shipped slice 1** — the box comes
+   from the event's own `WxH`, with `4 / 3` as a fallback rather than a claim.
+5. ~~**Blurhash or thumbhash placeholder** rendered inline in the listing event while the blob
+   fetches.~~ **NOT BUILT, deliberately, and the decision is recorded rather than pending.**
+   `blurhash` is a real NIP-94 field reachable through NIP-92 `imeta` (findings §13.21 pins the
+   citation), and `builder/src/listing.ts` `imetaTag` writes `x`, `dim`, `alt` and `fallback` and
+   pointedly not this one: it would need an encoder in the builder **and a decoder inside the
+   storefront's 32 KB gzip budget** (spec §9) to replace a flat tone that already works. The
+   placeholder that ships is `.shot-empty`, a 45° hatch. The field name is pinned, so shipping one
+   later is an hour rather than a research task.
+6. **Lazy load** below the fold. **Shipped slice 1** — `loading="lazy"`, `decoding="async"`.
 
 ---
 
@@ -68,14 +109,33 @@ A 4MB phone photo from a driveway will destroy load time. This is not a polish i
 
 The seller prints the page, tapes it to a lamppost, and the QR on it goes to the live version where sold items have already vanished. Paper that stays current. This is the best physical artifact in the project — build the stylesheet early, not in polish.
 
-Requirements:
+Requirements, and **as of slice 9 every one of them says what the stylesheet actually does**.
+`storefront/src/style.css` has two `@media print` blocks (the flyer, and one line hiding the buy
+panel); slice 9 adds no third. The one requirement that was a description of an unbuilt pipeline
+is corrected in place rather than deleted, because the reasoning is the useful part:
 
-- `@page` margins
-- Hide buy buttons, nav, and all interactive chrome
-- Black only; dithered thumbs print correctly by construction
-- `break-inside: avoid` on each item
-- Show sats price as of print time, with a line noting live pricing at the URL
-- Tear-off tab strip at the foot of the flyer (what real yard sale signs do), each tab carrying the storefront QR
+- **`@page` margins** — `@page { margin: 14mm }`.
+- **Hide buy buttons, nav, and all interactive chrome** — `.buy`, `.back` and `.byline` are
+  `display: none` in print. Paper cannot be tapped and an npub is not a thing anyone reads off a
+  lamppost.
+- **Black only** — every ink token is redefined to `#000` inside the print block, so the sold
+  stamp, the hairlines and the soft-grey metadata all resolve to one ink. A colour laser and a
+  40-peso mono laser print the same flyer.
+- ~~dithered thumbs print correctly by construction~~ **There are no dithered thumbs.** §2.2 says
+  why, and the sentence above was a print *requirement* resting on a pipeline stage that was never
+  built. What prints is `grayscale(1) contrast(1.45) brightness(1.06)` plus a hairline box, which
+  is an approximation of a halftone rather than one. **Do not build the dithering to make this
+  document true.** The open question is not "when do we add it" — it is "is the approximation good
+  enough on paper", and only somebody looking at a print preview can answer that.
+- **`break-inside: avoid` on each item** — both the modern property and `page-break-inside`, since
+  print engines are the last place either alias is safely dropped. Slice 9 adds the same pair per
+  **sticker** on the builder's sheet (§4), for the same reason.
+- **Show sats price as of print time, with a line noting live pricing at the URL** — prices render
+  as authored, and the flyer's foot says *"Prices as printed. Scan for what is still unsold — this
+  list changes during the sale."*
+- **Tear-off tab strip at the foot of the flyer** (what real yard sale signs do), each tab carrying
+  the storefront QR — eight tabs, dashed rules, each one a `<use>` of the build-time `<symbol>`, so
+  the page ships no QR encoder to repeat it eight times.
 
 ---
 
@@ -128,10 +188,28 @@ npub and a slug. So the sticker that works everywhere is also the one with the f
 a given sticker size — at 2cm that is 0.47mm per module against 0.34mm. The trade-off in the
 paragraph above has no downside left to weigh.
 
-**What the sticker still needs, and it is slice 9's** (the printable sheet, per spec §10): name
-and price above the code, ≥2cm square, and one QR per item — which means whatever generates the
-sheet needs a real encoder, unlike the storefront's own QR. The builder already has `uqr` and the
-storefront deliberately does not carry one in its cold load (spec §9).
+**Built in slice 9, in the builder** — `builder/src/stickers.ts`, `builder/src/style.css`'s
+`@media print` block, and a button in the panel that already lists the seller's items.
+
+**Where it lives was slice 9's decision and both candidates were real.** The storefront already
+has the items, already prints (§3), and its flyer is the best physical artifact in the project, so
+a third `@media print` block there was the natural home. It loses on one measurement: the
+storefront **deliberately ships no QR encoder in its cold load** (spec §9) — its own flyer QR is a
+build-time `<symbol>` injected at deploy and the invoice QR is a 3.91 KB chunk behind the Buy
+button, so a visitor who only browses downloads neither. N stickers is N distinct codes, which
+needs a real encoder, in a bundle that had 0.4 KB of headroom.
+
+⇒ **The builder**, and the reasoning is the same one that keeps `uqr` out of the buyer's cold
+load: the person printing stickers is the seller, at a desk, once. It is behind the same dynamic
+`import('uqr')` the deploy button uses, so a seller who never prints stickers never fetches it
+either. Cost: +2.1 KB gzip on a bundle whose budget is "whatever it takes" (§5).
+
+What shipped, against this section's own requirements: name and price above the code; 25 mm
+square, comfortably over the 2 cm floor and 0.58 mm per module at 43×43; `break-inside: avoid`
+per sticker, both spellings, per §3; a dashed cut line; and **sold items get no sticker**, because
+the object behind a sold listing has already left. The ones already stuck on things are exactly
+why the storefront also grew `missingItemNote` in the same slice — a sticker outlives its item and
+no filter here can reach one.
 
 ---
 
