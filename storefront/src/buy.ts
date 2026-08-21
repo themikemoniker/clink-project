@@ -111,9 +111,21 @@ const attempt = async (
 ): Promise<Outcome> => {
   closeBuy()
 
-  // A fresh key per purchase. clink-offers.md's flow is between the payer's key and the
-  // service; using the same key twice would let the node — and the relay — link a buyer's
-  // purchases to each other. It is also the key the receipt is encrypted to.
+  // KEY HANDLING NOTICE — the only key in shipped browser code, and the only /CLAUDE.md rule-2
+  // exception outside /spike. Rule 2 says nothing but a Signer touches a private key; this
+  // generates one. It is an exception rather than a violation, for three reasons:
+  //
+  //   * It is not the seller's key and not the buyer's key. It is minted here, used for one
+  //     request, and dropped when the page navigates away. It signs nothing else, ever.
+  //   * CLINK requires it. The Offers flow is between the payer's key and the service
+  //     (clink-offers.md), and the settlement receipt is NIP-44 encrypted to whoever signed the
+  //     request (/docs/spike-findings.md §5). A Signer cannot stand in: the buyer has no signer,
+  //     and asking them to install one to buy a 1,000-sat mug is the sale not happening.
+  //   * A fresh one per purchase is the privacy posture, not an accident. Reusing a key would
+  //     let the node — and the relay — link one buyer's purchases to each other.
+  //
+  // It never leaves this function, is never persisted, and is never logged. Grep `KEY HANDLING`
+  // to audit rule 2 and this file is meant to come back with the spike scripts.
   const sk = generateSecretKey()
   const pk = getPublicKey(sk)
   const convo = getConversationKey(sk, offer.pubkey)

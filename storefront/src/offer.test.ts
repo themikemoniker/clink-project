@@ -106,7 +106,16 @@ test('invoice amounts are read from the BOLT11 human-readable part', () => {
   assert.equal(invoiceSats('lnbc10m1' + 'q'.repeat(20)), 1_000_000)
   assert.equal(invoiceSats('lnbc1500n1' + 'q'.repeat(20)), 150)
   assert.equal(invoiceSats('lnbc2100u1' + 'q'.repeat(20)), 210_000)
-  assert.equal(invoiceSats('lntb60u1' + 'q'.repeat(20)), 6000) // testnet, same rules
+})
+
+test('an invoice on any chain but mainnet is refused, in both directions', () => {
+  // This test inverted in slice 7. It used to assert `lntb60u1…` reads as 6000 sats, "testnet,
+  // same rules" — fine while the only thing we did with a BOLT11 was show it to a buyer whose
+  // mainnet wallet would refuse it for us. The refund path pays one, and it comes from a
+  // stranger's wallet via an LNURL host or an noffer, so the chain has to be checked here.
+  assert.equal(invoiceSats('lntb60u1' + 'q'.repeat(20)), null) // testnet
+  assert.equal(invoiceSats('lnbcrt60u1' + 'q'.repeat(20)), null) // regtest
+  assert.equal(invoiceSats('lnsb60u1' + 'q'.repeat(20)), null) // signet
 })
 
 test('an invoice whose amount cannot be trusted reads as null, never as zero', () => {

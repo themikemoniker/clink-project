@@ -8,7 +8,7 @@ import type { Event } from 'nostr-tools/pure'
 import { SALE_RELAYS } from '../../spike/fixture.ts'
 import { parseListings } from '../../storefront/src/listing.ts'
 import { unitsOf } from '../../spike/ladder.ts'
-import { createOffer, type ManagePointer } from './manage.ts'
+import { mintOffer, type ManagePointer } from './manage.ts'
 import { eventsToSign, listingD, type Draft } from './listing.ts'
 import type { Signer } from './signer.ts'
 
@@ -70,6 +70,11 @@ export const publish = async (
   // `admin.ts` reusableOffer() only hands one over when the pointer's own TLV 4 still agrees
   // with the price being published, so a price change falls through to a fresh mint.
   //
+  // Slice 7 closed the half that reuse did NOT cover: a FIRST publish that fails after this
+  // point still left a payable offer behind, and pressing Publish again minted a second one.
+  // `mintOffer` asks the node what it already has for this label before creating anything, so a
+  // retry now finds its own previous attempt. /docs/known-defects.md, top row, now closed.
+  //
   // At stock 0 the offer is dropped whatever the caller passed. That is "mark sold", and it is
   // the same thing ladder.ts `atStock` does at the bottom rung: the listing stops advertising a
   // payable pointer, and the offer itself is left alone on the node — DELETING it would destroy
@@ -79,7 +84,7 @@ export const publish = async (
   let noffer: string | undefined = draft.stock > 0 ? draft.noffer : undefined
   if (!noffer && node && draft.stock > 0) {
     onStep({ kind: 'offer', text: 'Minting the offer on your node over CLINK Manage…' })
-    const result = await createOffer(signer, node, d, draft.priceSats)
+    const result = await mintOffer(signer, node, d, draft.priceSats)
     if (!result.ok) {
       // clink-manage.md:133-186 — GFY codes. 1 Request Denied, 2 Temporary Failure,
       // 3 Clock/replay, 4 Rate Limited, 5 Invalid Field/Value (+`field`), 6 Not Found.

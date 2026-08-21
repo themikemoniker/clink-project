@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { getPublicKey, finalizeEvent, type EventTemplate, type VerifiedEvent } from 'nostr-tools/pure'
 import { decrypt, encrypt, getConversationKey } from 'nostr-tools/nip44'
 import { hexToBytes } from '@noble/hashes/utils.js'
-import { createOffer, decodeNmanage } from '../builder/src/manage.ts'
+import { createOffer, decodeNmanage, listOffers, mintOffer } from '../builder/src/manage.ts'
 import { eventsToSign, listingD, type Draft } from '../builder/src/listing.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import type { Signer } from '../builder/src/signer.ts'
@@ -151,12 +151,33 @@ check(parsed.map(p => p?.stock).join(',') === '2,1,0', `ladder walks stock ${par
 check(parsed[parsed.length - 1]?.sold === true, 'the last rung reads as sold')
 check(events[events.length - 1]!.tags.every(t => t[0] !== 'clink_offer'), 'and it no longer advertises the offer')
 
+// --- the idempotency fix, proved against the node ------------------------------------------
+// Slice 7's Phase 0. `createOffer` above minted one; `mintOffer` is what /builder actually calls
+// now, and it must find that one rather than make a second. This is the retry the top row of
+// /docs/known-defects.md described: a publish that died after the mint, tried again.
+console.log(`\n# retrying the same mint through mintOffer — it must reuse, not create…`)
+const listed = await listOffers(signer, node)
+check(listed !== null, `Manage list answered with ${listed?.length ?? 'nothing'} offer(s) under this management_pubkey`)
+check(!!listed?.some(o => o.label === LABEL), `list can see the offer we just minted, by label "${LABEL}"`)
+
+const retry = await mintOffer(signer, node, LABEL, SATS)
+check(retry.ok, 'the retry succeeded')
+check(retry.ok && retry.offer.id === result.offer.id, `the retry REUSED ${result.offer.id.slice(0, 12)}… instead of minting a second payable offer`)
+
+// A price change is a different offer by construction — the price lives in the noffer's TLV 4 —
+// so this one must fall through to a real create. Checked because a dedupe that is too eager
+// would publish a Buy button that charges the old price.
+const repriced = await mintOffer(signer, node, LABEL, SATS + 1)
+check(repriced.ok, 'the same label at a different price still mints')
+check(repriced.ok && repriced.offer.id !== result.offer.id, 'and it is a NEW offer, not the old one at the old price')
+check(repriced.ok && repriced.decoded.priceSats === SATS + 1, `priced at ${repriced.ok ? repriced.decoded.priceSats : '?'} sats`)
+
 console.log(`
 # NOTHING WAS PUBLISHED. These events exist only in this process.
 #
-# The offer is real and is now on the node, under this key's management_pubkey. It is inert —
-# no listing points at it, so nobody can find it — but every run mints another one, because
-# CLINK Manage's create is explicitly not idempotent (clink-manage.md:226).`)
+# The offers are real and are now on the node, under this key's management_pubkey. They are
+# inert — no listing points at them, so nobody can find them — and this run left TWO behind:
+# one at ${SATS} sats and one at ${SATS + 1}, because a price change is a new offer. Run --clean.`)
 
 console.log(`\n${failures === 0 ? '# ALL CHECKS PASSED' : `# ${failures} CHECK(S) FAILED`}`)
 process.exit(failures === 0 ? 0 : 1)

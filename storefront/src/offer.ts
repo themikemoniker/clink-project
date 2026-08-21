@@ -34,7 +34,12 @@ const utf8 = new TextDecoder('utf-8', { fatal: true })
 
 // TLV: [type][length][value]…, repeated. A truncated record is a corrupt pointer, not a
 // best-effort one — bail rather than pay attention to whatever survived.
-const parseTLV = (data: Uint8Array): Map<number, Uint8Array> => {
+//
+// EXPORTED IN SLICE 7, and it is a deletion rather than an addition. CLINK has three bech32 TLV
+// pointers — `noffer` (here), `nmanage` (builder/src/manage.ts) and `ndebit` (spike/ndebit.ts) —
+// and by slice 6 the first two had a copy of this loop each. A third copy is how a bounds check
+// gets fixed in two places out of three. One loop, three callers, one set of tests.
+export const parseTLV = (data: Uint8Array): Map<number, Uint8Array> => {
   const out = new Map<number, Uint8Array>()
   for (let i = 0; i < data.length; ) {
     const type = data[i]!
@@ -46,7 +51,7 @@ const parseTLV = (data: Uint8Array): Map<number, Uint8Array> => {
   return out
 }
 
-const text = (bytes: Uint8Array | undefined, max: number): string | undefined => {
+export const tlvText = (bytes: Uint8Array | undefined, max: number): string | undefined => {
   if (!bytes || bytes.length === 0 || bytes.length > max) return undefined
   try {
     return utf8.decode(bytes)
@@ -83,8 +88,8 @@ export const decodeNoffer = (raw: string): Offer | null => {
 
   const tlv = parseTLV(data)
   const pubkey = tlv.get(0)
-  const relay = text(tlv.get(1), 512)
-  const offer = text(tlv.get(2), 512)
+  const relay = tlvText(tlv.get(1), 512)
+  const offer = tlvText(tlv.get(2), 512)
   if (!pubkey || pubkey.length !== 32 || !offer) return null
   // No relay, no destination. The service listens where the offer says it listens, and falling
   // back to the storefront's own relays would just publish a payment request into the void.
@@ -114,11 +119,18 @@ export const decodeNoffer = (raw: string): Offer | null => {
 // own authoring tools and not about the invoice actually being paid.
 const MSAT_PER_UNIT: Record<string, number> = { '': 1e11, m: 1e8, u: 1e5, n: 1e2, p: 0.1 }
 
+// MAINNET ONLY, and slice 7 is why it is `^lnbc` and not an alternation. This used to accept
+// `lntb`/`lnbcrt`/`lnsb` as well, on the reasoning that a testnet invoice can only appear if the
+// seller's own node is misconfigured and a mainnet wallet would refuse it anyway. That reasoning
+// covered one direction. Slice 7 added the other: the refund path *pays* a BOLT11 that arrived
+// from a stranger's wallet, via an noffer or an LNURL host we do not control, and there the
+// question is not "will a wallet refuse this" but "are we about to try". An invoice on the wrong
+// chain is a refund that fails at the node instead of at the parser, which is a worse place.
 export const invoiceSats = (bolt11: string): number | null => {
   if (typeof bolt11 !== 'string' || bolt11.length < 10 || bolt11.length > 4_000) return null
   // The bech32 separator is the LAST '1'; everything before it is the human-readable part.
   const hrp = bolt11.slice(0, bolt11.toLowerCase().lastIndexOf('1'))
-  const parsed = /^ln(?:bc|tb|bcrt|sb)(\d{1,12})([munp])?$/.exec(hrp.toLowerCase())
+  const parsed = /^lnbc(\d{1,12})([munp])?$/.exec(hrp.toLowerCase())
   if (!parsed) return null
   const msat = Number(parsed[1]) * MSAT_PER_UNIT[parsed[2] ?? '']!
   if (!Number.isSafeInteger(msat) || msat <= 0 || msat % 1000 !== 0) return null

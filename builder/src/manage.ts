@@ -26,7 +26,7 @@
 import { SimplePool } from 'nostr-tools/pool'
 import type { Event } from 'nostr-tools/pure'
 import { bech32 } from '@scure/base'
-import { decodeNoffer, type Offer } from '../../storefront/src/offer.ts'
+import { decodeNoffer, parseTLV, tlvText, type Offer } from '../../storefront/src/offer.ts'
 import type { Signer } from './signer.ts'
 
 export const CLINK_MANAGE_KIND = 21003 // clink-manage.md; registry at CLINK/README.md
@@ -49,39 +49,34 @@ const MAX_NMANAGE = 1_000
 export type ManagePointer = { pubkey: string; relay: string; pointer: string }
 
 export const decodeNmanage = (raw: string): ManagePointer | null => {
-  if (typeof raw !== 'string' || raw.length > MAX_NMANAGE || !raw.startsWith('nmanage1')) return null
+  if (typeof raw !== 'string' || raw.length > MAX_NMANAGE) return null
+  // Trim FIRST, then check the prefix. This used to test `raw.startsWith` on the untrimmed
+  // string and trim only inside `bech32.decode`, so a paste with a trailing newline worked and
+  // one with a leading space did not — and the seller got the same `null` either way, which the
+  // UI reports as a pointer it cannot decode. "You copied a space" and "this pointer is corrupt
+  // and would mint your offers on somebody else's node" must not be the same message.
+  const text = raw.trim()
+  if (!text.startsWith('nmanage1')) return null
   let data: Uint8Array
   try {
-    const { prefix, words } = bech32.decode(raw.trim() as `nmanage1${string}`, MAX_NMANAGE)
+    const { prefix, words } = bech32.decode(text as `nmanage1${string}`, MAX_NMANAGE)
     if (prefix !== 'nmanage') return null
     data = new Uint8Array(bech32.fromWords(words))
   } catch {
     return null
   }
 
-  const tlv = new Map<number, Uint8Array>()
-  for (let i = 0; i < data.length; ) {
-    const type = data[i]!
-    const len = data[i + 1]
-    if (len === undefined || i + 2 + len > data.length) return null // truncated = corrupt
-    if (!tlv.has(type)) tlv.set(type, data.subarray(i + 2, i + 2 + len)) // first wins
-    i += 2 + len
-  }
-
+  // Slice 7 deleted the copy of the TLV loop that used to live here in favour of the one in
+  // storefront/src/offer.ts. Same rules, same bounds, and it is now the parser three pointers
+  // share rather than the second of three. Note `parseTLV` signals a truncated record by
+  // returning an EMPTY map rather than throwing, so the `!pubkey` guard below catches it.
+  const tlv = parseTLV(data)
   const pubkey = tlv.get(0)
-  const decode = (bytes: Uint8Array | undefined) => {
-    if (!bytes || bytes.length === 0 || bytes.length > 512) return undefined
-    try {
-      return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    } catch {
-      return undefined
-    }
-  }
-  const relay = decode(tlv.get(1))
+  const relay = tlvText(tlv.get(1), 512)
   // TLV 2 is optional in the spec (multi-account), and required by this node: every Manage
   // action resolves the account from it (managementManager.ts:232, :186) and answers
   // `code: 1, "No pointer provided"` without it.
-  const pointer = decode(tlv.get(2))
+  const pointer = tlvText(tlv.get(2), 512)
   if (!pubkey || pubkey.length !== 32 || !pointer) return null
   if (!relay || !/^wss:\/\/[^\s]+$/.test(relay)) return null
 
@@ -108,7 +103,85 @@ const asText = (value: unknown, fallback: string): string =>
   typeof value === 'string' && value.trim() ? value.trim().slice(0, 300) : fallback
 
 /**
- * Mint one purpose-made offer for one item.
+ * Every offer this key has minted on this account, newest transport only.
+ *
+ * `list` filters on `management_pubkey` (`offerStorage.ts:43-45` via
+ * `getManagedUserOffers(appUserId, requestorPub)`), so this returns the offers **this signer**
+ * created over Manage and nothing else. The fixture's five, minted natively by
+ * /spike/mint-offers.ts, carry an empty `management_pubkey` and stay invisible here — that is
+ * findings §13.20 and it is not a bug. It is also why an empty list on an account with five
+ * offers is the expected answer rather than a reason to mint a sixth.
+ *
+ * Returns `null` when the node did not answer or answered GFY. A caller must treat that as
+ * "unknown", never as "none" — see `mintOffer` for why that distinction is the whole point.
+ */
+export const listOffers = async (
+  signer: Signer,
+  node: ManagePointer,
+): Promise<OfferData[] | null> => {
+  const body = await request(signer, node, { resource: 'offer', action: 'list', pointer: node.pointer })
+  if (!body || body.res === 'GFY' || typeof body.code === 'number') return null
+  // clink-manage.md:97-122 — on `list`, `details` is an ARRAY of offer objects. The node builds
+  // each one through the same `getOfferData` that create/get use (managementManager.ts:165-172).
+  const details = body.details
+  if (!Array.isArray(details)) return null
+  return details.filter(
+    (o): o is OfferData =>
+      !!o && typeof o.id === 'string' && typeof o.label === 'string' && typeof o.noffer === 'string',
+  )
+}
+
+/**
+ * Mint one purpose-made offer for one item, and do not mint a second one for the same item.
+ *
+ * THIS IS THE IDEMPOTENCY FIX, and it is slice 7's first commit rather than slice 6's because
+ * it is money-path code. The defect it closes was the top row of /docs/known-defects.md:
+ * `publish()` called `createOffer` unconditionally, before anything was signed, so any failure
+ * after that point — a declined signature, a bunker timeout, a relay refusal — left a payable
+ * offer behind, and pressing Publish again minted another. Manage `create` is explicitly not
+ * idempotent: "N identical requests create N offers" (clink-manage.md:226). /CLAUDE.md requires
+ * every retry on the money path to be idempotent, keyed on a settlement identifier, and this
+ * retry was keyed on nothing at all.
+ *
+ * The key here is the LABEL, which is `listingD(slug)` — the item's `d` tag, the same string
+ * that addresses the listing on the relays and the same one /spike/mint-offers.ts:64-91 has
+ * always matched on over the native RPC. Same reasoning, different transport.
+ *
+ * Three outcomes, and the middle one is the one worth being careful about:
+ *
+ *   * `list` names an offer with this label at this price ⇒ REUSE it, mint nothing. That is the
+ *     retry case, and after it a second Publish is free.
+ *   * `list` names one at a DIFFERENT price ⇒ mint a fresh one. A price change is a new offer by
+ *     construction (the price lives in the noffer's TLV 4), and the superseded one is left alone
+ *     rather than deleted — deleting it would destroy the stored refund pointer of anything
+ *     already paid under it (findings §13.17).
+ *   * `list` FAILED ⇒ mint. An unreachable node must not read as "you have no offers", or a
+ *     relay hiccup would silently stop minting offers for items that genuinely need one. Minting
+ *     a duplicate is recoverable; publishing an item with no payable offer is a sale that cannot
+ *     happen. Erring toward the duplicate is deliberate.
+ */
+export const mintOffer = async (
+  signer: Signer,
+  node: ManagePointer,
+  label: string,
+  priceSats: number,
+): Promise<ManageOutcome> => {
+  const existing = await listOffers(signer, node)
+  const match = existing?.find(o => o.label === label)
+  if (match) {
+    // Re-derive the price from the pointer's own TLV 4 rather than trusting `price_sats` off the
+    // same response — the storefront will check the noffer and not the echo, so this has to
+    // agree with what a buyer would actually be charged. Same rule as `reusableOffer`.
+    const decoded = decodeNoffer(match.noffer)
+    if (decoded && decoded.priceSats === priceSats && decoded.offer !== node.pointer) {
+      return { ok: true, decoded, offer: { ...match, price_sats: decoded.priceSats } }
+    }
+  }
+  return createOffer(signer, node, label, priceSats)
+}
+
+/**
+ * Mint one purpose-made offer for one item, unconditionally.
  *
  * Never the account's default offer: this always `create`s, and a created offer gets a random
  * 34-byte id (offerStorage.ts:17-24), whereas the default offer's id IS the account pointer
@@ -116,19 +189,9 @@ const asText = (value: unknown, fallback: string): string =>
  * prompts at the seller.
  *
  * `create` is explicitly NOT idempotent — "N identical requests create N offers"
- * (clink-manage.md:226). The caller is responsible for not minting twice for one item, and as of
- * slice 6 it is worth being exact about which half of that is true:
- *
- *   * **An EDIT does not mint.** `builder/src/admin.ts` `reusableOffer` carries the item's
- *     existing `clink_offer` forward whenever the pointer's own TLV 4 still agrees with the price
- *     being published, and `publish.ts` mints only when it comes back empty. So saving an item
- *     ten times mints nothing, and a price change mints once.
- *   * **A RETRY still mints.** `publish.ts` calls this before anything is signed, so a publish
- *     that fails after this point — a declined signature, a bunker timeout, a relay refusal —
- *     leaves an offer behind, and pressing Publish again mints a second one. Nothing tracks
- *     whether a publish is a first attempt. That is a known, open defect against /CLAUDE.md's
- *     "every retry on the money path must be idempotent": see /docs/known-defects.md, first row,
- *     where the fix is a Manage `list` deduped on `label` before this call.
+ * (clink-manage.md:226). **Call `mintOffer` instead**, which dedupes on the label first; this is
+ * exported for the one caller that has already decided to mint (`mintOffer` itself) and for
+ * /spike/check-manage.ts, which is testing the create path on purpose.
  */
 export const createOffer = async (
   signer: Signer,
