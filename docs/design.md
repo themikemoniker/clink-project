@@ -114,9 +114,24 @@ because it lands on a page that asks for the pointer and then does the CLINK req
 whereas a raw `noffer` serves only wallets that speak CLINK *and* can be prompted for an arbitrary
 key. One extra tap buys universality and the refund guarantee together.
 
-**What the sticker still needs, and it is slice 9's** (the printable sheet, per §10): the name and
-price above the code, ≥2cm square, and the deep link is longer than an `noffer` so the module
-count is higher — check it scans at 2cm from a real print before the sheet is called done.
+**And the deep link is the *easier* code to scan, which was measured rather than assumed.** The
+first draft of this paragraph guessed the opposite. Measured with the `uqr` the builder already
+ships, on the live `mugs` item:
+
+| encodes | chars | QR |
+|---|---|---|
+| the item's `noffer` | 237 | 59×59 modules (51×51 uppercased into alphanumeric mode) |
+| the storefront deep link | 110 | **43×43 modules** |
+
+A `noffer` carries a 32-byte pubkey, a relay URL and an opaque offer id; the deep link carries an
+npub and a slug. So the sticker that works everywhere is also the one with the fattest modules at
+a given sticker size — at 2cm that is 0.47mm per module against 0.34mm. The trade-off in the
+paragraph above has no downside left to weigh.
+
+**What the sticker still needs, and it is slice 9's** (the printable sheet, per spec §10): name
+and price above the code, ≥2cm square, and one QR per item — which means whatever generates the
+sheet needs a real encoder, unlike the storefront's own QR. The builder already has `uqr` and the
+storefront deliberately does not carry one in its cold load (spec §9).
 
 ---
 
