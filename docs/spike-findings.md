@@ -3,9 +3,9 @@
 **Status:** desk spike complete 2026-08-20; **updated at the end of slice 2** with what a live
 CLINK round trip actually returns. Four items still need a funded node or a human with a phone;
 each is marked `NEEDS HUMAN` with the exact command and the exact output to paste back. Slice 2
-closed the node-side halves of questions 2 and 6, corrected §13.4, and added §13.13-14. Question
-1 was answered separately on 2026-08-21 — the node has rented inbound now, so the one remaining
-slice-2 unknown is a single paid invoice (§1).
+closed questions 1, 2 and 5 outright and the node-side half of 6, corrected §13.4, and added
+§13.13-14. **A real 6,000-sat payment settled on 2026-08-21** and is the evidence behind §1, §5
+and §6. Two questions remain, and both need a phone rather than a node: 6's wallet half, and 8.
 **Rule:** every answer needs evidence — a spec file path, a source file and line, or
 pasted event JSON. `UNVERIFIED` is an acceptable answer. A confident guess is not.
 
@@ -20,7 +20,7 @@ Where this file disagrees with `/docs/spec.md`, this file wins. Corrections are 
 | Blossom BUDs — `github.com/hzrd149/blossom` | fetched 2026-08-20 |
 | Lightning.Pub source | the **running local install**, `~/lightning_pub`, `package.json` version `0.0.37` |
 | `@shocknet/clink-sdk` | `1.5.5` bundled in Lightning.Pub; `1.7.0` current on npm |
-| Live node | local Pub, LND `SERVER_ACTIVE`, 1 private channel, **98,160 sat inbound / 0 outbound** (§1) |
+| Live node | local Pub, LND `SERVER_ACTIVE`, 1 private channel, **92,160 sat inbound / 6,000 outbound** after the test payment (§1) |
 
 Field-name detail lives in `/docs/clink-notes.md`. This file is the answers.
 
@@ -50,7 +50,8 @@ disagree, `check-buy.ts` is wrong.
 - [x] Installed on: local macOS machine (`~/lightning_pub`, lnpub `0.0.37`)
 - [x] Channel confirmed on: **2026-08-21 00:53 UTC**
 - [x] Inbound capacity: **98,160 sat** (100,000 capacity − 1,000 local reserve − 840)
-- [ ] Test payment received: _(date)_ — still the only thing that proves receive works
+- [x] Test payment received: **2026-08-21 01:45 UTC** — 6,000 sat, real external payment
+      (`internal: 0`), zero service fee, settled in seconds. §1 is fully closed
 
 **How it was obtained, because "deposit on-chain and let Pub open a channel" is not what
 happened and would not have worked.** The node had zero on-chain funds and zero channels, and
@@ -88,9 +89,12 @@ Olympus minimum 100,000 sat; LND `minchansize` default 20,000; LND on-chain anch
 ~10,000 once any channel exists; Pub's `LSP_CHANNEL_THRESHOLD` 1,000,000 before it buys one
 itself. Item prices scale to any size; channels do not.
 
-**The node still has 0 outbound** (`local_balance: 0`). Correct for a seller, and a real
-constraint on **slice 7**: refunds need outbound, and outbound only exists after buyers have
-paid. A refund cannot be the first payment this node ever makes.
+**Outbound now exists, and a buyer created it.** After the 6,000-sat test payment:
+`local_balance 6000 / remote_balance 92160`. That is the slice-7 constraint resolving itself the
+way it will in production — refunds need outbound, outbound only exists after buyers have paid,
+so a refund cannot be the first payment this node ever makes. It also means the refund cap in
+§10 has a real ceiling today: **6,000 sats**, and the demo's oversell refund must fit under
+whatever has actually been sold by that point.
 
 **The amount check does not protect you, and slice 2 proved how little.** `getNofferInvoice`
 sets `maxSendable` from the channel balance but falls back to `10_000_000` whenever the
@@ -107,30 +111,25 @@ got a real BOLT11 back".** Only a paid invoice is. Every offer we mint is fixed-
 is the path the demo runs on: a green `check-buy.ts` says our client is correct, not that money
 can move.
 
-**Which fixture items are actually payable, given 98,160 sat inbound:**
+**Which fixture items are actually payable**, against 92,160 sat of remaining inbound:
 
 | item | price | payable today |
 |---|---|---|
-| `plants` | 6,000 sat | **yes** |
-| `lamp` | 30,000 sat | **yes** |
+| `plants` | 6,000 sat | **yes — proven, paid 2026-08-21** |
+| `lamp` | 30,000 sat | yes |
 | `bike` | 180,000 sat | no — over inbound |
 | `couch` | 210,000 sat | no — over inbound |
 
 Both unpayable ones will still hand a buyer a BOLT11 and then fail at payment time, which is
 the honest shape of the problem and worth showing rather than hiding. Demo `plants` or `lamp`.
+Every sale eats inbound and creates outbound, so this table drifts as the demo runs.
 
-**NEEDS HUMAN — the last thing slice 2 needs, and it is now a 60-second job.**
-
-```bash
-cd spike && node check-buy.ts yardsale-2026-08-plants --pay
-```
-
-It prints a real 6,000-sat invoice and waits. Pay it from the phone wallet that paid the
-Olympus fee, then paste everything the script prints after `# waiting`. That single run proves,
-in order: the invoice is payable (so §1's checkbox closes), Lightning.Pub really does send the
-kind 21001 receipt, the receipt is readable by the payer's ephemeral key and by nothing else,
-and the storefront's `showPaid()` path fires. Confirm whether the payload is `{"res":"ok"}` or
-`{"res":"ok","preimage":"…"}` — §5 predicts no preimage.
+**Done 2026-08-21** with `cd spike && node check-buy.ts yardsale-2026-08-plants --pay`, which
+prints an invoice and waits for a human to pay it. One run closed four things at once: the
+invoice is payable, Lightning.Pub really does send the kind 21001 receipt, the receipt is
+readable by the payer's ephemeral key and by nothing else, and the payload carries no preimage.
+Evidence in §5. Re-run it any time the node's behaviour needs re-proving; it is the only test in
+this project that costs money.
 
 ---
 
@@ -355,6 +354,45 @@ window", not "atomic".
   already has the preimage"*. The spec says the payload **MUST** include `preimage` for a
   standard Lightning payment (`clink-offers.md:327-333`). Lightning.Pub never does.
 
+**Confirmed on the wire 2026-08-21** by a real 6,000-sat payment (`check-buy.ts --pay`). The
+receipt, 6 seconds after settlement:
+
+```json
+{
+  "content": "Aveq4G5Ntk5SouQkJtGFUS3HCLwl9TjWzPrRwxquZv1JtDs/9T7T7fPgAsRkUJ5ndvg3dO5YdZeEOvqTCvUl0LbbdKrVFUs6iDIOTdxip5q4CHdgVolttGSZa1371NTXPmEH",
+  "created_at": 1787276750,
+  "id": "59151c57b020d6cd081f43ee78dc3b1f159655c5e65774402baef7f26a120d6e",
+  "kind": 21001,
+  "pubkey": "3f0abe5a9446f8c0d42ff83e316792ca393b1920cbb6ede5072350516015befc",
+  "sig": "a0f217003579964ece47dd9d2ad2d99523516e4ff1b7b4019218e5c127414026f0d431101cbeaa7a9422db7ddf3ce31f82f6aa24cb6c05e301d061246fc912d1",
+  "tags": [
+    ["p", "476c297502cf8bb7815d193dc49499f125ca5186409e533d70b5176fa8f787e3"],
+    ["e", "bfdb04f7c3adbb3c118a43b10f139c495181f445b47c465cbfa04020721d2589"],
+    ["clink_version", "1"]
+  ]
+}
+```
+
+Decrypted payload, in full: `{"res":"ok"}`
+
+Four things that settles:
+
+1. **The receipt is sent.** It is a MAY (`clink-offers.md:309`) and Lightning.Pub does it.
+2. **`clink_version` is present here** and absent on the response (§2) — so the tag's presence
+   is not a reliable signal of anything, and a client must be lenient on both.
+3. **The `p` tag is the ephemeral requester key**, not the wallet that paid the BOLT11. Those are
+   different parties and conflating them will produce a broken client. The `e` tag is the
+   original request event id, matching `clink_requester_event_id` on the stored invoice.
+4. **No preimage, and this was NOT an internal transfer.** This is stronger than the source read
+   suggested and it is a real interop bug. `user_receiving_invoice.internal = 0` for this
+   payment — a genuine external Lightning settlement, exactly the case where
+   `clink-offers.md:327-333` says `preimage` MUST be present. The spec also says the *absence*
+   of a preimage "indicates an internal transaction" (`clink-offers.md:333`), so a spec-following
+   client reading this receipt would conclude the payment settled internally. It did not.
+
+   ⇒ **Never infer internal-vs-external settlement from a missing preimage.** And this is the
+   second cheap upstream PR sitting here, next to the `clink_version`-on-response one in §13.2.
+
 **The receipt is addressed and NIP-44 encrypted to the payer** (`paymentSideEffects.ts:236`,
 `encrypt: { toPub: invoice.clink_requester_pub }`). And it is a **MAY**, not a MUST
 (`clink-offers.md:309`).
@@ -437,7 +475,27 @@ means an out-of-band payer (someone who scans the raw QR with a wallet that does
 populate our key) simply cannot pay — which is the correct behaviour for a
 non-refundable-oversell risk, and worth stating as a deliberate trade-off.
 
-**Steps 3 and 4 are done — slice 2, 2026-08-20.** Against a real offer minted with
+**Fully closed on the node side — slice 2, 2026-08-20/21.** The last piece landed with the paid
+invoice: the validated `payer_data` is **persisted on the settled invoice**, which is what makes
+slice 7 possible at all. Straight from `user_receiving_invoice` after the real payment:
+
+```
+serial_id  19
+paid_at_unix  1787276750
+paid_amount   6000
+service_fee   0
+internal      0
+offer_id      230bc0e1eecd95483df1b6b4990a119b3f5ed55ea78cfefff4121e5b9e394d3338dd
+payer_data    {"refund_pointer":"check-buy@example.com"}
+clink_requester_pub  476c297502cf8bb7…
+```
+
+Three things worth naming. The `offer_id` is the *per-item* offer, so `GetUserOfferInvoices`
+gives per-item settlement without us inventing a correlation id. The `payer_data` survived
+settlement intact, so the refund path has its pointer waiting for it. And `clink_requester_pub`
+is on the invoice, which is the key spec §7.6's offline pickup proof would challenge.
+
+**Steps 3 and 4 were done first — slice 2, 2026-08-20.** Against a real offer minted with
 `payer_data: ["refund_pointer"]`, with the key named as ours rather than `order_id`:
 
 ```json
@@ -449,7 +507,7 @@ and with the key supplied, a BOLT11 (§2). Both reproduce on demand:
 Lightning.Pub `payer_data` extension to the error payload is therefore confirmed on the wire,
 not just in source, and our page reads it to re-prompt.
 
-**NEEDS HUMAN — only the wallet half now** (needs a funded node; ~5 minutes)
+**NEEDS HUMAN — only the wallet half now** (~5 minutes; the node is funded as of 2026-08-21)
 
 1. Pay one of our fixture offers' `noffer` **from ShockWallet on another device** —
    `node -p "require('./.offers.json')['yardsale-2026-08-plants'].noffer"` prints one.

@@ -5,10 +5,11 @@ stays current because the QR on it points at a live page. It appears in exactly 
 the masthead when a sale has no title of its own, and a colophon on the printed flyer.
 **Target:** hackathon submission, "Best Use of CLINK"
 
-**Status:** slice 2 shipped (2026-08-20) — the Buy button. A static page mints an ephemeral key,
-sends a NIP-44-encrypted kind 21001 to the seller's own node over that node's relay, and gets a
-real BOLT11 back. Verified end to end against the live local Lightning.Pub; the *payment* half
-still needs a funded node. Slice 2 settled four things this document had left open: the
+**Status:** slice 2 shipped (2026-08-20), **and money has moved (2026-08-21)**. A static page
+mints an ephemeral key, sends a NIP-44-encrypted kind 21001 to the seller's own node over that
+node's relay, gets a real BOLT11 back, and reads the settlement receipt that nobody else can
+decrypt. Proven with a real 6,000-sat Lightning payment: `/docs/spike-findings.md` §1, §5, §6.
+The core claim in §1 is no longer a claim. Slice 2 settled four things this document had left open: the
 `payer_data` key name (`refund_pointer`), fiat→sats (there is no conversion — see §6.1), the
 clink-sdk question (measured, hand-rolled wins by 29 KB gzip — §9), and the JS budget (it means
 **gzip** — §9).
@@ -332,7 +333,7 @@ The pre-spike draft had the page reading settlement receipts off relays. It cann
 So the seller's node is the only party that observes settlement, and the watcher gets it from the node, not from a relay. In order of preference:
 
 1. **`GetLiveUserOperations`** — the node pushes an `INCOMING_INVOICE` operation over Nostr to the account's own key on every settlement. Nostr-native, no HTTP listener.
-2. **`GetUserOfferInvoices`** — poll per offer; returns `invoice`, `offer_id`, `paid_at_unix`, `amount`, and the stored `payer_data`. This is where the refund path reads the buyer's pointer.
+2. **`GetUserOfferInvoices`** — poll per offer; returns `invoice`, `offer_id`, `paid_at_unix`, `amount`, and the stored `payer_data`. This is where the refund path reads the buyer's pointer. **Confirmed populated by a real settlement** on 2026-08-21: the row carried the per-item `offer_id`, `paid_amount: 6000`, and `payer_data: {"refund_pointer":"…"}` intact (`/docs/spike-findings.md` §6). Slice 7's input exists and is not hypothetical.
 3. **`callback_url`** on the offer — the node GETs a URI template on settlement, and loopback addresses are explicitly allowed while private ranges are blocked. Needs no credential at all, but it is an HTTP listener on the seller's machine.
 
 **The honest consequence:** availability is only as fresh as the seller's watcher. A page loaded while the watcher is down shows stale stock. Say that out loud in the demo rather than letting a judge find it.
@@ -588,13 +589,12 @@ What it actually covers:
 
 What it deliberately does not do:
 
-- **No payment yet.** Every check above ran before the node had a channel, and none of them
-  needed one — a fixed-price offer is not range-checked, so a 0-channel node issues invoices it
-  cannot settle (`/docs/spike-findings.md` §1). The node gained 98,160 sat of rented inbound on
-  2026-08-21, so this is now one command away: `node check-buy.ts yardsale-2026-08-plants --pay`
-  prints an invoice and waits for a human to pay it. Until that runs, `showPaid()` is written
-  and unproven — say so rather than demoing around it. Note also that `bike` (180k) and `couch`
-  (210k) are priced above the node's inbound and cannot settle at all today.
+- **Payment proven 2026-08-21.** 6,000 sats moved over Lightning into the seller's node and the
+  page's confirmation path fired, with no backend on either side. Two remaining honesty notes:
+  `bike` (180k) and `couch` (210k) are priced above the node's inbound and will hand a buyer an
+  invoice that cannot settle — a fixed-price offer is not range-checked
+  (`/docs/spike-findings.md` §1) — and the browser rendering of `showPaid()` has been exercised
+  only through `check-buy.ts`, which drives the same `buy.ts` code path but not the DOM.
 - **No re-use of an outstanding invoice.** Leaving an item and coming back mints a second one.
   Two unpaid invoices cost nothing and expire in 15 minutes, and the oversell that matters is two
   *different* buyers, which is slice 3's watcher.
@@ -631,11 +631,11 @@ Full answers with citations live in `/docs/spike-findings.md`; field names live 
 
 | # | Question | Answer |
 |---|---|---|
-| 1 | Node funded, channel with inbound liquidity | **OPEN — needs you.** Node runs and is reachable over Nostr; 0 channels. Note an unfunded node still reports `max: 10000000` via the liquidity-provider fallback, so a successful invoice request is *not* proof it can receive |
-| 2 | Raw request/response captured | **Success path now captured too** (slice 2, findings §2): a real `lnbc2100u1…` for a 210 000-sat fixed-price offer, from a node with 0 channels. Only the *payment* still needs a funded node |
+| 1 | Node funded, channel with inbound liquidity | **CLOSED 2026-08-21.** Inbound *rented* from Olympus rather than funded — an empty Pub can never bootstrap itself. 6,000-sat test payment received. Keep the warning: an unfunded node still reports `max: 10000000`, and a fixed-price offer is not range-checked at all, so a successful invoice request is *not* proof it can receive |
+| 2 | Raw request/response captured | **CLOSED.** Request, decline, invoice and receipt all captured on the wire (findings §2, §5) |
 | 3 | Multiple offers per account? | **Yes, unlimited, per item.** `clink_offer` per listing; `item_ref` deleted (§6.1) |
 | 4 | Decline on custom logic? | **No pre-invoice hook.** Strict mode = delete the offer on depletion, or hold the service key ourselves (§7.4) |
-| 5 | Settlement receipt on the wire? | Kind `21001`, **NIP-44 encrypted to the payer**, no `preimage` in Lightning.Pub, and a MAY. Not seller-readable. Rewrote §7.2 and §7.6 |
+| 5 | Settlement receipt on the wire? | **CLOSED, and worse than the source read suggested.** Kind `21001`, NIP-44 encrypted to the payer, `{"res":"ok"}`, **no preimage on a payment with `internal: 0`** — a real external settlement that a spec-following client would misread as internal (`clink-offers.md:333`). Not seller-readable. Rewrote §7.2 and §7.6 |
 | 6 | `payer_data` end-to-end? | **Node side now verified on the wire, not just in source** (findings §6): required key declared at mint, `code: 1` + `payer_data:["refund_pointer"]` when omitted, invoice when supplied. The key name is ours (§7.3). Wallet behaviour **OPEN — needs you**, and secondary: our page is the client |
 | 7 | nsite deploy + `/404.html` | **OPEN — needs you** (`nsyte` is a global install). NIP-5A itself read: `/404.html` confirmed required, plus the kind `10063` requirement in §6.4 |
 | 8 | Bunker prompt count for 10 items | **OPEN — needs you.** Levers found: batched Blossom auth and NIP-46 `perms` (§5) |
@@ -643,11 +643,11 @@ Full answers with citations live in `/docs/spike-findings.md`; field names live 
 | 10 | Credential scoping for the watcher | **Better than feared.** `admin.connect` is never needed. Three levels exist (Admin / User / Guest); the refund path should use a **CLINK Debit grant held by a separate watcher key**, with a node-enforced frequency cap and `BanDebit` as the kill switch. Residual: observation still needs a User-scoped key, which implies spend authority over that account — so keep the observe key and the refund key separate, and try the credential-free loopback `callback_url` (§7.2) |
 | 11 | Guest account with its own offer? | **Yes, and slice 2 did it with no human in the loop.** The dev key spoke to the guest `app.nprofile`, got an account auto-created by `NostrUserAuthGuard`, and minted four offers — no pairing, no approval. **This corrects the `AuthorizeManage` assumption**: that grant gates CLINK Manage (kind 21003) only, not the native `AddUserOffer` RPC (kind 21000, `auth_type = "User"`). See findings §13.4. CLINK Enroll (kind `21004`) is still **not implemented** by Lightning.Pub 0.0.37 |
 
-**Four items are still open** — 1, 2 (the paid half only), 6 (the wallet half only), and 8 — and
-each has a `NEEDS HUMAN` block in the findings with the exact command to run and the exact output
-to paste back. Question 7 closed in slice 1; the node-side halves of 2 and 6 closed in slice 2.
+**Two items are still open** — 6 (the wallet half only) and 8 — and each has a `NEEDS HUMAN`
+block in the findings with the exact command to run. Question 7 closed in slice 1; 1, 2 and 5
+closed with the 2026-08-21 payment, along with the node-side half of 6.
 
-**Everything still open needs a funded node or a phone. Nothing else in the project does.**
+**Both remaining questions need a phone, not a node, and neither blocks slice 3.**
 
 See also `/docs/runbook.md` for install gotchas already found (macOS `LND_LOG_DIR` crash loop, `.wallet_secret` permissions, pairing, uptime).
 
@@ -663,7 +663,7 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 - No secrets in the repo. No `.env` with keys committed. Use NIP-46 bunker for any CI signing.
 - Treat every inbound event as hostile input: validate before parsing, bound sizes, verify signatures before acting.
 - Relays can withhold, delay, reorder, and replay — **confirmed, not theoretical**: `wss://relay.lightning.pub` replayed minutes-old kind `21001` events to a fresh subscriber before EOSE, and CLINK Offers defines no request-freshness rule and no single-use construct. Any retry path on the money side must be idempotent, **keyed on the settled invoice / payment hash, never the request event id**.
-- The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. **Let the node enforce both**: a CLINK Debit grant carries a frequency rule (`[number, unit, max]`) checked inside the payment transaction, and `BanDebit` revokes it in one tap. Our code should not be the only thing standing between a bug and the balance.
+- The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. Note the node's outbound is currently **6,000 sats**, all of it created by the one test sale — refunds cannot precede sales, so set the frequency cap against what has actually been sold rather than against a round number. **Let the node enforce both**: a CLINK Debit grant carries a frequency rule (`[number, unit, max]`) checked inside the payment transaction, and `BanDebit` revokes it in one tap. Our code should not be the only thing standing between a bug and the balance.
 - The watcher holds a **separate key** from the seller's identity and from the seller's Pub account where possible. "User" scope on Lightning.Pub is not read-only — the same credential that reads settlements can call `PayInvoice`.
 - Never publish the account's default offer: its id is the account pointer, and an unauthorised debit/manage request against a known pointer pushes an approval prompt to the seller's wallet (§6.1).
 - The seller's node is the only thing holding funds, and it is theirs.

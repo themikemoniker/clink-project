@@ -63,14 +63,16 @@ check(!wrong.ok && wrong.code === 0, 'refused rather than displayed')
 // 3. With the pointer and the right price, an invoice. Last, because in --pay mode its
 // subscription has to stay open — every requestInvoice closes the previous one.
 console.log('\n# with a refund pointer — expect a bolt11')
-let receipt: (() => void) | undefined
-const settled = new Promise<void>(resolve => { receipt = resolve })
+let receipt: ((r: Record<string, unknown>, e: unknown) => void) | undefined
+const settled = new Promise<{ payload: Record<string, unknown>; event: any }>(resolve => {
+  receipt = (payload, event) => resolve({ payload, event })
+})
 const paid = await requestInvoice(
   offer,
   { refund_pointer: 'check-buy@example.com' },
   minted.price_sats,
   label,
-  () => receipt!(),
+  (payload, event) => receipt!(payload, event),
 )
 if (paid.ok) {
   console.log(`   bolt11 ${paid.bolt11.slice(0, 40)}…  (${paid.bolt11.length} chars)`)
@@ -90,9 +92,24 @@ if (WAIT_FOR_PAYMENT && paid.ok) {
   console.log(`\nlightning:${paid.bolt11}`)
   console.log(`\n# waiting up to 15 minutes for the kind 21001 receipt…`)
   const timeout = new Promise<'timeout'>(r => setTimeout(() => r('timeout'), 15 * 60_000).unref())
-  const outcome = await Promise.race([settled.then(() => 'paid' as const), timeout])
-  check(outcome === 'paid', 'settlement receipt arrived, readable by the payer key alone')
-  if (outcome === 'timeout') console.log('   (nothing arrived — invoice expired, or the payment never landed)')
+  const outcome = await Promise.race([settled, timeout])
+  check(outcome !== 'timeout', 'settlement receipt arrived, readable by the payer key alone')
+  if (outcome === 'timeout') {
+    console.log('   (nothing arrived — invoice expired, or the payment never landed)')
+  } else {
+    // Paste all of this into /docs/spike-findings.md §5. Two things it settles that no amount
+    // of source-reading could: whether a `preimage` is present (clink-offers.md:327-333 makes
+    // it a MUST for a standard Lightning payment; paymentSideEffects.ts:222 never sends one),
+    // and whether the receipt carries `clink_version` (the one place §5 says it does).
+    console.log('\n# receipt payload (decrypted)\n' + JSON.stringify(outcome.payload, null, 2))
+    console.log('\n# receipt event (raw, content still encrypted — only this process can read it)')
+    console.log(JSON.stringify(outcome.event, null, 2))
+    check('preimage' in outcome.payload === false, 'no preimage, as findings §5 predicts (a MUST the reference server skips)')
+    check(
+      outcome.event.tags?.some((t: string[]) => t[0] === 'clink_version') === true,
+      'receipt carries clink_version, unlike the response (findings §2)',
+    )
+  }
 }
 
 console.log(failures === 0 ? '\n# all checks passed' : `\n# ${failures} CHECK(S) FAILED`)

@@ -111,6 +111,12 @@ nobody can pay. Pub does this correctly (`lnd.ts:412` passes `privateHints = tru
 Still send yourself a test payment to prove it end to end. An invoice request succeeding proves
 nothing; `maxSendable` falls back to 10,000,000 whenever the liquidity provider is reachable.
 
+**Done 2026-08-21:** 6,000 sat received over CLINK, `internal: 0`, `service_fee: 0`, settled in
+seconds. `cd spike && node check-buy.ts yardsale-2026-08-plants --pay` reproduces it — it prints
+an invoice and waits for you to scan. Each sale shifts the balance: after that one,
+`local_balance 6000 / remote_balance 92160`. Inbound is consumed by selling and outbound is
+created by it, which is why slice 7's refunds cannot precede any sales.
+
 ---
 
 ## 4. Uptime

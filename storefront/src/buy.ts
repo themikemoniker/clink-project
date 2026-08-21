@@ -34,6 +34,12 @@ export type Outcome =
 
 type Payload = Record<string, unknown>
 
+// The receipt handler gets the decrypted payload and the event it came in. The page ignores
+// both — "it is paid" is all a buyer needs — but /spike/check-buy.ts prints them, because
+// whether Lightning.Pub sends a `preimage` and whether it tags `clink_version` on a *receipt*
+// are open questions in /docs/spike-findings.md §5 that only a real settlement can answer.
+export type OnPaid = (receipt: Payload, event: Event) => void
+
 const parseResponse = (raw: string): Payload | null => {
   if (raw.length > MAX_RESPONSE_BYTES) return null
   try {
@@ -86,7 +92,7 @@ export const requestInvoice = async (
   payerData: Record<string, string>,
   expectSats: number,
   description: string,
-  onPaid: () => void,
+  onPaid: OnPaid,
 ): Promise<Outcome> => {
   const first = await attempt(offer, payerData, expectSats, description, onPaid)
   if (first.ok || first.code !== 3) return first
@@ -101,7 +107,7 @@ const attempt = async (
   payerData: Record<string, string>,
   expectSats: number,
   description: string,
-  onPaid: () => void,
+  onPaid: OnPaid,
 ): Promise<Outcome> => {
   closeBuy()
 
@@ -174,7 +180,7 @@ const attempt = async (
       // proves nothing and we do not require it.
       if (body.res === 'ok') {
         close()
-        onPaid()
+        onPaid(body, event)
         return
       }
 
