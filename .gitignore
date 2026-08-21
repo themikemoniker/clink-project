@@ -29,3 +29,8 @@ spike/.ladder.json
 # carries the account pointer, whose publication hands every visitor a channel to push
 # authorization prompts at the seller (/docs/spec.md §6.1). Seller's browser only.
 spike/.nmanage
+
+# One-time bunker-import exports (spike/export-key-qr.ts). THESE ARE PRIVATE KEY MATERIAL.
+# Written chmod 600, and meant to be deleted the moment the import is done.
+spike/.dev-key.nsec
+spike/.dev-key.qr.svg

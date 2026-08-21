@@ -82,6 +82,8 @@ node deploy-nsite.ts                   # blobs to Blossom, kind 15128 + 10063 to
 node authorize-manage.ts               # ONCE, at the desk. Grants Manage, writes .nmanage
 node authorize-manage.ts --revoke      # takes the grant back
 node check-manage.ts                   # mints a real offer over kind 21003. Exit 0 = it works
+node check-manage.ts --clean           # deletes the offers those runs leave behind
+node export-key-qr.ts --yes            # ONE-TIME: .dev-key -> nsec + QR, for the bunker import
 
 # node health
 export PATH="$HOME/lnd:$PATH"
@@ -115,6 +117,19 @@ to delete it at slice 4.
 
 One spike question remains, and it **needs a phone.** Nothing blocks a slice. Full `NEEDS HUMAN`
 blocks with exact commands live in `/docs/spike-findings.md`.
+
+### The bunker import — key backed up 2026-08-21, import NOT yet done
+
+`spike/.dev-key` is backed up to `~/.lamppost-key-backup/dev-key-2026-08-21.hex` (chmod 600,
+verified to derive the same seller pubkey). **That backup is on this machine only — get a copy
+off it.** Losing this key loses the seller identity, the storefront's npub and nsite URL, and
+access to the sats in the node account.
+
+The import itself is unrun and needs a phone. `node spike/export-key-qr.ts --yes` writes the nsec
+and a scannable QR, both gitignored and chmod 600; delete them straight after. Amber is the right
+target rather than nsec.app — nsec.app stores the key on somebody else's server, which is the
+custody claim this project spends §3.1 arguing it does not make, and q8's residual risk is
+specifically about Amber's sign policy.
 
 ### Question 6, wallet half — does a third-party wallet supply `payer_data`?
 
@@ -358,6 +373,10 @@ confirmation — see below.
   Manage `list` on an account with five offers is not a bug.
 - **`authorize_npub` wants a HEX pubkey despite the name.** It is stored as `app_pubkey` and
   matched against `event.pub`. An `npub1…` creates a grant that silently never matches.
+- **`check-manage.ts` mints a real offer every run** and CLINK Manage's `create` is explicitly
+  not idempotent (clink-manage.md:226). They are inert, but run `--clean` after. That mode
+  refuses to delete any offer with a settled invoice, because deletion destroys the stored
+  refund pointer (findings §13.17) — verified against `plants` (1 settled) and `mugs` (2).
 - **`spike/.nmanage` carries the account pointer.** Same handling as the pairing string: seller's
   browser only, never a relay, never a log, never this repo. It is gitignored.
 - **An item is `1 + units` signatures, not one.** Any UI that implies otherwise gets a seller

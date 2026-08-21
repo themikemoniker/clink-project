@@ -8,7 +8,7 @@
 //
 // It costs nothing: minting an offer is not a payment. It DOES create a row on the node, and
 // `create` is explicitly not idempotent (clink-manage.md:226), so re-running mints another
-// offer. They are inert — nothing points at them — but they accumulate.
+// offer. They are inert — nothing points at them — but they accumulate. `--clean` removes them.
 //
 // KEY HANDLING NOTICE. The builder ships two Signer paths and neither of them is this one: a
 // browser has an extension or a bunker, and both hold the key out of reach. This script needs
@@ -16,8 +16,9 @@
 // PlainKeySigner plus its nip44 functions — the same /CLAUDE.md rule-2 exception check-buy.ts
 // already runs under, for the same reason. It adds no key path to the builder.
 //
-// Usage: node check-manage.ts [--label <text>] [--sats <n>]
+// Usage: node check-manage.ts [--label <text>] [--sats <n>] [--clean]
 import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getPublicKey, finalizeEvent, type EventTemplate, type VerifiedEvent } from 'nostr-tools/pure'
@@ -27,7 +28,7 @@ import { createOffer, decodeNmanage } from '../builder/src/manage.ts'
 import { eventsToSign, listingD, type Draft } from '../builder/src/listing.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import type { Signer } from '../builder/src/signer.ts'
-import { arg } from './pub-rpc.ts'
+import { arg, connectPub } from './pub-rpc.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const KEY_FILE = join(HERE, '.dev-key')
@@ -61,6 +62,44 @@ let failures = 0
 const check = (ok: boolean, what: string) => {
   console.log(`${ok ? '  ok  ' : '  FAIL'} ${what}`)
   if (!ok) failures++
+}
+
+// --- --clean: delete the offers previous runs left behind ---------------------------------
+//
+// Over the NATIVE kind 21000 RPC, not over Manage, for two reasons. `DeleteUserOffer` keys on
+// (app_user_id, offer_id) with no management_pubkey check (offerStorage.ts:27-29), so it works
+// regardless of which transport minted the row — and adding a `delete` action to the builder's
+// Manage client for a cleanup chore would be shipping an unused code path into the money side.
+// Slice 6 can add it when an admin panel actually needs it.
+//
+// THE GUARD IS THE POINT. findings §13.17: deleting an offer destroys the stored `payer_data`
+// for every invoice under it, because GetUserOfferInvoices throws "Offer not found" once the
+// row is gone and it is the only reader. That is the buyer's refund pointer. These check offers
+// have never been paid, so deleting them is safe — but "safe because I believe nothing paid it"
+// is not a guard, so we ask the node and refuse anything with a settled invoice.
+const PREFIX = 'check-manage-'
+if (process.argv.includes('--clean')) {
+  const { rpc, close } = connectPub(sk, arg('nprofile', join(homedir(), 'lightning_pub', 'app.nprofile')))
+  type OfferRow = { offer_id: string; label: string; default_offer: boolean }
+  const offers: OfferRow[] = (await rpc('GetUserOffers', {})).offers ?? []
+  const mine = offers.filter(o => !o.default_offer && o.label?.startsWith(PREFIX))
+  console.log(`# ${offers.length} offer(s) on the account, ${mine.length} labelled ${PREFIX}*\n`)
+
+  for (const offer of mine) {
+    const res = await rpc('GetUserOfferInvoices', { offer_id: offer.offer_id, include_unpaid: false })
+    const settled = Array.isArray(res.invoices) ? res.invoices.length : 0
+    if (settled > 0) {
+      console.log(`  KEEP  ${offer.label} — ${settled} settled invoice(s). Deleting it would destroy the refund pointer (findings §13.17).`)
+      continue
+    }
+    await rpc('DeleteUserOffer', { offer_id: offer.offer_id })
+    console.log(`  gone  ${offer.label}  ${offer.offer_id.slice(0, 12)}…`)
+  }
+
+  const after: OfferRow[] = (await rpc('GetUserOffers', {})).offers ?? []
+  console.log(`\n# ${after.length} offer(s) remain: ${after.filter(o => !o.default_offer).map(o => o.label).join(', ') || '(none but the default)'}`)
+  close()
+  process.exit(0)
 }
 
 // --- mint one offer over CLINK Manage, kind 21003 -----------------------------------------
