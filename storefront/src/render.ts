@@ -6,7 +6,7 @@
 // remember to call — which is why there is no sanitiser here.
 import { requestInvoice, type Outcome } from './buy.ts'
 import { srcset, type Item, type Money, type Sale } from './listing.ts'
-import { isPointer } from './offer.ts'
+import { isPointer, MIN_PAYABLE_SATS } from './offer.ts'
 
 // The working name, settled in slice 2. It appears twice and quietly: as the masthead when a
 // sale has no title of its own, and as a colophon — which is where a printer's mark belongs on
@@ -287,10 +287,49 @@ const copyButton = (bolt11: string) => {
   return button
 }
 
+/**
+ * Why this item has no Buy button, in the buyer's terms — or `undefined` when silence is right.
+ *
+ * SLICE 8, AND IT IS THE HOLE THE SLICE'S ONE-LINE DESCRIPTION DOES NOT NAME. `renderBuy` used to
+ * open with `if (!offer || !price) return false`, so an item with no offer rendered no buy panel
+ * and no explanation. On the live fixture that is two items a visitor can see, want, and get no
+ * answer about: `records` at 80 MXN and `boxes` at free. Neither is a CLINK problem and both are
+ * "buyers this page does not serve", which is exactly what this slice is for.
+ *
+ * Every branch below says what to DO, not what went wrong. "Cash at the table" is an instruction;
+ * "no offer available" is a status message about our data model, which is not the buyer's problem.
+ */
+export const noBuyReason = (item: Item): string | undefined => {
+  // Sold already says everything, twice — the stamp and the strikethrough. A third sentence
+  // explaining that a sold thing cannot be bought is noise.
+  if (item.sold) return undefined
+  const price = item.price
+  if (!price) return 'No price on this one. Ask the seller.'
+  if (price.amount === 0) return 'Free — just ask when you get here.'
+  // Fiat. There is no conversion anywhere in this project and there will not be: a price oracle
+  // is an HTTP call to somebody else's server and /CLAUDE.md rule 1 forbids one (spec §6.1). So a
+  // fiat price is a real price that this page genuinely cannot take, and saying which currency it
+  // is stops the sentence reading like a bug.
+  if (!/^sats?$/i.test(price.currency)) {
+    return `Priced in ${price.currency.toUpperCase()} — cash at the table. This page pays over Lightning, in sats, and it has no way to convert.`
+  }
+  // Lightning.Pub will not invoice below 10 sats (offer.ts MIN_PAYABLE_SATS), so a Buy button
+  // here would only ever answer `code: 5`.
+  if (price.amount < MIN_PAYABLE_SATS) return 'Too small for a Lightning invoice — cash at the table.'
+  // Priced in sats, above the floor, and still nothing payable: the listing carries no usable
+  // `clink_offer`, or it carries one whose TLV 4 price disagrees with the price tag, which
+  // `buyableOffer` refuses on purpose. A buyer cannot act on the difference and does not need to;
+  // the seller-facing diagnosis is `node spike/check-admin.ts`.
+  return 'Not payable on this page. Ask the seller — they may take cash, or have it listed elsewhere.'
+}
+
 export const renderBuy = (item: Item): HTMLElement | false => {
   const offer = item.offer
   const price = item.price
-  if (!offer || !price) return false
+  if (!offer || !price) {
+    const reason = noBuyReason(item)
+    return reason ? h('section', { class: 'buy buy-none' }, h('p', { class: 'hint' }, reason)) : false
+  }
 
   const panel = h('section', { class: 'buy' })
   // aria-live so a screen reader hears the invoice arrive; the whole flow is one region that
@@ -331,6 +370,19 @@ export const renderBuy = (item: Item): HTMLElement | false => {
         'comes back — the seller’s node will not take a payment it could not refund. ' +
         'An noffer is refunded over the same relays as this page; a Lightning address has to be ' +
         'looked up on its provider’s server, so use an noffer if you have one.',
+    ),
+    // SLICE 8, and it is what /docs/spec.md §10 asks for, in the form that is actually true here.
+    // §10 says the copy "must state that a raw-QR payer forfeits the automatic refund". Under the
+    // decision this slice made — keep the pointer required, make the page the fallback — nobody
+    // can forfeit it, because the node declines a payment that arrives without one. So the honest
+    // sentence is not a warning about losing the refund; it is why this page is the only way in.
+    // A buyer who was just asked for a wallet address is owed that, before they type one.
+    h(
+      'p',
+      { class: 'hint' },
+      'This is the only way to pay this item. A wallet that scans the seller’s offer code ' +
+        'directly is turned away by their node for the same reason — it has nowhere to send a ' +
+        'refund. Nothing here reaches a server of ours; there isn’t one.',
     ),
     field,
     submit,

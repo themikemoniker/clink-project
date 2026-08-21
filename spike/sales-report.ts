@@ -28,7 +28,13 @@
 // addressed to their wallet — and /CLAUDE.md says not to log payloads carrying one. Presence is
 // what a seller needs to know; the value is slice 7's business and stays on the node.
 //
-// Usage: node sales-report.ts [--nprofile <path|nprofile1…>] [--json]
+// SLICE 8 ADDED `--outgoing`, the other half of the same question. Money in is what has sold;
+// money out is what has been refunded — and it is the only place a human can check a `pending`
+// journal row, because the node stores no link from a debit back to the sale that caused it
+// (/docs/known-defects.md). The watcher prints the same matches next to a pending row; this is
+// where you look when the watcher is not running.
+//
+// Usage: node sales-report.ts [--nprofile <path|nprofile1…>] [--json] [--outgoing]
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -36,12 +42,14 @@ import { fileURLToPath } from 'node:url'
 import { getPublicKey, nip19 } from 'nostr-tools'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import { REFUND_POINTER } from './fixture.ts'
+import type { Outgoing } from './refund.ts'
 import { arg, connectPub } from './pub-rpc.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const KEY_FILE = join(HERE, '.dev-key')
 const LADDER_FILE = join(HERE, '.ladder.json')
 const JSON_OUT = process.argv.includes('--json')
+const OUTGOING = process.argv.includes('--outgoing')
 
 // The node is not trusted input. A yard sale does not have this many settled invoices.
 const MAX_INVOICES = 5_000
@@ -131,6 +139,53 @@ if (JSON_OUT) {
   const over = rows.filter(r => r.units !== undefined && r.settled > r.units)
   for (const r of over) console.log(`# OVERSOLD ${r.label}: ${r.settled} settled against ${r.units} unit(s). Refund owed.`)
   if (!existsSync(LADDER_FILE)) console.log(`# no ${LADDER_FILE}, so "sold of how many" is unknown — that number is only in the ladder`)
+}
+
+// --- money out ------------------------------------------------------------------------------
+//
+// structs.proto:616-624 — GetUserOperationsRequest is SIX cursors plus a size, and
+// paymentManager.ts:1130-1135 dereferences every one of them with no default, so a request
+// missing any of them throws inside the node instead of answering. All zeros means "from the
+// beginning". The response key `latestOutgoingUserToUserPayemnts` is the node's own typo
+// (structs.proto:657); reading the correctly-spelled name gets `undefined`.
+if (OUTGOING) {
+  const CURSOR = { ts: 0, id: 0 }
+  const ops = (await rpc('GetUserOperations', {
+    latestIncomingInvoice: CURSOR,
+    latestOutgoingInvoice: CURSOR,
+    latestIncomingTx: CURSOR,
+    latestOutgoingTx: CURSOR,
+    latestIncomingUserToUserPayment: CURSOR,
+    latestOutgoingUserToUserPayment: CURSOR,
+    max_size: 100,
+  })) as Record<string, { operations?: Outgoing[] }>
+  // A refund leaves as an outgoing invoice payment; an internal transfer to a buyer whose wallet
+  // is on this same Pub lands in the user-to-user list instead, which on a demo machine is not
+  // hypothetical.
+  const out = [
+    ...(ops.latestOutgoingInvoiceOperations?.operations ?? []),
+    ...(ops.latestOutgoingUserToUserPayemnts?.operations ?? []),
+  ].sort((a, b) => Number(a.paidAtUnix) - Number(b.paidAtUnix))
+
+  console.log(`\n# ${out.length} outgoing payment(s) — every refund this node has sent`)
+  if (out.length === 0) {
+    console.log('#   none. Nothing has been paid back, which is correct until an oversell happens.')
+  } else {
+    console.log('when                          sats   operation')
+    for (const o of out) {
+      console.log(
+        new Date(Number(o.paidAtUnix) * 1000).toISOString().padEnd(26) +
+          String(o.amount).padStart(7) +
+          '   ' +
+          o.operationId +
+          (o.internal ? '  (internal)' : ''),
+      )
+    }
+    console.log(
+      '#   The node records no link from a payment back to the sale that caused it, so matching a\n' +
+        '#   refund to a buyer is amount-and-time only. Treat it as evidence, not as an answer.',
+    )
+  }
 }
 
 close()

@@ -1340,7 +1340,7 @@ invalidate.
 
     Slice 4 writes `imeta` with `url`, `m`, `x`, `dim`, `alt` and one `fallback` per extra
     Blossom server — and **deliberately not `blurhash`**, which would need an encoder in the
-    builder and a decoder inside the storefront's ~30 KB gzip budget to replace a flat tone
+    builder and a decoder inside the storefront's gzip budget (spec §9) to replace a flat tone
     that already works. The field name is now pinned with a citation, so shipping one later is
     an hour rather than a research task.
 
@@ -1586,3 +1586,39 @@ invalidate.
     `RemoveDebitAccess` and returns GFY `3` the first time a debit arrives after
     `expires_at_unix` (`debitManager.ts:443-449`). It fails closed, which is right, but re-arming
     is the whole three-step dance of §13.27 again — do not let it lapse mid-demo.
+
+30. **BOLT12 does not exist anywhere in this stack, so spec §10's slice-8 line was unbuildable as
+    written.** Verified 2026-08-21, before anything was built on it, because "the seller's node
+    could expose one someday" is a sentence in the non-goals rather than a feature.
+
+    ```
+    $ grep -rni bolt12 ~/lightning_pub/src ~/lightning_pub/proto
+    (no output, exit 0)
+    $ grep -rni 'lno1' ~/lightning_pub/src
+    (no output)
+    $ lncli version | head -3
+    { "lncli": { "commit": "v0.21.2-beta",
+    $ lncli help | grep -ci offer
+    0
+    ```
+
+    Three separate absences, and the third was a surprise:
+
+    - **Lightning.Pub has no BOLT12 anything.** Not a string, not a proto field, not an RPC. Its
+      only invoice-creation paths produce BOLT11 (`AddInvoice`, and `AddAppUserInvoice` behind
+      the CLINK Offers flow), and every decode path is `DecodeInvoice`, which is `decodepayreq`,
+      which is BOLT11.
+    - **`lncli` on this build exposes no offer command either.** LND v0.21.2-beta carries
+      experimental BOLT12 support behind a build tag, and this binary was not built with it —
+      `lncli help` matches the word "offer" zero times. The slice brief's gotcha list said
+      "`lncli` has it; Lightning.Pub does not"; on this machine neither does, and the correction
+      matters because it removes the last "we could shell out to it" escape hatch.
+    - **CLINK's "Offer" is not BOLT12's "offer"**, despite the shared word, and conflating them
+      is the trap this finding exists to close. A CLINK `noffer` is a bech32 TLV pointer to a
+      *nostr* service that will issue a BOLT11 on request (`/docs/clink-notes.md` §2.1); a BOLT12
+      `lno1` is a self-contained onion-routed offer with no nostr in it at all. They solve the
+      same problem by different means and share no code, no encoding and no wire format.
+
+    ⇒ **Spec §10's "BOLT11/BOLT12" was corrected rather than attempted.** BOLT11 is what this
+    project already produces on every buy, so the fallback slice was never about a payment format
+    — see §7.3 and §10 for what it turned out to be about.

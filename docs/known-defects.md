@@ -44,6 +44,18 @@ to have a path that writes rather than reads.
 
 ---
 
+## Added by slice 8 (2026-08-21)
+
+Two rows, both small, both verified to reproduce. Slice 8 closed more than it opened — the
+`render.ts` row and half the `pending` row — so this section is short on purpose.
+
+| what breaks | where | what it costs a user | why it is deferred | what fixing it looks like |
+|---|---|---|---|---|
+| **The refund journal is still the only record that a refund happened, and the startup reconcile was not built.** Slice 7's row named a buildable mitigation — reconcile against the node's outgoing payments at startup — and slice 8 built the *reporting* half of it (`matchingPayments`, `sales-report.ts --outgoing`, the pending-row print) and not the reconciling half. So the machinery to answer "has this already been paid?" now exists and nothing calls it at startup. | `spike/watch-sales.ts`, the block that loads the journal | Unchanged from slice 7: losing `spike/.refunds.json` can pay a refund twice, bounded by the node's frequency cap. | Doing it at startup means deciding, automatically, that a payment matched on **amount and time alone** is the refund in question — and the node stores no link back to the sale, so two refunds of the same amount in the window are indistinguishable. A heuristic is fine as evidence for a human and is a different thing as an input to whether money moves again. That is a decision about money, and the reporting half makes the manual version cheap enough that it was not worth forcing. | Read the node's outgoing payments once at startup, and for any journal row that is `pending`, print a **prompt** rather than a conclusion: "the node has one 1,000-sat payment 40 seconds after this row was written — mark it paid? [y/N]". The `--reconcile` mode slice 7's row already sketched. Everything it needs is now written and tested. |
+| **`noBuyReason` cannot tell a missing offer from a mismatched one, and neither can the buyer.** An item priced in sats above the floor with no usable `clink_offer` gets one sentence — "Not payable on this page" — whether the listing carries no offer tag at all or carries one whose TLV 4 price disagrees with its `price` tag. `listing.ts` `buyableOffer` collapses both to `undefined` before `render.ts` sees anything. | `storefront/src/render.ts` `noBuyReason`, against `storefront/src/listing.ts` `buyableOffer` | Nothing, for a buyer — the next step is the same either way, which is to ask the seller. It costs the **seller**, who may not know their listing and their offer disagree, and whose page silently stops selling one item. | Telling them apart in the page means `buyableOffer` returning a reason rather than `undefined`, which widens the trust boundary's return type for a distinction only a seller can act on — and the seller-facing tool already exists and runs where the key is. | Either leave it and rely on `node spike/check-admin.ts`, which does have both events and can say which; or have `buyableOffer` return `{offer}` / `{reason}` and let the admin panel surface it. The buyer's copy should not change either way. |
+
+---
+
 ## Documentation drift
 
 A different kind of debt, listed so the eventual restructure has a target. **Nothing here was

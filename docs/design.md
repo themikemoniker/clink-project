@@ -7,7 +7,7 @@ Two surfaces, opposite constraints. Do not share a design system between them.
 | Audience | Seller, motivated, loaded once | Buyer, in a driveway, on mobile data |
 | Priority | Speed of building UI | Weight, legibility, print |
 | Stack | ~~React + Tailwind + shadcn/ui~~ Vite + TypeScript, hand-written CSS (see §5) | Hand-written CSS, no component library |
-| Budget | Whatever it takes | ~30KB JS **gzip**, ~10KB CSS (settled slice 2 — spec §9) |
+| Budget | Whatever it takes | ~~~30KB~~ **32 KB JS gzip**, ~10KB CSS (settled slice 2, raised once in slice 8 with the reasoning written down — spec §9) |
 
 ---
 
@@ -84,7 +84,7 @@ Requirements:
 | Type | Encodes | Where it appears |
 |---|---|---|
 | **Storefront QR** | The site URL (gateway or `nsite://`) | Flyer footer, tear-off tabs, admin panel for sharing |
-| **Item QR** | The item's `noffer` | Price stickers on physical objects |
+| **Item QR** | ~~The item's `noffer`~~ the item's storefront deep link, `#/item/<d-tag>` — corrected in slice 8, see below | Price stickers on physical objects |
 
 Item QRs need a printable sticker sheet: one per item, ≥2cm square or phones won't read it reliably, item name and price above the code. Scan the thing, pay for the thing.
 
@@ -96,7 +96,27 @@ encoder. The cold HTML went from 0.4 KB to 2.4 KB gzip for it.
 
 ~~`SPIKE`: item QRs depend on per-item offers being mintable.~~ **Resolved, and the answer changed the design.** Per-item offers are mintable and are live (spec §6.1), so an item QR *could* encode the item's `noffer` — but slice 2 made every offer require a `refund_pointer` in `payer_data`, and a wallet scanning a raw QR has no way to supply one. The node declines it. So an item sticker that encodes the noffer today is a QR that cannot be paid.
 
-Item QRs therefore encode the **storefront deep link** (`#/item/<d-tag>`) until slice 8 decides what happens to buyers without a refund pointer. Scan the thing, land on the thing's page, pay there. That is one extra tap and it keeps the refund guarantee, which is the demo.
+Item QRs therefore encode the **storefront deep link** (`#/item/<d-tag>`) ~~until slice 8 decides what happens to buyers without a refund pointer~~. Scan the thing, land on the thing's page, pay there. That is one extra tap and it keeps the refund guarantee, which is the demo.
+
+**CONFIRMED IN SLICE 8. The sticker encodes the deep link, permanently, and this table's "Item QR
+→ the item's `noffer`" row is wrong.** The provisional answer above was written assuming the worst
+case about wallets; slice 8 checked, and the worst case is not the reason. Two measurements:
+
+- **A raw `noffer` sticker is unpayable by anything that cannot supply `refund_pointer`**, which
+  is the node declining rather than a wallet failing (`code: 1`, confirmed on the wire in slice 2).
+- **Relaxing the offer to accept anyone is not available.** `payer_data` on an offer is a
+  required-key list with no optional tier, and a key the offer does not declare is **discarded**
+  rather than stored (`offerManager.ts:139-142`, `:276`). So there is no sticker that is both
+  payable by a generic wallet and refundable. Findings §6, spec §7.3.
+
+⇒ The deep link is not a compromise pending better wallet support. **It serves every wallet**,
+because it lands on a page that asks for the pointer and then does the CLINK request itself,
+whereas a raw `noffer` serves only wallets that speak CLINK *and* can be prompted for an arbitrary
+key. One extra tap buys universality and the refund guarantee together.
+
+**What the sticker still needs, and it is slice 9's** (the printable sheet, per §10): the name and
+price above the code, ≥2cm square, and the deep link is longer than an `noffer` so the module
+count is higher — check it scans at 2cm from a real print before the sheet is called done.
 
 ---
 

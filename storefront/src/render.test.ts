@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Item } from './listing.ts'
-import { declineText, formatPrice, sats, stockNote } from './render.ts'
+import { declineText, formatPrice, noBuyReason, sats, stockNote } from './render.ts'
 
 const item = (over: Partial<Item> = {}): Item => ({
   id: 'a'.repeat(64),
@@ -117,4 +117,54 @@ test('code 0 is ours and falls through to our own sentence, never to a node stri
 test('an unknown code from a node we have never met does not render as undefined', () => {
   // Be lenient on receive. A node inventing code 99 must not blank the status line.
   assert.equal(declineText({ ok: false, code: 99, error: 'Something specific' }), 'Something specific')
+})
+
+// --- buyers this page does not serve (slice 8) ------------------------------------------------
+//
+// `renderBuy` used to return `false` for any item with no offer, so two items on the live fixture
+// showed a price and no way to act on it and no explanation: `records` at 80 MXN and `boxes` at
+// free. Every assertion below is about a SENTENCE A BUYER CAN ACT ON — the failure being guarded
+// is copy that describes our data model ("no offer available") instead of their next step.
+
+test('a fiat-priced item says cash at the table and names the currency', () => {
+  // The live fixture's `records`. There is no conversion in this project and never will be — a
+  // price oracle is somebody else's server (/CLAUDE.md rule 1, spec §6.1) — so this is a real
+  // price the page genuinely cannot take, not a listing that is broken.
+  const text = noBuyReason(item({ price: { amount: 80, currency: 'MXN' } }))!
+  assert.match(text, /MXN/)
+  assert.match(text, /cash at the table/i)
+})
+
+test('a free item says how to claim it', () => {
+  // The live fixture's `boxes`. It rendered the word "free" and offered no way to act on it.
+  assert.match(noBuyReason(item({ price: { amount: 0, currency: 'sats' } }))!, /free/i)
+})
+
+test('a price under the node’s 10-sat floor is cash, not a Buy button that always fails', () => {
+  // Lightning.Pub hardcodes the floor (offer.ts MIN_PAYABLE_SATS, findings §13.7). A button here
+  // would only ever answer `code: 5`.
+  assert.match(noBuyReason(item({ price: { amount: 9, currency: 'sats' } }))!, /cash at the table/i)
+  // 10 exactly is payable, so it falls through to the "no usable offer" sentence instead.
+  assert.doesNotMatch(noBuyReason(item({ price: { amount: 10, currency: 'sats' } }))!, /Too small/)
+})
+
+test('a sats-priced item with no usable offer points at the seller, not at our data model', () => {
+  // Reached two ways a buyer cannot tell apart and does not need to: no `clink_offer` tag at all,
+  // or one whose TLV 4 price disagrees with the price tag (listing.ts `buyableOffer` refuses it).
+  const text = noBuyReason(item({ price: { amount: 1000, currency: 'sats' } }))!
+  assert.match(text, /ask the seller/i)
+  assert.doesNotMatch(text, /offer|noffer|CLINK|tag/i)
+})
+
+test('an item with no price at all still gets a next step', () => {
+  assert.match(noBuyReason(item({ price: undefined }))!, /ask the seller/i)
+})
+
+test('a sold item says nothing, because the stamp already said it twice', () => {
+  // Sold is already carried by the stamp and the strikethrough. A third sentence explaining that
+  // a sold thing cannot be bought is noise, and `sold` must win over every other branch —
+  // including the fiat one, which would otherwise offer cash for something that is gone.
+  assert.equal(noBuyReason(item({ sold: true, price: { amount: 1000, currency: 'sats' } })), undefined)
+  assert.equal(noBuyReason(item({ sold: true, price: { amount: 80, currency: 'MXN' } })), undefined)
+  assert.equal(noBuyReason(item({ sold: true, price: undefined })), undefined)
 })

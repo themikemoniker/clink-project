@@ -284,6 +284,11 @@ body {
   font-family: var(--sans);
 }
 
+/* No Buy button, and a sentence instead of one — slice 8. An item priced in pesos or given away
+   free is not a broken listing, so this must not read as an error state: same hairline rule and
+   the same soft ink as a hint, with the form's bottom margin removed since there is no form. */
+.buy-none .hint { margin-bottom: 0; }
+
 .buy label {
   display: block;
   font: 600 0.9rem/1.4 var(--sans);

@@ -365,7 +365,7 @@ Two more tags worth writing, both free interop:
 generalised lesson of findings §13.11), `dim`, `alt` (accessibility, and no other tag here has
 anywhere to put it), and one `fallback` per additional Blossom server, which is the standard
 answer to blobs living on exactly one server the moment a second one exists. A blurhash would
-need an encoder in the builder and a decoder inside the storefront's ~30 KB gzip budget, to
+need an encoder in the builder and a decoder inside the storefront's gzip budget (§9), to
 replace a flat tone that already works — so the field name is pinned with a citation and shipping
 one later is an hour rather than a research task. One caveat: `92.md` says each `imeta` SHOULD
 match a URL in the event's *content* and ours match `image` tags, so a generic NIP-92 client will
@@ -574,7 +574,7 @@ That is fine, and it is better than depending on wallet behaviour:
   minted into every offer and is expensive to change — see `/spike/mint-offers.ts`.
 - Our page asks the buyer for a Lightning address or `noffer` **before** requesting the invoice, and puts it in `payer_data`. A form field, not a protocol hope.
 - A payment that would be unrefundable is therefore declined rather than accepted. That is the correct default for oversell risk.
-- Someone who scans the raw QR with a generic wallet cannot pay at all. Deliberate trade-off; slice 8's fallback copy must say so.
+- Someone who scans the raw QR with a generic wallet cannot pay at all. Deliberate trade-off, **re-affirmed in slice 8 after the refund path existed to test it** — see the block at the end of this section.
 
 The refund itself is a kind `21002` debit from the watcher's key against the seller's `ndebit` pointer, capped by a node-enforced frequency rule — see §11 q10 and §12.
 
@@ -595,6 +595,34 @@ This is a feature, not an apology. Demo it. Sending money back to someone who ne
    **It is written before the payment, not after**, because the dangerous crash is "while paying" rather than "after paying". A row left `pending` means we do not know whether money moved, and it is never retried automatically — retrying might double-pay and dropping it might strand a buyer, so it is printed until a human reconciles against the node.
 
 3. **The cap and the kill switch are the node's, and they were watched firing.** `spike/check-refund.ts` drops the grant's frequency rule to 1 sat, sends a 10-sat debit, and records `{"code":5,…,"range":{"min":1,"max":1}}`; then restores the cap, calls `BanDebit`, and records `{"code":1,"error":"Request Denied Warning"}` on a debit that was well within it. Both checks run inside the payment transaction, so a refusal is a rollback. Nothing is paid to prove either. Findings §13.29.
+
+**SLICE 8 RE-DECIDED THE TRADE-OFF ABOVE, WITH REFUNDS ACTUALLY BUILT, AND KEPT IT.** The line
+"a payment that would be unrefundable is therefore declined rather than accepted" was a slice-2
+decision made before anything could send money back. Slice 8 is the slice entitled to revisit it,
+and it does not — for a reason that turned out to be stronger than the original one.
+
+**The alternative is not "accept the payment and skip the refund". It is "accept the payment and
+generate a permanent alarm".** An offer minted `payer_data: []` produces a settled invoice
+carrying no pointer, so `spike/refund.ts` `resolvePointer` answers
+`{queue: true, error: 'no refund pointer on the settled invoice'}` and the watcher writes a
+`queued` row. `queued` means *a human is needed*, and it is reprinted every five minutes — but no
+human can act on this one either, because nothing on that invoice identifies who paid. A
+deliberate design choice would arrive at the seller's terminal disguised as an unresolved bug,
+forever. Shipping that would need a fifth journal state meaning *deliberately unrefundable*, and
+a state that exists only to say "ignore me" is a strong signal the thing above it is wrong.
+
+**And the middle option does not exist at the node.** "Make the key optional, so a wallet that can
+supply a pointer does and one that cannot still pays" is not implementable: `payer_data` on an
+offer is a required-key list with no optional tier (`offerManager.ts:139-142`), and a key the
+offer does not declare is **discarded rather than stored** (`offerManager.ts:276` writes only
+`validated`, built from the declared keys alone). A generous wallet volunteering the pointer
+against a permissive offer would have it dropped on the floor. Findings §6.
+
+⇒ **The requirement stays, and the page becomes the fallback.** Every route to paying an item
+funnels through the form that asks for a pointer — including the printed sticker, which encodes
+the storefront deep link rather than the raw `noffer` (design.md §4). The stage line: *we decline
+money we could not give back, and the reason you can only pay here is the reason you can be
+refunded.*
 
 ### 7.4 Strict mode (build behind the same interface)
 
@@ -674,7 +702,15 @@ The pre-spike draft had the seller verifying the buyer's settlement receipt offl
 
 The cheap version, and the one to build: the invoice the node stores carries the buyer's ephemeral request pubkey (`clink_requester_pub`). The buyer's page keeps that ephemeral key. At the driveway the seller's device shows a QR challenge, the buyer's page signs it with that key, and the seller checks the signature against the pubkey on the settled invoice — which the watcher already synced. No signal needed on either side once both have loaded.
 
-Decide this before slice 6; until then, pickup is "seller looks up the sale in the admin panel," which is fine for a demo and needs signal.
+~~Decide this before slice 6;~~ until then, pickup is "seller looks up the sale in the admin panel," which is fine for a demo and needs signal.
+
+**Still unbuilt after slice 8, and slice 8 is where its cost got named.** Both this and §14's
+pickup-messaging question depend on the same thing: the buyer's page keeping the ephemeral key it
+minted in `buy.ts`, which today is dropped when the page navigates away (that is the
+`KEY HANDLING NOTICE` there, and it is correct as it stands). Persisting it is a new decision
+about storing key material in a browser, and `/CLAUDE.md` rule 2 is watching. **If it is ever
+kept, keep it for both** — one persisted key buys offline pickup proof *and* a reachable buyer,
+and two separate decisions about the same key is how one of them ends up with weaker handling.
 
 ---
 
@@ -771,7 +807,9 @@ React, Tailwind or shadcn/ui.**
 - Hand-written CSS, no component library. Newspaper classifieds aesthetic.
 - **No framework at all.** Slice 1 shipped Vite + TypeScript + hand-written DOM calls. Preact was
   not needed and was not added; revisit only if slice 2/3 state gets genuinely hairy.
-- Budget: ~30KB JS, ~10KB CSS. Justify every dependency.
+- Budget: ~~~30KB JS~~ **32 KB gzip JS cold**, ~10KB CSS. Justify every dependency. The number was
+  raised once, deliberately, in slice 8 — see "the budget moved" below rather than treating this
+  line as the whole story.
 - No three.js / R3F. No animation libraries.
 
 **The budget means gzip.** Settled 2026-08-20 (slice 2). It is a number about what a phone on
@@ -838,6 +876,36 @@ decode that replaced the build-time constant:
 | CSS | 5.8 KB | 2.0 KB |
 | HTML as built (no QR) | 0.7 KB | 0.4 KB |
 | HTML as deployed (QR injected) | 10.6 KB | 2.4 KB |
+
+**The budget moved in slice 8, from ~30 to 32 KB gzip, and this is the reasoning rather than a
+quiet edit.** It had drifted past 30 three times without anyone saying so, which is the thing
+worth fixing — a budget nobody restates is a budget nobody is keeping.
+
+| when | JS gzip cold | what the increment bought |
+|---|---|---|
+| slice 1 | 19.6 KB | reading listings off relays |
+| slice 2 | 30.9 KB | **taking money** — NIP-44 (6.0) plus signing (~3.5) |
+| slice 5 | 31.0 KB | one build for any seller: a bech32 npub decode replacing a build-time constant |
+| slice 7 | 31.31 KB | `LN_ADDRESS` lifted so the page and the watcher agree, and honest hint text |
+| slice 8 | **31.61 KB** | `noBuyReason` and the §10 copy — two items on the live fixture stopped being dead ends |
+
+Measured 2026-08-21: **31.61 KB gzip JS** cold + 2.05 CSS + 2.4 HTML as deployed, plus a 3.91 KB
+QR chunk fetched only by a buyer who taps Buy. So a visitor who browses pulls ~36 KB and a
+visitor who buys pulls ~40.
+
+**Two commands, two numbers, and every figure in these docs is vite's.** `npm run build` reports
+31.61 kB; `npm run size` gzips at level 9 and reports 31,373 bytes. Both are correct and they
+differ by ~0.7% because of the compression level. The tables here have always used vite's, which
+is the more conservative of the two — do not mix them mid-comparison, which is how a slice
+appears to have shrunk the bundle by changing which command it ran.
+
+**Why 32 rather than a diet.** Nearly all of it is secp256k1 for `verifyEvent`, which
+`/CLAUDE.md` requires on every inbound event; the next largest piece is NIP-44, without which
+there is no payment. Neither is negotiable, and the only remaining lever is copy — which means
+hitting 30 would mean deleting the sentences that tell a buyer why they are being asked for a
+refund pointer, in order to improve a statistic. That is the same trade §9 already refuses for
+`verifyEvent`, so it is refused here too. 32 is a real ceiling with ~0.4 KB of headroom, and the
+next slice that wants a KB has to say what it is spending it on.
 
 **Shared:**
 - TypeScript throughout
@@ -1232,7 +1300,94 @@ address is LNURL-pay over HTTPS. Resolved, with a seller-visible queue when it f
   at settlement and remove the read-back dependency, at the cost of an HTTP listener on the
   seller's machine. Polling already works and rule 1's spirit is fewer servers, not more.
 
-**Slice 8 — Fallback payment path.** BOLT11/BOLT12 for buyers without a CLINK-capable wallet, degrading to "pay and message me" semantics. This is what makes it usable by actual neighbors next month. Copy must state that a raw-QR payer forfeits the automatic refund, because they never supplied a `payer_data` pointer (§7.3).
+**Slice 8 — Fallback payment path. DONE 2026-08-21, and the one-line description contained a
+factual error, so the slice began by correcting it.**
+
+~~BOLT11/BOLT12 for buyers without a CLINK-capable wallet, degrading to "pay and message me"
+semantics. This is what makes it usable by actual neighbors next month. Copy must state that a
+raw-QR payer forfeits the automatic refund, because they never supplied a `payer_data` pointer
+(§7.3).~~
+
+**1. BOLT12 does not exist anywhere in this stack.** `grep -rni bolt12 ~/lightning_pub/src
+~/lightning_pub/proto` returns nothing, `lno1` appears nowhere, and — the part that was not
+expected — `lncli help` on this LND v0.21.2-beta build matches "offer" **zero** times, so there
+is no shell-out escape hatch either. CLINK's own "Offer" is a different thing that shares a word:
+an `noffer` is a bech32 TLV pointer to a *nostr* service that issues a BOLT11 on request, while a
+BOLT12 `lno1` is a self-contained onion-routed offer with no nostr in it. Findings §30.
+
+That leaves BOLT11, which this project already produces on every single buy. **So the slice was
+never about a payment format**, and the real question underneath it is who is allowed to pay.
+
+**2. Three tiers of buyer, and the honest version of the slice is which ones we take money from.**
+
+| who | supplies `refund_pointer`? | reachable afterwards? | can pay? |
+|---|---|---|---|
+| our page (kind 21001 client, ephemeral key) | **yes** — a form field, before the invoice | yes, `clink_requester_pub` | **yes** |
+| a CLINK wallet scanning a raw `noffer` | only if it can be prompted for an arbitrary key | yes, same field | **no** — declined, `code: 1` |
+| anyone scanning a plain BOLT11 QR | no | **no** — nothing identifies them | **no such QR is published** |
+
+**3. The decision: keep the requirement, and make the page the fallback.** Three candidates were
+on the table and two are disqualified by measurement rather than by taste:
+
+- **(a) Mint a second offer per item with `payer_data: []`** and knowingly accept unrefundable
+  payments. Rejected. It is unrefundable *by construction* — the settled invoice carries no
+  pointer, so `spike/refund.ts` `resolvePointer` returns `{queue: true}` and the watcher parks it
+  as `queued` **forever**, reprinting it every five minutes at a seller who cannot act on it
+  either, because nothing on that invoice says who paid. A deliberate design choice would arrive
+  at the seller's terminal disguised as an unresolved bug. It also needs a second `clink_offer`
+  tag or a second QR outside the listing, and every storefront including ours would have to
+  decide which to draw.
+- **(c) Relax the requirement to *optional*.** **Not implementable — there is no such tier at the
+  node**, and this is the finding that made 0.2's wallet question stop being load-bearing.
+  `ValidateExpectedData` (`offerManager.ts:139-142`) returns `{passed:true, validated:{}}` the
+  moment the key list is empty; a key is required or it is not requested, with no third state.
+  Worse, the invoice is written `payer_data: validated ? { data: validated } : undefined`
+  (`offerManager.ts:276`) where `validated` is built from the **declared keys alone**, so a
+  generous wallet volunteering `refund_pointer` against a `payer_data: []` offer has it dropped
+  on the floor. No wallet behaviour can create the middle tier. Findings §6.
+- **(b) Keep `payer_data: ["refund_pointer"]` required and make the *page* the fallback.**
+  **Chosen.** Every path funnels through the form that asks for a pointer: the item sticker
+  encodes the storefront deep link `#/item/<d>` rather than a raw `noffer` (design.md §4), and a
+  wallet that reaches the raw offer anyway is declined by the node with a typed `code: 1` naming
+  the missing key. It is the only option that keeps slice 7's guarantee whole, and it is what
+  design.md §4 already assumed while waiting for this slice to confirm it.
+
+**4. So the required copy changed shape, and the page says the true thing.** §10 asked for copy
+stating that a raw-QR payer forfeits the automatic refund. Under (b) **nobody can forfeit it** —
+the node declines them before money moves — so a warning about losing a refund would be copy
+about a state this design does not have. What the buy form says instead, before the buyer types a
+pointer: *this is the only way to pay this item; a wallet that scans the seller's offer code
+directly is turned away by their node for the same reason — it has nowhere to send a refund.*
+
+**5. What was actually built is smaller than the description and lands somewhere else.** The
+visible hole was not the one §10 named. `renderBuy` opened with `if (!offer || !price) return
+false`, so an item with no offer rendered **no buy panel and no explanation** — two items on the
+live fixture that a visitor can see, want, and get no answer about: `records` at 80 MXN and
+`boxes` at free. `render.ts` `noBuyReason` now gives each one a next step rather than a status
+message, and it is tested. See §7.3.
+
+| file | what |
+|---|---|
+| `storefront/src/render.ts` | `noBuyReason`, the §10 copy, and four exports made testable |
+| `storefront/src/render.test.ts` | 17 tests — the decline codes, the price formatting, the unserved buyers |
+| `storefront/src/offer.ts` | `isPointer`, shared by the page, `check-buy.ts` and the watcher |
+| `spike/check-buy.ts` | `--pointer`, and `--pay` refuses without one |
+| `spike/refund.ts` | `matchingPayments`, for reconciling a `pending` row against the node |
+
+**What slice 8 deliberately did not build**
+
+- **No messaging.** §10's "pay and message me" has no messaging to degrade to, and §14's open
+  question explains why it is harder than it sounds: `clink_requester_pub` exists **only** for a
+  kind 21001 payer, so "message me" could never mean "we message you" for the tier this slice is
+  about. It can only mean "here is how you reach the seller" — and the page already carries that,
+  because the sale's date, hours and location are on the masthead. A contact field would be a new
+  tag, a new authoring input, and a decision about publishing a phone number to public relays,
+  which is a privacy question this slice does not own.
+- **No new watcher state for a deliberately-unrefundable settlement.** It would have been
+  mandatory under (a) and is unreachable under (b): with the requirement kept, no settlement can
+  arrive without a pointer. `queued` keeps its existing meaning — *a pointer we could not
+  resolve*, which needs a human — rather than acquiring a second one.
+- **No fallback offer, no second `clink_offer` tag, no BOLT12.** See above.
 
 **Slice 9 — Polish.** Geohash map of nearby sales, printable item-sticker QR sheet (design §4), masthead editing, 404 page, empty states.
 
@@ -1308,11 +1463,20 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 
 1. Photograph an item. Publish it in the builder. (~30s)
 2. Deploy. Show the npub URL resolving. (~30s)
-3. Second device: scan, pay, receive.
+3. Second device: scan, pay, receive. **The QR scanned in step 3 is the storefront's, and the
+   payment happens on the page** — slice 8 confirmed that and it is not an implementation detail
+   to gloss. A phone that scans a raw `noffer` gets a typed decline instead, and the reason is
+   step 6: the node will not take a payment it could not refund. Say it here, once, rather than
+   letting a judge find it at step 6.
 4. Refresh: item is sold.
 5. Show the seller's machine — no inbound ports open, no domain, no certificate, no processor account.
 6. Oversell deliberately. Show the automatic refund.
 7. Optional: open the same site in Titan over `nsite://` with no gateway at all.
+
+**Say this before a judge says it.** There is no BOLT12 in this stack and there is no plain-QR
+payment path — the fallback for a neighbour with an ordinary wallet is *the page*, not a second
+payment format (§10, findings §30). The trade is stated rather than hidden: one extra tap, in
+exchange for every payment being refundable.
 
 ---
 
@@ -1352,8 +1516,29 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
   of both deployed sites. Findings §9 and §13.23. Two things still open at the edge: the
   fixture's 21 photos are on `blossom.band` alone until `seed-listings.ts` is re-run, and
   BUD-04 `PUT /mirror` is still untested (we push to each server directly instead).
-- What does the buyer see if their wallet can't speak CLINK? (Slice 8 — decide the copy early. Must include: no `payer_data` pointer means no automatic refund.)
+- ~~What does the buyer see if their wallet can't speak CLINK? (Slice 8 — decide the copy early.
+  Must include: no `payer_data` pointer means no automatic refund.)~~ **ANSWERED IN SLICE 8, and
+  the required sentence turned out to be about a state this design does not have.** A wallet that
+  cannot speak CLINK never reaches a payment: the item sticker encodes the storefront deep link,
+  so scanning it opens the page, and a wallet that reaches the raw `noffer` some other way is
+  declined by the node with `code: 1` naming `refund_pointer`. **Nobody can forfeit the refund**,
+  so the copy says the true thing instead — *this is the only way to pay this item; a wallet that
+  scans the seller's offer code directly is turned away by their node for the same reason: it has
+  nowhere to send a refund.* It sits in the buy form, above the field, before the buyer types
+  anything. §10 §7.3.
 - Where does buyer↔seller pickup messaging live — NIP-17 DMs to the **ephemeral payer pubkey** stored on the invoice as `clink_requester_pub`? Note that key is ephemeral by design, so the buyer's page must keep it or the thread is unreachable. (Was "the receipt's payer pubkey" — we cannot read the receipt.)
+
+  **Still open after slice 8, which declined to build it and narrowed it instead.** §10 called for
+  the fallback to degrade to "pay and message me" semantics; there is no messaging in this project
+  to degrade to, and building one inside a slice about payment formats would have been the wrong
+  slice. Three things slice 8 established that whoever picks this up should not re-derive:
+  **(i)** `clink_requester_pub` exists only for a kind 21001 payer, so "message me" can never mean
+  "we message you" for a buyer who paid any other way — any design assuming we can reach them is
+  wrong; **(ii)** the ephemeral key dies with the tab, so a thread keyed on it needs the browser to
+  persist key material, which is a rule-2 decision and not a feature; **(iii)** §7.6's pickup proof
+  has the *same* dependency, so if the key is ever kept, keep it for both. Meanwhile the honest
+  fallback is the one already on the page: the sale's date, hours and location are on the masthead,
+  and a buyer who cannot pay online comes to the sale.
 - Do we ship a hosted gateway convenience URL, or force gateway choice? (A hosted one is a centralization we should at least name.) **Slice 5 forced the choice, weakly**: the builder has a gateway text field defaulting to `nsite.lol` and does not check that whatever is typed resolves. A dropdown of gateways is a list that goes stale, and the gateway is the one part of the URL we do not control.
 - Is `blind` on a Lightning.Pub offer worth using? It exists in the entity and reaches invoice creation, and is in no CLINK spec. `UNVERIFIED` — find out before enabling it; it may affect receive reliability. Slice 2 mints offers with it unset.
 - What is the `p:` offer-id prefix? It routes to a separate "product" system that bypasses `payer_data` validation and amount checks, and is in no CLINK spec. Slice 2 did **not** use it, and the `payer_data` bypass alone probably disqualifies it — a product offer cannot carry a refund pointer, so it cannot be refunded. Confirm before anyone reaches for it.

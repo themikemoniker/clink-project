@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-21**, end of slice 7 — both nsites re-deployed, storefront SPOF closed.
+Last updated: **2026-08-21**, end of slice 8 — the fallback path, and the page stopped having dead ends.
 
 ---
 
@@ -26,7 +26,13 @@ event encrypted to the seller's own key. There is no server of ours anywhere in 
 closed the loop the other way: the watcher now sends money back.** An oversold item is refunded
 automatically over a CLINK Debit (kind 21002) from a separate key that holds no funds and no
 identity, capped by the seller's own node rather than by our code — and the cap and the `BanDebit`
-kill switch have both been watched firing. Next up is slice 8: the fallback payment path.
+kill switch have both been watched firing. **Slice 8 answered the fallback question and the answer was "there is no second payment path,
+and that is the design".** BOLT12 does not exist anywhere in this stack — not in Lightning.Pub,
+not even in this LND build's `lncli` — so §10's one-line description was corrected rather than
+attempted. What was left was the real question: three tiers of buyer, and we serve exactly one on
+purpose. The offer's required `refund_pointer` stays, the item sticker encodes the storefront deep
+link rather than a raw `noffer`, and every route to paying funnels through the form that asks for
+a pointer. **We decline money we could not give back.** Next up is slice 9: polish.
 
 **The thing slice 6 found, and it is the one to say on stage.** "View settled sales" has no CLINK
 path at all. Manage's only resource is the offer; there is no invoice or settlement resource
@@ -65,7 +71,7 @@ now a deliberate boundary rather than an accident.
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
 | Blossom | **four** servers, verified — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
-| Storefront bundle | 31.0 KB gzip JS + 2.0 CSS + 2.4 HTML cold, + 3.9 KB QR chunk on Buy |
+| Storefront bundle | **31.61 KB gzip JS** + 2.05 CSS + 2.4 HTML cold, + 3.91 KB QR chunk on Buy. Budget raised to 32 in slice 8, with reasoning — spec §9 |
 | Builder bundle | **57.3 KB gzip cold** (+4.3 for slice 6), + a built storefront in `public/site` (~99 KB raw) |
 
 Four items are buyable; the rest deliberately are not:
@@ -77,8 +83,8 @@ Four items are buyable; the rest deliberately are not:
 | `lamp` | 30,000 sat | buyable, `stock 3` — the expensive one, still untouched |
 | `bike` | 180,000 sat | has an offer, but priced **above inbound** — invoice issues, payment cannot settle |
 | `couch` | 210,000 sat | same |
-| `records` | 80 MXN | fiat, cash at the table, no offer by design |
-| `boxes` | free | no offer |
+| `records` | 80 MXN | fiat, cash at the table, no offer by design. **Slice 8 gave it copy** — it used to render a price and no way to act on it |
+| `boxes` | free | no offer. **Slice 8 gave it copy** — same |
 | `table`, `mirror` | sold | seeded sold, so no offer was ever minted for them |
 
 ---
@@ -99,7 +105,9 @@ npm run dev         # http://localhost:5173
 cd spike
 npm test                               # 10 tests / 35 assertions, node --test — the ladder
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
-node check-buy.ts <item> --pay         # prints an invoice and waits. COSTS REAL SATS.
+node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
+                                       # --pay REFUSES without --pointer as of slice 8: a settled
+                                       # invoice stores that value forever and the node cannot fix it
 node mint-offers.ts [--dry]            # idempotent; reuses offers by label
 node seed-listings.ts                  # republishes the 30402s AND cuts .ladder.json
 node watch-sales.ts [--once]           # slice 3: observe settlement, republish availability
@@ -126,6 +134,8 @@ node check-admin.ts [<npub>]           # drives /builder's admin module against 
                                        # No key, no node, publishes nothing. Free
 node sales-report.ts [--json]          # settled sales: amounts, timestamps, refund pointers.
                                        # Reads .dev-key. The browser CANNOT do this — findings §13.25
+node sales-report.ts --outgoing        # money OUT: every refund the node has sent. Slice 8.
+                                       # Where you check a `pending` journal row by hand
 
 # slice 4: authoring, against the running node
 node authorize-manage.ts               # ONCE, at the desk. Grants Manage, writes .nmanage
@@ -229,20 +239,34 @@ by our own header since slice 1. Blobs now live on four, verified. Findings §9 
 The residue: the fixture's 21 photos are still on `blossom.band` alone until `seed-listings.ts`
 is re-run, which also re-cuts `.ladder.json` and needs the watcher restarted. Not demo-day work.
 
-### Question 6, wallet half — does a third-party wallet supply `payer_data`?
+### Question 6, wallet half — **DEMOTED PERMANENTLY 2026-08-21 by slice 8, from source**
+
+It can no longer change a design, only annotate one. It stayed open because it looked like it
+decided slice 8's fallback: if a wallet *could* be prompted for an arbitrary `payer_data` key,
+there would be a middle tier of buyer who is refundable without our page. **That tier does not
+exist at the node**, whatever any wallet does:
+
+- `payer_data` on an offer is a **required-key list with no optional tier** —
+  `ValidateExpectedData` returns `{passed:true, validated:{}}` the moment the list is empty
+  (`offerManager.ts:139-142`).
+- A key the offer does not declare is **discarded, not stored**. The invoice is written
+  `payer_data: validated ? { data: validated } : undefined` and `validated` is built from the
+  declared keys alone (`offerManager.ts:276`, `:147-152`).
+
+So an offer either demands the pointer (and a wallet that cannot supply it cannot pay) or it does
+not (and the payment is unrefundable by construction). Findings §6, spec §7.3.
+
+**What is left is five minutes of annotation whenever a phone is free**, and it changes nothing:
 
 ```bash
 cd spike && node -p "require('./.offers.json')['yardsale-2026-08-lamp'].noffer"
 ```
 
-Pay that from **ShockWallet on another device**. Record whether it prompts for
-`refund_pointer`, fails silently, or shows the node's error text.
-
-This is now *secondary* — our page is the client sending the 21001, so the pointer arrives
-whatever a wallet does. What the answer changes is slice 8's copy and `/docs/design.md` §4: if
-no wallet can supply the key, every offer we mint is unpayable by anything but our own page,
-and an item-QR sticker must point at the item page rather than the offer. We have already
-assumed that worst case in the design.
+Pay that from **ShockWallet on another device** — `lamp` is 30,000 sats, so do not complete it;
+the decline is the answer and it arrives before money moves. It would tell us whether a CLINK
+wallet gets a usable prompt on a raw `noffer`, which is interesting and does not move the
+sticker: the deep link serves every wallet, a raw `noffer` serves only CLINK wallets that can be
+prompted, and slice 8 chose on that rather than on this.
 
 ### Question 8, bunker prompt count — **ANSWERED 2026-08-21 from source**
 
@@ -881,6 +905,117 @@ Net cost is routing fees. It needs a wallet and a person, which is why slice 7 s
 
 ---
 
+## Slice 8 — what shipped, and the description that was wrong twice
+
+Small in code and large in decisions, which is the shape of a slice that is mostly about who we
+are willing to take money from. **Zero new dependencies. No new module in `/storefront`.**
+
+| file | what |
+|---|---|
+| `storefront/src/render.ts` | `noBuyReason`, the §10 copy, four pure functions exported |
+| `storefront/src/render.test.ts` | **new** — 17 tests, no DOM harness, no dependency |
+| `storefront/src/offer.ts` | `isPointer`, now shared by the page, `check-buy.ts` and the watcher |
+| `spike/check-buy.ts` | `--pointer`; `--pay` refuses without one |
+| `spike/refund.ts` | `matchingPayments` — reconciling a `pending` row against the node |
+| `spike/sales-report.ts` | `--outgoing`: money out, next to money in |
+
+### 1. BOLT12 is not in this stack, and `lncli` does not have it either
+
+`grep -rni bolt12 ~/lightning_pub/src ~/lightning_pub/proto` returns nothing. `lno1` appears
+nowhere. The surprise was the third check: **`lncli help` on this LND v0.21.2-beta build matches
+"offer" zero times**, so the "we could shell out to it" escape hatch does not exist. The slice
+brief's own gotcha list said "`lncli` has it; Lightning.Pub does not"; on this machine neither
+does. Findings §30.
+
+That leaves BOLT11, which every buy already produces — so the slice was never about a payment
+format.
+
+### 2. The middle tier of buyer does not exist, and that is why no phone was needed
+
+The scoping question was whether to relax the offer's required `refund_pointer`. Reading
+`offerManager.ts` first killed it: `payer_data` is a required-key list with **no optional tier**
+(`:139-142`), and a key the offer does not declare is **discarded rather than stored** (`:276`
+writes only `validated`, built from the declared keys alone). A generous wallet volunteering the
+pointer against a permissive offer would have it dropped on the floor.
+
+So the choice was only ever between "required, and some buyers cannot pay" and "absent, and no
+buyer can be refunded". **Required wins**, and the page becomes the fallback. This also demoted
+spike question 6 permanently — it had been open since slice 2 waiting to decide exactly this.
+
+### 3. The alternative was not "skip the refund", it was "generate a permanent false alarm"
+
+Worth having straight for the stage. An offer minted `payer_data: []` settles an invoice carrying
+no pointer, so `resolvePointer` answers `{queue: true}` and the watcher writes a `queued` row —
+which means *a human is needed*, is reprinted every five minutes, and **no human can act on it
+either**, because nothing on that invoice says who paid. Shipping it would have needed a fifth
+journal state meaning "deliberately unrefundable, stop telling me", and a state whose only job is
+to say *ignore me* is a strong signal the thing above it is wrong.
+
+### 4. The hole in the page was not the one the description named
+
+`renderBuy` opened with `if (!offer || !price) return false`, so **an item with no offer rendered
+no buy panel and no explanation.** On the live sale that is two items a visitor can see, want, and
+get no answer about:
+
+```
+records   -> Priced in MXN — cash at the table. This page pays over Lightning, in sats,
+             and it has no way to convert.
+boxes     -> Free — just ask when you get here.
+```
+
+Neither is a CLINK problem, both are copy, and both are "buyers this page does not serve" — which
+is what the slice was for. Every branch says what to *do*; "no offer available" is a status
+message about our data model and is not the buyer's problem.
+
+### 5. render.ts needed no DOM harness, and the measurement is one command
+
+`/docs/known-defects.md` carried "402 untested lines, needs a DOM harness, that is a decision" for
+three slices. The decision took one measurement:
+
+```bash
+node -e "import('./src/render.ts').then(m => console.log(Object.keys(m)))"
+```
+
+It works. `render.ts` touches `document` only inside function bodies, so the decisions in it were
+untestable because they were **private**, not because they needed a browser. Four exports, 17
+tests, zero dependencies. What stays untested is the markup, and that boundary is now written down
+rather than implied.
+
+### Verified how
+
+```
+cd storefront && npm test          # 51/51 (+20), build clean, 31.61 KB gzip (+0.30)
+cd builder    && npm test          # 41/41, unchanged, 57.37 KB gzip
+cd spike      && npm test          # 27/27 (+5)
+cd spike      && node check-buy.ts            # free path, 5/5 against the live node
+cd spike      && node check-buy.ts --pay      # REFUSES: --pay needs --pointer
+cd spike      && node check-admin.ts          # ALL CHECKS PASSED against the live sale
+cd spike      && node sales-report.ts --outgoing   # 0 outgoing, which is correct
+cd spike      && node watch-sales.ts --once   # unarmed, unchanged
+```
+
+### What is NOT proven, and it is still the demo beat
+
+**No refund has been paid.** Slice 8's Phase 0 removed the thing that was blocking it —
+`check-buy.ts` hardcoded `check-buy@example.com`, so every invoice it settled was unrefundable by
+construction — but the run itself needs a wallet and a person. It is now one command:
+
+```bash
+node check-buy.ts yardsale-2026-08-mugs --pay --pointer <a wallet you control>   # 3rd unit
+node check-buy.ts yardsale-2026-08-mugs --pay --pointer <the same>               # the oversell
+node watch-sales.ts --refunds                                                    # money back
+```
+
+`mugs` has one unit left and a depleted offer stays payable (findings §13.17), so this needs no
+restocking. Net cost is routing fees. Two branches are still untouched on the wire: `payDebit`'s
+`{"res":"ok"}` and `resolvePointer`'s LNURL half.
+
+**Still NOT proven: the browser half**, unchanged across slices 4, 5, 6, 7 and now 8 —
+`/docs/prompts/browser-verify-and-deploy.md`. Slice 8 added a DOM branch (`noBuyReason`) that has
+never been rendered in a browser, so that session now covers five slices of unrun markup.
+
+---
+
 ## Traps that will cost an hour each
 
 - **`AuthorizeDebit` is commented out, and `EditDebit` cannot create a grant either.** It throws
@@ -964,6 +1099,20 @@ Net cost is routing fees. It needs a wallet and a person, which is why slice 7 s
 - **Never delete a depleted offer.** It takes the buyer's stored refund pointer with it —
   `GetUserOfferInvoices` is the only reader and it throws once the offer row is gone
   (findings §13.17). This corrects spec §7.4(a).
+- **BOLT12 is nowhere in this stack.** Not Lightning.Pub, not this LND build's `lncli`. And
+  CLINK's "Offer" is not BOLT12's "offer" — same word, unrelated things. Findings §30.
+- **`payer_data: []` means "no requirement", not "no such field".** An offer minted that way is
+  payable by anyone and refundable by nobody, and a pointer a wallet volunteers anyway is
+  **discarded** (`offerManager.ts:276` stores only the declared keys). There is no optional tier.
+- **`GetUserOperations` needs ALL SIX cursors** in the request — `paymentManager.ts:1130-1135`
+  dereferences every one with no default, so a partial request throws inside the node rather than
+  answering. And the response key is the node's own typo: `latestOutgoingUserToUserPayemnts`.
+- **`node check-buy.ts --pay` refuses without `--pointer`**, deliberately. A settled invoice
+  stores that value forever and the node has no way to correct one — three invoices already carry
+  the unresolvable `check-buy@example.com` because it used to be hardcoded.
+- **`npm run build` and `npm run size` report different gzip numbers** (~0.7% apart, different
+  compression levels). Every figure in the docs is vite's, i.e. `npm run build`. Mixing them is
+  how a slice appears to have shrunk the bundle by changing which command it ran.
 - **Never guess a CLINK kind, field, tag, or error code.** They are in `/docs/clink-notes.md`
   with citations. Write `UNVERIFIED` and ask.
 
