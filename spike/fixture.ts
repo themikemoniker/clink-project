@@ -3,7 +3,12 @@
 // offer minted for an item the listing prices differently is the exact failure the slice-2
 // brief calls out ("the offer and the displayed price must agree").
 //
-// Dies with the rest of /spike when slice 4 lands a real Signer and real authoring.
+// IT DOES NOT DIE WITH /spike, and it used to say it would. Slice 4 landed the real Signer and
+// /builder imports this file rather than duplicating it: SALE (listing.ts, main.ts), SALE_RELAYS
+// (publish.ts) and REFUND_POINTER (manage.ts). Two spellings of REFUND_POINTER is a sale where
+// half the items cannot be refunded, so one definition is the point. Nor does /spike/.dev-key
+// die at slice 4 — that decision was reversed on 2026-08-21; the reasoning is in the header of
+// ./seed-listings.ts and it is the current one.
 
 // Where this fixture sale lives. Shared so the seeder that publishes a listing and the watcher
 // that republishes it cannot end up pointing at different relays — a mismatch there is a

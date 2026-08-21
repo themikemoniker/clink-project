@@ -6,7 +6,10 @@
 // KEY HANDLING NOTICE — same exception as seed-listings.ts. This reuses /spike/.dev-key, the
 // throwaway seller identity. Per /docs/spec.md §1 one pubkey is the seller's identity, their
 // listings, and their money, so the key that signs the listings is the key that owns the
-// Lightning.Pub account. Delete both when slice 4 lands a real Signer.
+// Lightning.Pub account. This used to say "delete both when slice 4 lands a real Signer" — that
+// decision was REVERSED on 2026-08-21 and the key stays. See ./seed-listings.ts's header for
+// why: deleting it takes this script, the seeder, deploy-nsite.ts and slice 3's watcher with it,
+// along with the storefront's npub, its nsite URL and the node account holding the sale's sats.
 //
 // TRANSPORT: this is NOT CLINK. Offer CRUD over CLINK is Manage, kind 21003, and Lightning.Pub
 // gates every Manage request — including one signed by the account's own key — behind an

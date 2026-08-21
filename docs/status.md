@@ -595,6 +595,7 @@ the cache instead of a person finding it on demo day.
 | `/CLAUDE.md` | project rules — non-negotiable | highest |
 | `/docs/clink-notes.md` | CLINK kinds, fields, error codes, quoted with citations | wins on protocol detail |
 | `/docs/spike-findings.md` | measured evidence, `NEEDS HUMAN` blocks | wins over spec.md |
+| `/docs/known-defects.md` | verified defects deferred out of the slice 0–5 review, plus the doc drift | |
 | `/docs/spec.md` | architecture and the slice plan (§10) | |
 | `/docs/design.md` | the two design surfaces | |
 | `/builder` | the authoring app. Signer, CLINK Manage, photos, the ladder cut, the deploy | |

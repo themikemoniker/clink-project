@@ -72,11 +72,19 @@ const minted: Record<string, Minted> = JSON.parse(readFileSync(OFFERS_FILE, 'utf
 const ladder: Record<string, Rung> = JSON.parse(readFileSync(LADDER_FILE, 'utf8'))
 
 // The offer id is read out of the noffer the *published listing* points at, not out of a
-// separate config, so the thing we watch is by construction the thing a buyer would pay.
+// separate config, so the thing we watch is by construction the thing a buyer would pay. The
+// rungs carry the item's own `clink_offer` tag — ladder.ts `atStock` strips it only at stock 0
+// — so an item authored in /builder is watchable from the ladder file alone. .offers.json is
+// the fallback and nothing more: only mint-offers.ts writes it, and only for the fixture's
+// items, so reading it first made every builder-published item invisible here.
+const nofferOf = (d: string, rung: Rung): string | undefined =>
+  rung.steps.flatMap(step => step.tags).find(t => t[0] === 'clink_offer')?.[1] ?? minted[d]?.noffer
+
 const watching = Object.entries(ladder).flatMap(([d, rung]) => {
-  const offer = minted[d] && decodeNoffer(minted[d]!.noffer)
+  const noffer = nofferOf(d, rung)
+  const offer = noffer && decodeNoffer(noffer)
   if (!offer) {
-    console.log(`# ${d}: no decodable offer in ${OFFERS_FILE} — not watching`)
+    console.log(`# ${d}: no decodable offer in its ladder or ${OFFERS_FILE} — not watching`)
     return []
   }
   return [{ d, rung, offerId: offer.offer }]

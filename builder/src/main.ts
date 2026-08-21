@@ -39,11 +39,39 @@ const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)
 let signer: Signer | null = null
 let node: ManagePointer | null = null
 let photos: PhotoBlob[] = []
-// Every ladder published this session, so the file the seller downloads covers all of them and
-// not just the last one.
+// The servers that actually stored EVERY rendition, straight from upload(). Not the BLOSSOM
+// constant: `imeta fallback` means "in case `url` fails" (NIP-94, via listing.ts `imetaTag`), so
+// a server that took none of the blobs must not appear in it. Harmless while there was one
+// server; slice 5 made it four, and a partial mirror would write fallback URLs that 404.
+let servers: string[] = []
+// Every ladder this seller has published here, not just this page load. The seller saves the
+// download OVER the watcher's copy, so a file carrying only the last item blinds the watcher to
+// everything else — including the fixture's five. Keyed by the signer's pubkey: two sellers on
+// one laptop are two ladders. It holds signed public events and no key material (publish.ts
+// `downloadLadder`), which is what makes localStorage an acceptable place for it.
 let ladder: LadderFile = {}
 
 const NODE_KEY = 'lamppost.nmanage'
+const LADDER_KEY = 'lamppost.ladder.'
+
+let ladderKey = ''
+const loadLadder = (): LadderFile => {
+  if (!ladderKey) return {}
+  try {
+    return JSON.parse(localStorage.getItem(ladderKey) || '{}') as LadderFile
+  } catch {
+    return {}
+  }
+}
+const saveLadder = () => {
+  if (!ladderKey) return
+  try {
+    localStorage.setItem(ladderKey, JSON.stringify(ladder))
+  } catch {
+    // Out of quota. The download still carries this session, so do not fail a publish that has
+    // already reached the relays over it.
+  }
+}
 
 // --- status line ---------------------------------------------------------------------------
 const say = (text: string, tone: 'ok' | 'busy' | 'bad' = 'busy') => {
@@ -68,6 +96,10 @@ const useSigner = (s: Signer) => {
   showSigner()
   say(`Connected via ${s.label}.`, 'ok')
   refreshCost()
+  void s.getPublicKey().then(pk => {
+    ladderKey = LADDER_KEY + pk
+    ladder = { ...loadLadder(), ...ladder }
+  })
 }
 
 const connect = async (fn: () => Promise<Signer>) => {
@@ -139,7 +171,7 @@ const readDraft = (): Draft => ({
   stock: Number($<HTMLInputElement>('#stock').value),
   alt: $<HTMLInputElement>('#alt').value.trim(),
   blobs: photos,
-  servers: BLOSSOM,
+  servers,
 })
 
 // The signature count, shown BEFORE the seller starts. /docs/spec.md §5 is a UX-critical budget
@@ -158,6 +190,22 @@ const refreshCost = () => {
   $('#cost').textContent =
     `${n} signature${n === 1 ? '' : 's'}: ${parts.join(' + ')}. ` +
     `Your signer should ask once per kind and remember the rest — if it asks every time, it ignored the permissions we requested.`
+}
+
+// A publish ends the item, not the session. Nothing used to reset, and #slug is only auto-filled
+// when it is empty — so a second publish in one page load went out under the FIRST item's `d`
+// tag. NIP-01 replaces on (kind, pubkey, d), so item one vanished from the sale, its minted offer
+// was orphaned and unwatchable, and item two silently carried item one's photo. The signer, the
+// node pointer, the price and the stock are what a seller reuses between items, so those stay.
+const resetItem = () => {
+  photos = []
+  servers = []
+  for (const id of ['#slug', '#title', '#summary', '#alt', '#photo']) {
+    $<HTMLInputElement | HTMLTextAreaElement>(id).value = ''
+  }
+  $('#photo-state').textContent =
+    'Resized in your browser to 1200, 480 and 160px. The original is never uploaded.'
+  refreshCost()
 }
 
 // --- publish -----------------------------------------------------------------------------------
@@ -184,6 +232,8 @@ const doPublish = async (event: SubmitEvent) => {
   try {
     const result = await publish(signer, node, draft, onStep)
     ladder = { ...ladder, [result.d]: result.ladder[result.d]! }
+    saveLadder()
+    resetItem()
     $('#result').hidden = false
     $('#result-text').textContent =
       `${draft.title} is live on ${result.relaysOk}/${RELAYS.length} relays as ${result.d}` +
@@ -206,9 +256,11 @@ const onPhoto = async (input: HTMLInputElement) => {
     say('Resizing…')
     const rendered = await resize(file)
     say(`Uploading ${rendered.length} sizes to ${BLOSSOM.length} server…`)
-    const { blobs } = await upload(signer, rendered, (done, total) => say(`Uploading ${done}/${total}…`))
+    const uploaded = await upload(signer, rendered, (done, total) => say(`Uploading ${done}/${total}…`))
+    const { blobs } = uploaded
     if (blobs.length === 0) throw new Error('No Blossom server accepted the photo. The listing can still publish without one.')
     photos = blobs
+    servers = uploaded.servers
     $('#photo-state').textContent = `${blobs.map(b => `${b.w}px`).join(', ')} on Blossom.`
     say(`Photo stored at ${blobs.length} size(s).`, 'ok')
     refreshCost()
@@ -288,7 +340,7 @@ $('#title').addEventListener('blur', () => {
   const slug = $<HTMLInputElement>('#slug')
   if (!slug.value) slug.value = normaliseSlug($<HTMLInputElement>('#title').value)
 })
-$('#download-ladder').addEventListener('click', () => downloadLadder(ladderFile({}, ladder)))
+$('#download-ladder').addEventListener('click', () => downloadLadder(ladderFile(loadLadder(), ladder)))
 $('#deploy').addEventListener('click', () => void doDeploy())
 $('#perms').textContent = PERMS.join(', ')
 

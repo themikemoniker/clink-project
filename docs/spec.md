@@ -841,7 +841,10 @@ photos from Blossom, and a printable flyer with a tear-off QR strip. `/definitel
 serves our own `/404.html`.
 
 Test data comes from `/spike/seed-listings.ts`, a throwaway identity that publishes the fixture
-sale. **Delete that script and `spike/.dev-key` when slice 4 lands a real Signer.**
+sale. ~~Delete that script and `spike/.dev-key` when slice 4 lands a real Signer.~~ **Reversed
+2026-08-21: the key stays** — it is the storefront's own npub and the owner of the node account,
+and the watcher needs it to read settlements. The current reasoning is in the header of
+`spike/seed-listings.ts`.
 
 **Slice 2 — Buy button. DONE 2026-08-20.** A static page takes money. Adds
 `storefront/src/offer.ts` (noffer TLV + BOLT11 amount, 126 lines, the second trust boundary),
