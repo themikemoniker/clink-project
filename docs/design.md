@@ -135,7 +135,20 @@ is corrected in place rather than deleted, because the reasoning is the useful p
   list changes during the sale."*
 - **Tear-off tab strip at the foot of the flyer** (what real yard sale signs do), each tab carrying
   the storefront QR — eight tabs, dashed rules, each one a `<use>` of the build-time `<symbol>`, so
-  the page ships no QR encoder to repeat it eight times.
+  the page ships no QR encoder to repeat it eight times. It sits at the foot of the *same sheet* as
+  the items; it used to be forced onto a page of its own by `break-before: page`, which is a tab
+  nobody tears off, because nobody prints page 2 of a lamppost flyer.
+- **One sheet of A4** — added 2026-08-21, after the first real print preview: the eight-item Merida
+  sale ran to **four pages** at two columns. Three columns, a print type scale in points rather
+  than `rem` (the screen sizes are set against the browser's 16px, not the 10.5pt print body), and
+  a uniform `aspect-ratio: 2.2 / 1` override on `.shot` bring it to one page with ~12mm to spare.
+  That holds about nine items; a bigger sale spills, and the answer then is a print-only cap on how
+  many items the flyer carries, not smaller type — the flyer is an advert for the URL, not the
+  catalogue.
+- **Grayscale thumbs are good enough on paper.** The open question §2.2 and the bullet above left
+  for "somebody looking at a print preview" — answered, by that preview. At 57 x 26 mm, letter-
+  boxed, `contrast(1.45)` on a mono laser, the thumbs read as what the thing is. Do not build the
+  dithering.
 
 ---
 
@@ -185,7 +198,10 @@ ships, on the live `mugs` item:
 
 A `noffer` carries a 32-byte pubkey, a relay URL and an opaque offer id; the deep link carries an
 npub and a slug. So the sticker that works everywhere is also the one with the fattest modules at
-a given sticker size — at 2cm that is 0.47mm per module against 0.34mm. The trade-off in the
+a given sticker size — at 2cm that is 0.47mm per module against 0.34mm. **The flyer's tear-off
+tabs were under this floor and nobody had measured them**: `max-width: 22mm` never applied, because
+`padding: 3mm 2mm` inside a 22.8mm tab left 18.8mm — below the 2cm minimum this table states. The
+padding is now `2mm 0.5mm`, so a tab QR renders at 21.5mm, 0.55mm per module at 39x39. The trade-off in the
 paragraph above has no downside left to weigh.
 
 **Built in slice 9, in the builder** — `builder/src/stickers.ts`, `builder/src/style.css`'s
