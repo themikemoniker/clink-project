@@ -156,7 +156,20 @@ node export-key-qr.ts --yes            # ONE-TIME: .dev-key -> nsec + QR, for th
 export PATH="$HOME/lnd:$PATH"
 lncli state && lncli listchannels | grep -E 'active|local_balance|remote_balance'
 curl -s http://127.0.0.1:1776/api/health
+
+# the submission PDF — 10 screenshots and a cover, captioned
+cd shots
+npm run capture                        # needs both dist/ built and the node up for the Buy shot.
+                                       # Sends a REAL kind 21001 request; requesting costs nothing
 ```
+
+**The screenshots are shot against `vite preview`, not the gateway, and that is deliberate.** The
+gateway serves the previous build for up to an hour (findings §7), so shooting it right after a
+deploy photographs the old site. `vite preview` serves the exact `dist/` bytes `deploy-nsite.ts`
+just published, and the page still reads its listings from the four public relays — so everything
+in those shots except the file origin is live. Item photos are `loading="lazy"`, so the script
+walks the page before every full-page shot; without that, everything below the fold photographs
+as an empty grey box and looks like an item with no picture.
 
 **Ordering matters.** `mint-offers.ts` → `seed-listings.ts` → `watch-sales.ts`. The builder is a
 separate track that does the first two itself, per item, for items authored in it.

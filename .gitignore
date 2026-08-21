@@ -63,3 +63,8 @@ spike/.ndebit
 # and losing it means a paid refund could be paid twice, so back it up rather than commit it.
 spike/.refunds.json
 spike/.refunds.json.tmp
+
+# Demo screenshots. Regenerate with `cd shots && npm run capture` — they are shot at 2–3x and
+# come to ~30 MB, and every one of them is reproducible from the built apps and the live relays.
+# The PDF they compose into IS committed: it is the submission artifact, and it is 3.8 MB.
+shots/out/
