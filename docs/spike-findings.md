@@ -1049,7 +1049,7 @@ invalidate.
 | §7.2 | page derives availability from "listing event + settlement receipts" | Receipts are unreadable by the page. Availability = the listing event only; the watcher republishes the `30402`. See §5 | ☑ |
 | §7.6 | seller verifies the receipt offline at pickup | Seller cannot decrypt it. Offline pickup proof must be designed, not inherited. See §5 | ☑ |
 | §6.1 | `item_ref` fallback tag if per-item offers are unsupported | Per-item offers **are** supported (§3). Delete `item_ref` from the data model | ☑ |
-| §7.4 | strict mode "requires Lightning.Pub to support gating on custom logic" | No such hook exists (§4). Strict mode = delete the offer on depletion, or front the node with our own service key | ☑ |
+| §7.4 | strict mode "requires Lightning.Pub to support gating on custom logic" | No such hook exists (§4). ~~Strict mode = delete the offer on depletion~~ — **superseded twice**: §13.17 disqualified deletion (it destroys the buyer's refund pointer) and slice 6 landed the replacement (a sold item drops its `clink_offer` tag and the offer is left alone on the node). Front the node with our own service key remains the only true strict mode | ☑ |
 | §7.3 | refunds pull an invoice from "the buyer's `clink_offer` supplied in `payer_data`" | `payer_data` has **no standard keys** and no refund field (`clink-offers.md:136`). This is our own convention and only works when our page is the paying client (§6) | ☑ |
 | §11 q10 | worst case is "admin only" for the refund path | Far better than feared: a CLINK Debit grant with a node-enforced frequency cap plus `BanDebit` kill switch (§10). `admin.connect` is never needed | ☑ |
 | §6.4 | manifest carries `path`, optional `server`, `title`/`description` | Also `x` aggregate hash (recommended), and kind `5128` snapshots exist. **And blob discovery needs a BUD-03 kind `10063` user-server list or `server` tags, else gateways MUST 404** (`5A.md:186-190`) | ☑ |
@@ -1338,3 +1338,72 @@ invalidate.
     fallback for any unmatched path; the host serves it as the response to a request that did
     not match, so the status is 404. `check-deploy.ts` hashes that body anyway and compares it
     against the `/404.html` path tag. Cost ten minutes on the day.
+
+25. **CLINK has no settlement path, so a browser holding no key cannot see the seller's sales.
+    This deletes a bullet from slice 6 rather than deferring one.** Read from source on
+    2026-08-21 and measured the same day.
+
+    Three facts, each citable, and together they close the question:
+
+    - **CLINK Manage's only resource is `"offer"`** (`clink-manage.md:29`), with actions
+      `create`, `update`, `get`, `list`, `delete` (`clink-manage.md:33-92`). The running node
+      agrees exactly: `managementManager.ts:115-134` switches on those five and answers
+      `{"res":"GFY","code":1,"error":"Request Denied: Unknown action: …"}` to anything else.
+      There is no invoice resource, no settlement resource, no payment-history resource — not in
+      Manage, and not in Offers, Debits, Enroll or Beacon either (`/docs/clink-notes.md` §1-§6).
+    - **Settled sales live behind `GetUserOfferInvoices`**, which returns `OfferInvoice { invoice,
+      offer_id, paid_at_unix, amount, data }` (`structs.proto:902-908`) — `data` being the stored
+      `payer_data`, i.e. the buyer's refund pointer.
+    - **That call is reachable only over kind 21000.** `nostrMiddleware.ts:52-80` dispatches
+      21001 to `handleClinkOffer`, 21002 to `handleNip68Debit` and 21003 to
+      `managementManager.handleRequest`, each with an early `return`; only an event that is none
+      of those falls through to `nostrTransport`, which is the RPC dispatcher every server method
+      including this one hangs off. And kind 21000 is decrypted with `decryptV1` /
+      `getConversationKeyV1` — the raw ECDH x-coordinate envelope of §13.18 — which NIP-46 does
+      not expose.
+
+    ⇒ **A browser behind a Signer cannot read the seller's sales, and no amount of building
+    changes it.** The workaround is disqualified before it is written: giving the page a raw node
+    key breaks `/CLAUDE.md` rules 2 and 3 at once, and it is not even a read-only credential —
+    Lightning.Pub has no observer scope, so the same key that lists operations can call
+    `PayInvoice` (§10).
+
+    **What slice 6 shipped instead, and it is two answers rather than a compromise:**
+
+    - The panel derives **units sold from the relays**, with no credential at all: the watcher
+      already republishes each item's stock as money arrives, so `units − stock` is how many have
+      gone (`builder/src/admin.ts` `soldCount`). It is strictly less than the node knows — no
+      amounts, no timestamps, no payer data — and it is the number a seller wants mid-sale.
+      Unknown for an item this browser never published, because nothing on a relay records what
+      the stock started at.
+    - **`/spike/sales-report.ts`** gives the full version where the key already is: amount,
+      timestamp and refund-pointer presence per settled invoice, per offer. It prints presence
+      and never the pointer itself — a `refund_pointer` is an ndebit addressed to the buyer's
+      wallet, and `/CLAUDE.md` says not to log payloads carrying one.
+
+    This constrains slice 7's UI too: an automatic refund cannot be *reviewed* in the browser
+    before it is sent, because the browser cannot see the invoice it would be refunding. Slice 7
+    is a process next to the node or it is nothing.
+
+26. **A relay answers OK to a replaceable event it does not store, so a stale ladder fails
+    silently and cheerfully.** Slice 6's edit flow made this reachable and it is the sharpest
+    edge in the slice.
+
+    Rungs carry `created_at` later than the listing they were cut from — that is what makes
+    availability monotone (§7.2, `spike/ladder.ts`). An **edit** publishes a listing later than
+    every rung of the *old* ladder, inverting it. NIP-01 then keeps the newer edit and drops the
+    rung. The failure is not that the publish errors: a relay that already holds a newer
+    replaceable event still returns `["OK", <id>, true, ""]` and simply stores nothing. So
+    `watch-sales.ts` counts a success, logs `3/4 relays`, and the item stays advertised as
+    available for the rest of the sale. **An oversell with a clean log beside it.**
+
+    Note this is the *opposite* of the failure the slice-6 brief predicted. The brief expected a
+    stale rung to republish old text over new; that needs the edit to land within `units` seconds
+    of the original publish, which is a 1–3 second window for a yard-sale item. The reachable
+    failure is the silent no-op, and it lasts until somebody notices.
+
+    Fixed in `spike/ladder.ts` `isStale`, checked once at watcher startup against the live
+    listings, tested in `ladder.test.ts`, and reported by `spike/check-admin.ts` section 4. Equal
+    timestamps are not stale — a sold-out item's live listing *is* its own last rung — and an
+    item with no live listing is not judged at all, because "the relay is down" and "your ladder
+    is stale" have opposite remedies.

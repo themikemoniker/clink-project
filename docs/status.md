@@ -4,13 +4,13 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-21**, end of slice 5.
+Last updated: **2026-08-21**, end of slice 6.
 
 ---
 
 ## One-paragraph summary
 
-Slices 0 through 5 are done. A static page hosted on Nostr reads listings off public relays and
+Slices 0 through 6 are done. A static page hosted on Nostr reads listings off public relays and
 takes Lightning payments by sending CLINK invoice requests to the seller's own node over relays.
 **This is proven with real money** — 6,000 sats settled on 2026-08-21 and the page read the
 settlement receipt that nobody else can decrypt. A watcher on the seller's machine closes the
@@ -20,8 +20,19 @@ static builder that holds no key either — signing through NIP-07 or a NIP-46 b
 item's offer on their own node over **CLINK Manage (kind 21003)**. **Slice 5 closed the loop: the
 builder now deploys the sale as a website**, hashing the storefront's files, mirroring them to
 four Blossom servers and publishing the kind 15128 manifest — and the builder itself is deployed
-as an nsite, which is the last thing `/CLAUDE.md` rule 5 was owed. There is no server of ours
-anywhere in it. Next up is slice 6: the admin panel.
+as an nsite, which is the last thing `/CLAUDE.md` rule 5 was owed. **Slice 6 added the admin
+panel** — edit, restock, mark sold and private notes, all of it either a public relay read or an
+event encrypted to the seller's own key. There is no server of ours anywhere in it. Next up is
+slice 7: refunds.
+
+**The thing slice 6 found, and it is the one to say on stage.** "View settled sales" has no CLINK
+path at all. Manage's only resource is the offer; there is no invoice or settlement resource
+anywhere in CLINK; and the node's own `GetUserOfferInvoices` rides kind 21000, which is keyed on
+a raw ECDH secret NIP-46 does not expose. **So the seller's own browser cannot see the seller's
+sales.** That is not a gap we failed to close — it is what holding no key actually costs, and the
+honest answer is two answers: the panel derives units-sold from the relays for free, and
+`node spike/sales-report.ts` gives the money on the machine where the key already is.
+Findings §13.25.
 
 **The thing to know before touching slice 6.** The storefront is no longer compiled per seller.
 It reads its own npub out of `location.hostname` (NIP-5A `5A.md:156-158`), so one build serves
@@ -47,17 +58,17 @@ now a deliberate boundary rather than an accident.
 | Seller pubkey (throwaway) | `fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0` |
 | Sale | kind 30405 `yardsale-2026-08`, 9 items on 4 public relays |
 | Node | local Lightning.Pub 0.0.37 + LND, 1 private channel |
-| Node liquidity | **90,160 inbound / 8,000 outbound** — drifts with every sale |
+| Node liquidity | **90,374 inbound / 8,000 outbound**, measured 2026-08-21 — drifts with every sale |
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** |
-| Blossom | **four** servers hold every blob, verified. Was one until slice 5 |
+| Blossom | **four** servers, verified — *for anything deployed after the slice-5 fix.* Two things predate it and are still on one server each: see the two single points of failure below |
 | Storefront bundle | 31.0 KB gzip JS + 2.0 CSS + 2.4 HTML cold, + 3.9 KB QR chunk on Buy |
-| Builder bundle | 52.9 KB gzip cold, + a built storefront in `public/site` (~99 KB raw) |
+| Builder bundle | **57.3 KB gzip cold** (+4.3 for slice 6), + a built storefront in `public/site` (~99 KB raw) |
 
 Four items are buyable; the rest deliberately are not:
 
 | item | price | state |
 |---|---|---|
-| `mugs` | 1,000 sat | **`stock 1` of 3 — two units bought for real on 2026-08-21.** The cheap demo item |
+| `mugs` | 1,000 sat | **`stock 1` of 3 — two units bought for real on 2026-08-21.** Re-verified 2026-08-21 after slice 6: the last unit is still there. The cheap demo item |
 | `plants` | 6,000 sat | paid 2026-08-21, and **the watcher has marked it sold on the relays** |
 | `lamp` | 30,000 sat | buyable, `stock 3` — the expensive one, still untouched |
 | `bike` | 180,000 sat | has an offer, but priced **above inbound** — invoice issues, payment cannot settle |
@@ -82,7 +93,7 @@ npm run dev         # http://localhost:5173
 
 # the money path, against the running node
 cd spike
-npm test                               # 8 tests / 20 assertions, node --test — the ladder
+npm test                               # 10 tests / 35 assertions, node --test — the ladder
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
 node check-buy.ts <item> --pay         # prints an invoice and waits. COSTS REAL SATS.
 node mint-offers.ts [--dry]            # idempotent; reuses offers by label
@@ -96,6 +107,12 @@ node deploy-nsite.ts --key .deploy-test-key    # deploy to a throwaway, not the 
 node deploy-nsite.ts ../builder/dist --key .builder-key   # rule 5: the builder as an nsite
 node check-deploy.ts <npub>            # relays, then Blossom, then the gateway. No key needed
 node check-deploy.ts <npub> --skip-gateway     # skip the cache, check only what is true
+
+# slice 6: the admin panel
+node check-admin.ts [<npub>]           # drives /builder's admin module against the LIVE sale.
+                                       # No key, no node, publishes nothing. Free
+node sales-report.ts [--json]          # settled sales: amounts, timestamps, refund pointers.
+                                       # Reads .dev-key. The browser CANNOT do this — findings §13.25
 
 # slice 4: authoring, against the running node
 node authorize-manage.ts               # ONCE, at the desk. Grants Manage, writes .nmanage
@@ -132,8 +149,25 @@ report four complete mirrors.
 `seed-listings.ts` carries the same two-line change but **has not been re-run**, so the fixture's
 21 photos are still on `blossom.band` alone. Re-seeding mirrors them to four servers — and it
 re-cuts `.ladder.json` and republishes all nine listings, so it needs `watch-sales.ts` restarted
-after it, and it must not happen on demo day. Worth doing on a quiet day before then: one server
-holding the only copy of the demo's photos is the last single point of failure left.
+after it, and it must not happen on demo day.
+
+**And there is a second one, found on 2026-08-21 during slice 6 and not previously written down.**
+`node spike/check-deploy.ts npub1lvvw…q0lalws --skip-gateway` passes every check and reports
+**"1 complete mirror(s). ONE copy — a single garbage collection breaks this site."** The live
+storefront was deployed *before* slice 5 found the base64 encoding bug, so its kind 10063 names
+only `cdn.hzrd149.com` and its five site blobs live there alone. The two sites deployed after the
+fix report four mirrors; the live one is not one of them.
+
+So the demo has **two** single points of failure, both on Blossom, and they are different fixes:
+
+| what | where | fix | safe to do on demo day? |
+|---|---|---|---|
+| the fixture's 21 item photos | `blossom.band` only | re-run `seed-listings.ts` | **no** — re-cuts the ladder, needs the watcher restarted |
+| the live storefront's 5 site blobs | `cdn.hzrd149.com` only | re-run `deploy-nsite.ts` | **no** — the gateway caches the old build for an hour |
+
+Neither is urgent and both are cheap on a quiet day. Doing them in the same sitting is the right
+move, in this order: `mint-offers.ts` → `seed-listings.ts` → `deploy-nsite.ts` → restart
+`watch-sales.ts` → `check-admin.ts` and `check-deploy.ts` to confirm.
 
 `spike/.dev-key` and `spike/.offers.json` are gitignored and **not reproducible from the repo**.
 Losing `.dev-key` loses the seller identity, the storefront's npub, and access to the 6,000 sats
@@ -530,6 +564,175 @@ the cache instead of a person finding it on demo day.
 
 ---
 
+## Slice 6 — what shipped, and the bullet that was deleted rather than deferred
+
+Two new modules in `/builder`, two new scripts in `/spike`, one function lifted into the tested
+module, and **zero new dependencies in either package**.
+
+| file | what |
+|---|---|
+| `builder/src/admin.ts` | read the sale back off the relays; listing → draft; offer reuse; units sold |
+| `builder/src/notes.ts` | NIP-78 kind 30078, NIP-44 encrypted to self. One event for the whole shop |
+| `builder/src/admin.test.ts` | 12 tests / 52 assertions, `node --test`, same style as the other four suites |
+| `spike/sales-report.ts` | settled sales, run where the key already is. The deleted bullet's answer |
+| `spike/check-admin.ts` | drives the shipped admin module against the LIVE sale. No key, no node |
+| `spike/ladder.ts` | `isStale` and `nofferOf` — two pure functions, in the file that already has a test |
+
+### 1. "View settled sales" has no CLINK path, so the bullet is gone
+
+Three facts, each citable, and together they close it:
+
+- **CLINK Manage's only resource is `"offer"`** (`clink-manage.md:29`), actions create/update/
+  get/list/delete. The running node agrees exactly — `managementManager.ts:115-134` switches on
+  those five and answers GFY 1 to anything else. There is no invoice or settlement resource
+  anywhere in CLINK.
+- **Settled sales live behind `GetUserOfferInvoices`** — `OfferInvoice { invoice, offer_id,
+  paid_at_unix, amount, data }`, `structs.proto:902-908`, where `data` is the stored `payer_data`.
+- **That call is reachable only over kind 21000.** `nostrMiddleware.ts:52-80` dispatches 21001,
+  21002 and 21003 to their own managers with an early `return`; only what falls through reaches
+  the RPC dispatcher. Kind 21000 is `decryptV1` on the raw ECDH x-coordinate, which NIP-46 does
+  not expose (findings §13.18).
+
+⇒ **The seller's own browser cannot read the seller's sales.** The workaround is disqualified
+before it is written: a raw node key in the page breaks rules 2 and 3 at once and is not even
+read-only — the same credential can call `PayInvoice` (findings §10).
+
+Two answers shipped instead of one workaround:
+
+- The panel shows **units sold, derived from the relays**, with no credential at all. The watcher
+  already republishes stock as money arrives, so `units − stock` is how many have gone. Unknown
+  for an item this browser never published, because nothing on a relay records what the stock
+  started at — and saying nothing is the honest answer there.
+- **`node spike/sales-report.ts`** gives the money, on the machine where the key is:
+
+```
+item                            price   sold   sats in   refundable   last settled
+yardsale-2026-08-plants          6000    1/1      6000          1/1   2026-08-21T01:45:50.000Z
+yardsale-2026-08-mugs            1000    2/3      2000          2/2   2026-08-21T02:35:45.000Z
+...
+# 3 settled invoice(s), 8000 sats received
+```
+
+It prints refund-pointer **presence** and never the pointer. A `refund_pointer` is an ndebit
+addressed to the buyer's wallet, and `/CLAUDE.md` says not to log payloads carrying one.
+
+This also constrains slice 7: an automatic refund cannot be reviewed in a browser before it is
+sent, because the browser cannot see the invoice it would be refunding. Slice 7 is a process next
+to the node or it is nothing. Findings §13.25.
+
+### 2. The dangerous edit failure is the opposite of the one that was predicted
+
+The slice brief expected a stale ladder rung to republish old text over new. That needs the edit
+to land within `units` seconds of the original publish — a 1–3 second window for a yard-sale item
+— so it is nearly unreachable.
+
+What is reachable: **a relay answers `OK` to a replaceable event it does not store.** After an
+edit the new listing is newer than every rung of the old ladder, so the watcher publishes a rung,
+the relay accepts it and drops it, and `publish()` counts a success. The log says `3/4 relays`
+and the item stays advertised as available for the rest of the sale. An oversell with a clean log
+next to it, lasting until somebody notices.
+
+`spike/ladder.ts` `isStale` now decides it, checked once at watcher startup against the live
+listings; a stale item is refused loudly and by name rather than watched uselessly. Equal
+timestamps are not stale (a sold-out item's live listing *is* its own last rung) and an item with
+no live listing is not judged at all — "the relay is down" and "your ladder is stale" have
+opposite remedies. Findings §13.26.
+
+### 3. An edit is a re-publish, so the whole job is not losing anything
+
+There is no edit event in nostr. The panel therefore reuses the **item form** as its edit form,
+which is why slice 6 needed no second form and no framework (see the React answer below).
+
+- **`1 + units` signatures**, not one. Restock *is* an edit: changing the quantity changes how
+  many rungs there are. The cost line already showed this and now stops over-counting — an edit
+  that keeps its photos uploads nothing, and one that keeps its price mints nothing.
+- **The photos survive without re-uploading a byte.** Blossom is content-addressed, so the sha256
+  comes back out of the URL (BUD-01). `imeta` finally has a reader too: `fallback` is read back so
+  a save does not quietly take a four-server mirror down to one.
+- **The offer is reused**, with the price re-derived from the pointer's own TLV 4 rather than
+  trusted from the listing. Manage `create` is not idempotent, so re-minting on every save would
+  leave a trail of payable offers; and the fixture's five are invisible to Manage anyway
+  (findings §13.20), so reuse is the *only* edit path that works on the live demo.
+- **The slug goes read-only during an edit.** Changing it would publish a second item and orphan
+  the first.
+- **Two kinds of item refuse to load into the form**, and both refusals protect data rather than
+  restrict it: anything priced in fiat (`records` at 80 MXN would republish as 80 sats — there is
+  no conversion in this project and no oracle to do one with) and anything addressed outside this
+  sale's `d` prefix.
+
+`spike/check-admin.ts` drives all nine live items through the round trip and **fails on anything
+lost, reports anything gained**. That asymmetry is the point: NIP-01 replaces rather than
+versions, so a dropped tag is unrecoverable, while a gained one is usually a pre-slice-4 listing
+being brought up to date. All nine pass; the fixture's items gain an `imeta` tag they never had,
+and the two seeded sold-with-`status`-only items gain `stock 0`.
+
+### 4. "Mark sold" does not delete the offer, and that decision was owed before slice 7
+
+Spec §7.4(a) said delete it; findings §13.17 disqualified that (it destroys the buyer's stored
+refund pointer, and `GetUserOfferInvoices` is its only reader). The two untested candidates were
+`UpdateUserOffer` to an unpayable price, or a loopback `callback_url` at mint time.
+
+**Neither. Nothing is done to the offer at all.** Mark sold publishes the item at stock 0, and
+`ladder.ts` `atStock` already strips the `clink_offer` tag there — so the listing stops
+advertising a payable pointer and every storefront stops drawing a Buy button, while the offer row
+sits untouched on the node with its invoice history intact. It costs no node call, adds no failure
+mode to a path used at a table with a phone, and works on the fixture's items, which Manage cannot
+touch. `builder/src/publish.ts` enforces it at one choke point: at stock 0 the offer is dropped
+whatever the caller passed.
+
+The window is unchanged and stays honest: a buyer on a cached page can still pay. Closing that
+properly needs spec §7.4(b) — holding the CLINK service key ourselves — not a cleverer use of the
+offer row.
+
+### 5. The React question is closed, not deferred again
+
+Spec §9 said to revisit here because "the admin panel actually wants tables, dialogs and toasts."
+It wanted one list, two buttons per row and a textarea, and it reuses the item form for editing.
+
+Measured: **the whole panel cost +4.3 KB gzip** (53.0 → 57.3). React plus ReactDOM is ~45 KB gzip
+before a single component — ten times the feature it was supposed to help build, in an app that is
+itself fetched blob by blob from a cold gateway (rule 5). The line is deleted from spec §9 and
+`design.md` §5 rather than pushed to slice 9.
+
+### 6. Private notes
+
+Kind 30078, NIP-44 encrypted to the seller's own key, `d = "lamppost-shop"` — **not** `clink-*`,
+which CLINK Beacon reserves on this kind (`clink-beacon.md:195`), and not `Lightning.Pub`, which
+the running node still uses for its own beacon. No new machinery: the Signer already exposed
+`nip44Encrypt`/`nip44Decrypt` and `sign_event:30078` has been in `PERMS` since slice 4, so this
+costs no second bunker approval.
+
+One event for the whole shop rather than one per item: one signature saves whichever note changed,
+one query loads them all. Two tabs editing at once would last-write-win, which is a yard sale with
+one seller and one laptop.
+
+### Verified how
+
+```
+cd builder    && npm test                     # 32/32 (12 new)
+cd builder    && npm run build                # tsc clean; 156.8 KB raw / 57.3 KB gzip
+cd storefront && npm test                     # 30/30, unchanged
+cd spike      && npm test                     # 10/10, 35 assertions (2 new tests, 15 new assertions)
+cd spike      && node check-admin.ts          # ALL CHECKS PASSED against the 9 live items
+cd spike      && node sales-report.ts         # 3 settled invoices, 8,000 sats, 3/3 refundable
+cd spike      && node check-manage.ts         # 13/13, then --clean
+cd spike      && node check-buy.ts            # the money path, unchanged
+cd spike      && node watch-sales.ts --once   # the stale-ladder check passes on all 5
+cd spike      && node deploy-nsite.ts --dry   # unchanged
+```
+
+`check-admin.ts` is the one that matters, and it is the `check-buy.ts` pattern again: it imports
+`/builder/src/admin.ts` and `/builder/src/listing.ts` unmodified and drives them against the real
+published sale. If it and the builder ever disagree, it is wrong.
+
+**Still NOT proven: the browser half.** No NIP-07 extension and no bunker has driven any of this,
+same as slices 4 and 5. Every module typechecks, builds and is exercised headlessly, and all 44
+DOM selectors in `main.ts` resolve against `index.html` — but nobody has clicked Edit.
+`/docs/prompts/browser-verify-and-deploy.md` is still the brief for that, and it now covers one
+more surface than when it was written.
+
+---
+
 ## Traps that will cost an hour each
 
 - **A NIP-46 bunker cannot speak kind 21000.** Every native Lightning.Pub RPC — `AddUserOffer`,
@@ -552,6 +755,16 @@ the cache instead of a person finding it on demo day.
 - **The ladder is cut from one version of the listings.** Edit a price, a title or a photo and
   you must re-seed before running the watcher, or it republishes the old text over the new with
   a newer `created_at`. `mint-offers.ts` → `seed-listings.ts` → `watch-sales.ts`, in that order.
+- **A relay answers `OK` to a replaceable event it does not store.** This is how a stale ladder
+  fails: silently, successfully, and forever. Edit an item without giving the watcher the new
+  `.ladder.json` and it publishes rungs that are now older than the live listing, counts them as
+  published, and the item stays on sale after it sells. `ladder.ts` `isStale` catches it at
+  watcher startup; `check-admin.ts` section 4 reports it. Findings §13.26.
+- **An edit is `1 + units` signatures and a new ladder file, not one signature.** Restock is an
+  edit. Spec §7.5 said "one signature" until slice 6 and it was wrong by the width of the ladder.
+- **A browser behind a Signer cannot read settled sales, and never will.** CLINK has no
+  settlement resource and `GetUserOfferInvoices` rides kind 21000. If you find yourself designing
+  a sales screen in `/builder`, stop — that is `spike/sales-report.ts`. Findings §13.25.
 - **Availability is only as fresh as the watcher.** A page loaded while it is down shows stale
   stock. That is inherent to a serverless storefront, not a bug — say it out loud in the demo.
 - **`pool.subscribeMany(relays, filter, params)` takes a single filter OBJECT** in nostr-tools

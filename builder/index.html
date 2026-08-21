@@ -109,14 +109,50 @@
 
           <p class="cost" id="cost"></p>
           <button type="submit" id="publish" disabled>Publish this item</button>
+          <p class="hint" id="editing-note" hidden></p>
+          <button type="button" id="cancel-edit" hidden>Leave this item alone and start a new one</button>
         </form>
       </section>
 
       <p id="status" role="status" aria-live="polite" data-tone="busy"></p>
 
-      <!-- 4. the ladder --------------------------------------------------------------- -->
+      <!-- 4. the sale so far ---------------------------------------------------------- -->
+      <section id="admin">
+        <h2>4 · Your sale so far</h2>
+        <p class="hint">
+          Read straight off the public relays with no credential at all — the same events any
+          visitor sees, which is why this list can exist in a page that holds no key.
+        </p>
+        <div class="row">
+          <button type="button" id="refresh-items" disabled>Load my items</button>
+          <output id="items-state"></output>
+        </div>
+        <ul id="items"></ul>
+
+        <div id="notes-wrap" hidden>
+          <p class="cost" id="notes-cost"></p>
+          <button type="button" id="save-notes">Save my private notes</button>
+          <p class="hint">
+            Notes are encrypted to your own key and published as one event. Nobody else can read
+            them — not a relay, not us, not a buyer. Nothing of ours stores them either; they live
+            on the same relays as the sale, which is why they survive you closing this tab.
+          </p>
+        </div>
+
+        <p class="warn" id="sales-note">
+          What is not here is what each sale was <em>worth</em>. CLINK Manage’s only resource is
+          the offer — there is no invoice or settlement resource anywhere in CLINK — and the
+          node’s own call for it, <code>GetUserOfferInvoices</code>, rides a request kind a signer
+          holding your key on your phone cannot construct. So a browser that never touches your
+          key cannot read your sales, and that is the cost of the custody claim rather than a
+          missing feature. Run <code>node spike/sales-report.ts</code> on the machine with your
+          node for amounts, timestamps and refund pointers.
+        </p>
+      </section>
+
+      <!-- 5. the ladder --------------------------------------------------------------- -->
       <section id="result" hidden>
-        <h2>4 · Give the watcher its ladder</h2>
+        <h2>5 · Give the watcher its ladder</h2>
         <p id="result-text"></p>
         <p>
           Every future stock state of this item is now signed and waiting. Your watcher publishes
@@ -127,9 +163,9 @@
         <button type="button" id="download-ladder">Download .ladder.json</button>
         <p class="hint" id="ladder-note"></p>
       </section>
-      <!-- 5. deploy ------------------------------------------------------------------ -->
+      <!-- 6. deploy ------------------------------------------------------------------ -->
       <section>
-        <h2>5 · Publish the sale as a website</h2>
+        <h2>6 · Publish the sale as a website</h2>
         <p class="hint">
           Your storefront is a handful of static files. They go to Blossom servers as blobs, and
           a signed manifest on the relays says which blob is which path. That manifest is the

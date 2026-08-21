@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools/pure'
 import { parseListings } from '../storefront/src/listing.ts'
-import { atStock, targetStock, unitsOf } from './ladder.ts'
+import { atStock, isStale, nofferOf, targetStock, unitsOf } from './ladder.ts'
 
 const sk = generateSecretKey()
 const PK = getPublicKey(sk)
@@ -99,4 +99,47 @@ test('stock is units minus settled invoices, clamped at zero', () => {
   assert.equal(targetStock(3, 3), 0)
   assert.equal(targetStock(3, 9), 0, 'an oversell is slice 7 refund territory, not negative stock')
   assert.equal(targetStock(1, -5), 1, 'a node answering nonsense must not resurrect an item')
+})
+
+test('a ladder cut from a superseded listing is refused, because publishing it fails silently', () => {
+  // Slice 6's edit flow made this reachable. The rungs are newer than the listing they were cut
+  // from — that is what makes availability monotone — so an EDIT, which publishes a listing
+  // newer than all of them, inverts it. The relay then answers OK to a rung and stores nothing,
+  // and the item stays for sale after it sold, with a clean "3/4 relays" line in the log.
+  const rungs = [{ created_at: 1_700_000_001 }, { created_at: 1_700_000_002 }, { created_at: 1_700_000_003 }]
+
+  assert.equal(isStale(rungs, 1_700_000_000), false, 'the listing these were cut from')
+  assert.equal(isStale(rungs, 1_700_000_002), false, 'mid-sale: the live listing IS a rung')
+  assert.equal(isStale(rungs, 1_700_000_003), false, 'sold out: the live listing is the last rung')
+  assert.equal(isStale(rungs, 1_700_000_004), true, 'edited after the ladder was cut')
+
+  // A relay that answered with nothing is not evidence of a stale ladder. The remedy for a
+  // down relay is waiting; the remedy for a stale ladder is re-publishing. Confusing them
+  // stops a working sale.
+  assert.equal(isStale(rungs, undefined), false)
+  // A single-unit item has exactly one rung, and it is the common case at a yard sale.
+  assert.equal(isStale([{ created_at: 1_700_000_001 }], 1_700_000_002), true)
+})
+
+test('a one-of-a-kind item is watchable, which is the case inference used to lose', () => {
+  // The common case at a yard sale, and it was silently unwatched until 2026-08-21: an item with
+  // one unit has exactly ONE rung — the stock-0 one — and `atStock` strips `clink_offer` there by
+  // design. Inferring the offer from a rung therefore found nothing, the watcher skipped the item
+  // entirely, it sold, and the storefront kept its Buy button up. (/docs/known-defects.md)
+  const ON_FILE = 'noffer1writtenbywhoevercutthisladder'
+  const one = { noffer: ON_FILE, steps: [{ tags: atStock(tags('1'), 0) }] }
+  assert.equal(one.steps[0]!.tags.some(t => t[0] === 'clink_offer'), false, 'the sold rung advertises nothing')
+  assert.equal(nofferOf(one), ON_FILE)
+  assert.equal(nofferOf({ steps: one.steps }), undefined, 'and this is what it used to be: nothing')
+
+  // A ladder cut before the field existed still resolves, through the rung tag on a multi-unit
+  // item and through .offers.json otherwise. Additive, so no file has to be re-cut to be safe.
+  const three = [2, 1, 0].map(n => ({ tags: atStock(tags('3'), n) }))
+  assert.equal(nofferOf({ steps: three }), NOFFER, 'a multi-unit item was always fine')
+  assert.equal(nofferOf({ steps: one.steps }, 'noffer1fromoffersjson'), 'noffer1fromoffersjson')
+  assert.equal(nofferOf({ steps: [] }), undefined, 'nothing to watch is not the same as watching nothing')
+
+  // The file wins over the tag: an edit that re-priced the item re-minted the offer, and the
+  // freshly cut ladder is the one that knows which offer the new listing actually points at.
+  assert.equal(nofferOf({ noffer: ON_FILE, steps: three }), ON_FILE)
 })

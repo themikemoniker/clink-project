@@ -117,3 +117,15 @@ output { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
   border: 1px solid var(--rule);
 }
 #connect-qr svg { display: block; width: 100%; height: auto; }
+
+/* --- slice 6: the admin panel ------------------------------------------------------------- */
+#items { list-style: none; padding: 0; margin: 0.75rem 0 0; }
+#items li { border-top: 1px solid var(--rule); padding: 0.75rem 0; }
+#items li:first-child { border-top: 0; }
+.item-head { display: flex; gap: 0.6rem; align-items: baseline; justify-content: space-between; }
+.item-head strong { font-weight: 600; }
+.item-meta { font: 0.8rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); text-align: right; }
+#items .row { margin-top: 0.5rem; }
+#items button { padding: 0.3rem 0.7rem; font-size: 0.85rem; }
+#items textarea { margin-top: 0.5rem; font-size: 0.9rem; }
+#cancel-edit { width: 100%; margin-top: 0.5rem; }

@@ -15,8 +15,11 @@
 // design.md §5 still applies to the look: this is a tool, it should not cosplay as a newspaper,
 // and it should not look AI-generated either — warm paper neutrals, one accent, high contrast.
 import './style.css'
+import { SimplePool } from 'nostr-tools/pool'
 import { SALE } from '../../spike/fixture.ts'
-import { approvalCount, normaliseSlug, type Draft } from './listing.ts'
+import { draftFrom, loadItems, reusableOffer, soldCount, type Owned } from './admin.ts'
+import { loadNotes, saveNotes, MAX_NOTE, type Notes } from './notes.ts'
+import { approvalCount, listingD, normaliseSlug, type Draft } from './listing.ts'
 import { decodeNmanage, type ManagePointer } from './manage.ts'
 import { BLOSSOM, resize, upload } from './photos.ts'
 import { deploy, DEFAULT_GATEWAY, loadStorefront, storefrontPaths, type DeployStep } from './deploy.ts'
@@ -50,6 +53,18 @@ let servers: string[] = []
 // one laptop are two ladders. It holds signed public events and no key material (publish.ts
 // `downloadLadder`), which is what makes localStorage an acceptable place for it.
 let ladder: LadderFile = {}
+
+// Slice 6. The item currently loaded into the form for editing, if any — its `d` is what makes
+// this a replacement rather than a second item, and its `noffer` is what stops an edit minting a
+// second payable offer for something already on sale (admin.ts `reusableOffer`).
+let editing: { d: string; noffer?: string } | null = null
+// Photos uploaded THIS session, which is not the same as photos on the draft: an edit carries
+// blobs that are already on Blossom and re-uploads nothing. Only this number costs signatures.
+let uploads = 0
+let owned: Owned[] = []
+let notes: Notes = {}
+// One pool for the panel's reads and the note publish. publish() and deploy() open their own.
+const pool = new SimplePool()
 
 const NODE_KEY = 'lamppost.nmanage'
 const LADDER_KEY = 'lamppost.ladder.'
@@ -86,6 +101,8 @@ const showSigner = () => {
   $('#connect').hidden = !!signer
   $('#publish').toggleAttribute('disabled', !signer)
   $('#deploy').toggleAttribute('disabled', !signer)
+  $('#refresh-items').toggleAttribute('disabled', !signer)
+  $('#save-notes').toggleAttribute('disabled', !signer)
   if (signer) void signer.getPublicKey().then(pk => {
     $('#whoami').textContent = `${signer!.label} — ${pk.slice(0, 8)}…${pk.slice(-8)}`
   })
@@ -99,6 +116,7 @@ const useSigner = (s: Signer) => {
   void s.getPublicKey().then(pk => {
     ladderKey = LADDER_KEY + pk
     ladder = { ...loadLadder(), ...ladder }
+    void loadPanel()
   })
 }
 
@@ -163,27 +181,39 @@ const setNode = (raw: string, remember: boolean) => {
 }
 
 // --- the draft --------------------------------------------------------------------------------
-const readDraft = (): Draft => ({
-  slug: normaliseSlug($<HTMLInputElement>('#slug').value || $<HTMLInputElement>('#title').value),
-  title: $<HTMLInputElement>('#title').value.trim(),
-  summary: $<HTMLTextAreaElement>('#summary').value.trim(),
-  priceSats: Number($<HTMLInputElement>('#price').value),
-  stock: Number($<HTMLInputElement>('#stock').value),
-  alt: $<HTMLInputElement>('#alt').value.trim(),
-  blobs: photos,
-  servers,
-})
+const readDraft = (): Draft => {
+  const draft: Draft = {
+    slug: normaliseSlug($<HTMLInputElement>('#slug').value || $<HTMLInputElement>('#title').value),
+    title: $<HTMLInputElement>('#title').value.trim(),
+    summary: $<HTMLTextAreaElement>('#summary').value.trim(),
+    priceSats: Number($<HTMLInputElement>('#price').value),
+    stock: Number($<HTMLInputElement>('#stock').value),
+    alt: $<HTMLInputElement>('#alt').value.trim(),
+    blobs: photos,
+    servers,
+  }
+  // An edit keeps the offer the item already advertises — but only while the price still agrees
+  // with the pointer's own TLV 4. Change the price and this returns nothing, publish.ts mints a
+  // fresh offer, and the old one is left alone on the node rather than deleted (findings §13.17).
+  draft.noffer = reusableOffer(editing?.noffer, draft.priceSats)
+  return draft
+}
 
 // The signature count, shown BEFORE the seller starts. /docs/spec.md §5 is a UX-critical budget
 // and slice 4 adds a term to it: an item is 1 + units, not 1. A UI that implies one item is one
 // approval is how a seller abandons a publish halfway through, leaving a listing with no ladder.
 const refreshCost = () => {
   const draft = readDraft()
-  const n = approvalCount(draft, !!node && draft.stock > 0)
+  // An edit that reuses its offer mints nothing, and one that keeps its photos uploads nothing.
+  // Both terms have to come out of the count or the number shown is a lie in the safe direction,
+  // which is still a lie: a seller who is told thirty and sees four stops trusting the number.
+  const mint = !!node && draft.stock > 0 && !draft.noffer
+  const n = approvalCount(draft, mint, uploads)
   const units = Math.max(0, draft.stock)
   const parts = [
-    `${draft.blobs.length} photo upload${draft.blobs.length === 1 ? '' : 's'}`,
-    ...(node && draft.stock > 0 ? ['1 offer'] : []),
+    ...(uploads ? [`${uploads} photo upload${uploads === 1 ? '' : 's'}`] : []),
+    ...(mint ? ['1 offer'] : []),
+    ...(draft.noffer ? ['0 offers — this item already has one, at this price'] : []),
     '1 listing',
     `${units} availability step${units === 1 ? '' : 's'}`,
   ]
@@ -200,9 +230,15 @@ const refreshCost = () => {
 const resetItem = () => {
   photos = []
   servers = []
+  uploads = 0
+  editing = null
   for (const id of ['#slug', '#title', '#summary', '#alt', '#photo']) {
     $<HTMLInputElement | HTMLTextAreaElement>(id).value = ''
   }
+  $<HTMLInputElement>('#slug').toggleAttribute('readonly', false)
+  $('#publish').textContent = 'Publish this item'
+  $('#editing-note').hidden = true
+  $('#cancel-edit').hidden = true
   $('#photo-state').textContent =
     'Resized in your browser to 1200, 480 and 160px. The original is never uploaded.'
   refreshCost()
@@ -230,6 +266,7 @@ const doPublish = async (event: SubmitEvent) => {
 
   $('#publish').toggleAttribute('disabled', true)
   try {
+    const wasEdit = editing?.d === listingD(draft.slug)
     const result = await publish(signer, node, draft, onStep)
     ladder = { ...ladder, [result.d]: result.ladder[result.d]! }
     saveLadder()
@@ -239,11 +276,172 @@ const doPublish = async (event: SubmitEvent) => {
       `${draft.title} is live on ${result.relaysOk}/${RELAYS.length} relays as ${result.d}` +
       (result.noffer ? ', with a Buy button.' : ', cash at the table.')
     $('#ladder-note').textContent =
-      `${Object.keys(ladder).length} item(s) in this ladder. Save it as .ladder.json next to watch-sales.ts, then restart the watcher.`
+      `${Object.keys(ladder).length} item(s) in this ladder. Save it as .ladder.json next to watch-sales.ts, then restart the watcher.` +
+      (wasEdit
+        ? ' You just edited an item, so this is not optional: the rungs your watcher is holding were cut from the OLD listing and are now older than what is on the relays, which means it would publish them and the relay would ignore it. It would keep reporting success while the item stayed on sale after it sold. Restarting the watcher on this file is what closes that.'
+        : '')
+    void loadPanel(false)
   } catch (err) {
     say(err instanceof Error ? err.message : String(err), 'bad')
   } finally {
     $('#publish').toggleAttribute('disabled', !signer)
+  }
+}
+
+// --- the admin panel (slice 6) ---------------------------------------------------------------
+// Everything here is either a public relay read or an event encrypted to the seller's own key.
+// There is no node call in this file and there cannot be one: see the header of ./admin.ts for
+// why a browser behind a Signer cannot read settled sales at all, and /spike/sales-report.ts for
+// where that reading actually happens.
+//
+// Item titles and summaries come off a relay, which /CLAUDE.md says to treat as hostile. Every
+// row below is built with createElement and textContent — never innerHTML — so a title
+// containing markup is a title containing markup.
+const metaLine = ({ item }: Owned): string => {
+  const units = ladder[item.d]?.units
+  const sold = soldCount(units, item)
+  return [
+    item.price ? `${item.price.amount.toLocaleString('en-US')} ${item.price.currency}` : 'no price',
+    item.sold ? 'sold' : `${item.stock ?? 1} left`,
+    sold === undefined ? '' : `${sold}/${units} gone`,
+    item.offer ? 'Buy button' : 'cash only',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+const renderItems = () => {
+  const list = $('#items')
+  list.textContent = ''
+  for (const own of owned) {
+    const { item } = own
+    const li = document.createElement('li')
+
+    const head = document.createElement('div')
+    head.className = 'item-head'
+    const title = document.createElement('strong')
+    title.textContent = item.title
+    const meta = document.createElement('span')
+    meta.className = 'item-meta'
+    meta.textContent = metaLine(own)
+    head.append(title, meta)
+
+    const row = document.createElement('div')
+    row.className = 'row'
+    const editable = draftFrom(item, own.event)
+    if (editable) {
+      const edit = document.createElement('button')
+      edit.type = 'button'
+      edit.textContent = 'Edit'
+      edit.addEventListener('click', () => editItem(own, editable))
+      row.append(edit)
+      if (!item.sold) {
+        const sold = document.createElement('button')
+        sold.type = 'button'
+        sold.textContent = 'Mark sold'
+        sold.addEventListener('click', () => editItem(own, { ...editable, stock: 0 }, true))
+        row.append(sold)
+      }
+    } else {
+      // Both refusals are in admin.ts `draftFrom` and both are about not losing the seller's
+      // data: this form is sats-only and addresses this sale only.
+      const why = document.createElement('span')
+      why.className = 'hint'
+      why.textContent =
+        item.price && item.price.currency !== 'sats'
+          ? `Priced in ${item.price.currency}. This form only speaks sats, and republishing it here would re-price it.`
+          : 'Published outside this sale, so this form cannot address it without orphaning the original.'
+      row.append(why)
+    }
+
+    const label = document.createElement('label')
+    label.htmlFor = `note-${item.d}`
+    label.textContent = 'Private note'
+    const note = document.createElement('textarea')
+    note.id = `note-${item.d}`
+    note.rows = 2
+    note.maxLength = MAX_NOTE
+    note.value = notes[item.d] ?? ''
+    note.placeholder = 'What you paid for it. Who is coming to collect it. What to say if they haggle.'
+    note.addEventListener('input', () => {
+      notes[item.d] = note.value
+    })
+
+    li.append(head, row, label, note)
+    list.append(li)
+  }
+}
+
+const loadPanel = async (withNotes = true) => {
+  if (!signer) return
+  $('#refresh-items').toggleAttribute('disabled', true)
+  try {
+    $('#items-state').textContent = 'reading the relays…'
+    owned = await loadItems(pool, RELAYS, await signer.getPublicKey())
+    // The notes come second and only on a full load: re-reading them mid-session would throw
+    // away edits the seller has typed and not yet saved.
+    if (withNotes) notes = await loadNotes(signer, pool, RELAYS)
+    renderItems()
+    $('#items-state').textContent = `${owned.length} item(s) on ${RELAYS.length} relays`
+    $('#notes-wrap').hidden = owned.length === 0
+    $('#refresh-items').textContent = 'Reload my items'
+    $('#notes-cost').textContent =
+      '1 signature, however many notes you changed — they are one encrypted event, not one each.'
+  } catch (err) {
+    $('#items-state').textContent = ''
+    say(err instanceof Error ? err.message : String(err), 'bad')
+  } finally {
+    $('#refresh-items').toggleAttribute('disabled', !signer)
+  }
+}
+
+/**
+ * Load a published item back into the form.
+ *
+ * There is no edit event in nostr. NIP-01 replaces on (kind, pubkey, `d`), so an edit is a fresh
+ * publish under the same `d` — which is why the slug goes read-only here. Changing it would
+ * publish a SECOND item and leave the original on the relays with a ladder nothing re-cuts.
+ */
+const editItem = (own: Owned, draft: Draft, markingSold = false) => {
+  editing = { d: own.item.d, noffer: draft.noffer }
+  photos = draft.blobs
+  servers = draft.servers
+  uploads = 0 // already on Blossom; keeping them costs nothing
+  $<HTMLInputElement>('#slug').value = draft.slug
+  $<HTMLInputElement>('#title').value = draft.title
+  $<HTMLTextAreaElement>('#summary').value = draft.summary
+  $<HTMLInputElement>('#price').value = String(draft.priceSats)
+  $<HTMLInputElement>('#stock').value = String(draft.stock)
+  $<HTMLInputElement>('#alt').value = draft.alt
+  $<HTMLInputElement>('#photo').value = ''
+  $<HTMLInputElement>('#slug').toggleAttribute('readonly', true)
+  $('#photo-state').textContent = draft.blobs.length
+    ? `${draft.blobs.map(b => `${b.w}px`).join(', ')} already on Blossom. Leave the file field empty to keep them.`
+    : 'No photo on this item yet.'
+  $('#publish').textContent = markingSold ? `Mark “${draft.title}” sold` : `Publish changes to “${draft.title}”`
+  $('#editing-note').hidden = false
+  $('#editing-note').textContent = markingSold
+    ? 'Its Buy button disappears as soon as this publishes, because a sold listing carries no offer pointer. The offer itself stays on your node — deleting it would take the buyer’s stored refund pointer with it, and a payment that lands late still has to be refundable.'
+    : `Editing ${own.item.d}. It replaces the listing at the same address — nostr has no edit, only replacement — and re-cuts the availability ladder, so your watcher needs the new file afterwards.`
+  $('#cancel-edit').hidden = false
+  refreshCost()
+  $('#item').scrollIntoView({ behavior: 'smooth', block: 'start' })
+  say(markingSold ? 'Check it over, then publish.' : 'Loaded. Change what you need, then publish.', 'ok')
+}
+
+const doSaveNotes = async () => {
+  if (!signer) return
+  $('#save-notes').toggleAttribute('disabled', true)
+  try {
+    for (const [d, note] of Object.entries(notes)) if (!note.trim()) delete notes[d]
+    say('Encrypting to your own key…')
+    const ok = await saveNotes(signer, pool, notes, RELAYS)
+    if (ok === 0) throw new Error('No relay took your notes. Nothing was lost — press it again.')
+    say(`Notes saved on ${ok}/${RELAYS.length} relays. Only your key can read them.`, 'ok')
+  } catch (err) {
+    say(err instanceof Error ? err.message : String(err), 'bad')
+  } finally {
+    $('#save-notes').toggleAttribute('disabled', !signer)
   }
 }
 
@@ -261,6 +459,7 @@ const onPhoto = async (input: HTMLInputElement) => {
     if (blobs.length === 0) throw new Error('No Blossom server accepted the photo. The listing can still publish without one.')
     photos = blobs
     servers = uploaded.servers
+    uploads = blobs.length
     $('#photo-state').textContent = `${blobs.map(b => `${b.w}px`).join(', ')} on Blossom.`
     say(`Photo stored at ${blobs.length} size(s).`, 'ok')
     refreshCost()
@@ -339,6 +538,12 @@ for (const id of ['#price', '#stock', '#title']) $(id).addEventListener('input',
 $('#title').addEventListener('blur', () => {
   const slug = $<HTMLInputElement>('#slug')
   if (!slug.value) slug.value = normaliseSlug($<HTMLInputElement>('#title').value)
+})
+$('#refresh-items').addEventListener('click', () => void loadPanel())
+$('#save-notes').addEventListener('click', () => void doSaveNotes())
+$('#cancel-edit').addEventListener('click', () => {
+  resetItem()
+  say('Back to a new item. Nothing was changed.', 'ok')
 })
 $('#download-ladder').addEventListener('click', () => downloadLadder(ladderFile(loadLadder(), ladder)))
 $('#deploy').addEventListener('click', () => void doDeploy())

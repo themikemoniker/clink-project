@@ -6,7 +6,7 @@ Two surfaces, opposite constraints. Do not share a design system between them.
 |---|---|---|
 | Audience | Seller, motivated, loaded once | Buyer, in a driveway, on mobile data |
 | Priority | Speed of building UI | Weight, legibility, print |
-| Stack | React + Tailwind + shadcn/ui | Hand-written CSS, no component library |
+| Stack | ~~React + Tailwind + shadcn/ui~~ Vite + TypeScript, hand-written CSS (see §5) | Hand-written CSS, no component library |
 | Budget | Whatever it takes | ~30KB JS **gzip**, ~10KB CSS (settled slice 2 — spec §9) |
 
 ---
@@ -100,15 +100,31 @@ Item QRs therefore encode the **storefront deep link** (`#/item/<d-tag>`) until 
 
 ---
 
-## 5. Builder + admin: shadcn/ui
+## 5. Builder + admin: no component library
 
-Forms, dialogs, tables, toasts, upload progress. Radix gives accessible focus management and keyboard behaviour for free — do not hand-roll these under time pressure.
+~~shadcn/ui. Forms, dialogs, tables, toasts, upload progress. Radix gives accessible focus
+management and keyboard behaviour for free — do not hand-roll these under time pressure.~~
+
+**Reversed in slice 4 and closed in slice 6, measured both times.** Native `<form>`, `<label>`,
+`<input>`, `<output>` and `<dialog>` already give the focus order, labelling and keyboard
+behaviour Radix was wanted for; hand-rolling was never the alternative on offer.
+
+Slice 6 is where this line said to revisit, because the admin panel was supposed to want tables,
+dialogs and toasts. It wanted one list, two buttons per row and a textarea — and it reuses the
+item form as its edit form, because in nostr an edit *is* a re-publish under the same `d` and
+there is no second form to build. The whole panel cost **+4.3 KB gzip**; React and ReactDOM are
+~45 KB gzip before a single component. In an app that is itself fetched blob by blob from a cold
+gateway (rule 5), that is ten times the feature it would have helped build. Spec §9 agrees and
+is no longer deferring the question.
 
 Keep it plain. The admin is a tool; it should not cosplay as a newspaper. The one place the two surfaces meet is the live preview of the storefront, which renders the real template.
 
 ### Avoid looking AI-generated
 
 Default Tailwind palette, Inter, purple-to-blue gradients, dark mode with glass cards — judges will have seen this forty times that weekend. Warm paper-ish neutrals, one accent, high contrast.
+
+Shipped as such: `builder/src/style.css`, ~100 lines, one rust accent (`--accent: #8c3a10`, the
+same one the storefront uses for prices), no dark mode.
 
 ---
 

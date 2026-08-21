@@ -42,7 +42,7 @@ import { hexToBytes } from '@noble/hashes/utils.js'
 import { decodeNoffer } from '../storefront/src/offer.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import { SALE_RELAYS } from './fixture.ts'
-import { targetStock } from './ladder.ts'
+import { isStale, nofferOf, targetStock } from './ladder.ts'
 import { arg, connectPub } from './pub-rpc.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -67,21 +67,15 @@ const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const SELLER = getPublicKey(sk)
 
 type Minted = { noffer: string; price_sats: number }
-type Rung = { units: number; steps: Event[] }
+type Rung = { units: number; noffer?: string; steps: Event[] }
 const minted: Record<string, Minted> = JSON.parse(readFileSync(OFFERS_FILE, 'utf8'))
 const ladder: Record<string, Rung> = JSON.parse(readFileSync(LADDER_FILE, 'utf8'))
 
-// The offer id is read out of the noffer the *published listing* points at, not out of a
-// separate config, so the thing we watch is by construction the thing a buyer would pay. The
-// rungs carry the item's own `clink_offer` tag — ladder.ts `atStock` strips it only at stock 0
-// — so an item authored in /builder is watchable from the ladder file alone. .offers.json is
-// the fallback and nothing more: only mint-offers.ts writes it, and only for the fixture's
-// items, so reading it first made every builder-published item invisible here.
-const nofferOf = (d: string, rung: Rung): string | undefined =>
-  rung.steps.flatMap(step => step.tags).find(t => t[0] === 'clink_offer')?.[1] ?? minted[d]?.noffer
-
-const watching = Object.entries(ladder).flatMap(([d, rung]) => {
-  const noffer = nofferOf(d, rung)
+// The offer id comes out of the ladder file itself, not a separate config, so the thing we watch
+// is by construction the thing a buyer would pay. Three sources in descending authority, and the
+// reasoning — including which one used to lose every one-of-a-kind item — is in ./ladder.ts.
+let watching = Object.entries(ladder).flatMap(([d, rung]) => {
+  const noffer = nofferOf(rung, minted[d]?.noffer)
   const offer = noffer && decodeNoffer(noffer)
   if (!offer) {
     console.log(`# ${d}: no decodable offer in its ladder or ${OFFERS_FILE} — not watching`)
@@ -114,9 +108,41 @@ const { appPub, relays: nodeRelays, rpc, close } = connectPub(
 )
 console.log(`# node ${appPub.slice(0, 12)}… on ${nodeRelays.join(', ')}`)
 console.log(`# publishing listing updates to ${RELAYS.join(', ')}`)
-console.log(`# watching ${watching.length} item(s): ${watching.map(w => `${w.d}(${w.rung.units})`).join(' ')}\n`)
 
 const pool = new SimplePool()
+
+// IS THIS LADDER STILL THE LADDER FOR THESE LISTINGS? Slice 6 made this question real, and the
+// failure it prevents is silent, which is the worst kind on the money path.
+//
+// The rungs are pre-signed with `created_at` increasing as stock falls (./ladder.ts), so they
+// are newer than the listing they were cut from and NIP-01 keeps them when they are published.
+// Edit the item and the new listing is newer than every rung of the OLD ladder. Publishing one
+// then does nothing at the relay — and does it *successfully*: a relay that already holds a
+// newer replaceable event still answers OK, so `publish()` counts it, this process logs
+// "3/4 relays", and the item stays advertised as available for the rest of the sale. That is an
+// oversell with a clean log next to it, and slice 7 does not exist yet to refund it.
+//
+// So: read what is actually on the relays and refuse, loudly, to watch an item whose ladder has
+// been superseded. Equal timestamps are fine — that is a sold-out item whose last rung IS the
+// live listing. Only items with a live listing are judged; relays that answered with nothing
+// leave everything alone, because "the relay is down" must not read as "your ladder is stale".
+const live = new Map(
+  parseListings(await pool.querySync(RELAYS, { kinds: [30402], authors: [SELLER] }), SELLER).map(
+    item => [item.d, item.created_at],
+  ),
+)
+const stale = watching.filter(({ d, rung }) => isStale(rung.steps, live.get(d)))
+for (const { d } of stale) {
+  console.log(
+    `# ${d}: STALE LADDER — the listing on the relays is newer than every rung here, so this ` +
+      `item was edited after its ladder was cut. Publishing a rung would be a silent no-op and ` +
+      `the item would stay on sale after it sold. Download .ladder.json from the builder again ` +
+      `and restart. NOT WATCHING.`,
+  )
+}
+watching = watching.filter(w => !stale.includes(w))
+if (watching.length === 0) throw new Error('nothing left to watch — every ladder is stale or unminted')
+console.log(`# watching ${watching.length} item(s): ${watching.map(w => `${w.d}(${w.rung.units})`).join(' ')}\n`)
 
 // A settled invoice is one the node says was paid. Everything here is bounded and re-checked
 // rather than destructured off a trusted response: this is the number that decides whether an

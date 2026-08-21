@@ -29,10 +29,18 @@ export type Published = {
   relaysOk: number
 }
 
-// EXACTLY the shape /spike/watch-sales.ts already reads: { [d]: { units, steps[] } }, steps[i]
+// EXACTLY the shape /spike/watch-sales.ts reads: { [d]: { units, noffer?, steps[] } }, steps[i]
 // being the listing after i+1 units have sold. Matching it is the whole delivery mechanism —
 // the seller drops this file next to the watcher and nothing on the watcher side changes.
-export type LadderFile = Record<string, { units: number; steps: Event[] }>
+//
+// `noffer` is slice 6's one field addition and it closes an oversell in the COMMON case. The
+// watcher used to infer the offer from a rung's `clink_offer` tag, which works for a multi-unit
+// item and cannot work for a one-of-a-kind one: that item has exactly one rung, the stock-0 one,
+// and ladder.ts `atStock` strips `clink_offer` there by design. The watcher then skipped the item
+// entirely, it sold, and the storefront kept advertising it. Most yard-sale items are
+// one-of-a-kind, so that was the common case rather than the edge one. Additive: a file written
+// before this still resolves through the rung tag (ladder.ts `nofferOf`).
+export type LadderFile = Record<string, { units: number; noffer?: string; steps: Event[] }>
 
 /**
  * Publish one item.
@@ -54,8 +62,22 @@ export const publish = async (
   // Only for an item that can actually be bought. An item at stock 0 is published sold and
   // gets no offer at all — /docs/spec.md §7.4(a): a sold item's offer should not exist. An
   // item with no node configured is cash at the table, which is most of a yard sale.
-  let noffer: string | undefined
-  if (node && draft.stock > 0) {
+  //
+  // Slice 6: an EDIT arrives carrying the offer the item already advertises, and reuses it.
+  // Manage `create` is explicitly not idempotent (clink-manage.md:226), so re-minting on every
+  // save would leave a trail of payable offers the watcher does not watch; and the fixture's
+  // five offers were minted natively and cannot be re-created here at all (findings §13.20).
+  // `admin.ts` reusableOffer() only hands one over when the pointer's own TLV 4 still agrees
+  // with the price being published, so a price change falls through to a fresh mint.
+  //
+  // At stock 0 the offer is dropped whatever the caller passed. That is "mark sold", and it is
+  // the same thing ladder.ts `atStock` does at the bottom rung: the listing stops advertising a
+  // payable pointer, and the offer itself is left alone on the node — DELETING it would destroy
+  // the buyer's stored refund pointer, which `GetUserOfferInvoices` is the only reader of
+  // (findings §13.17). Enforced here rather than at the call site so there is no version of
+  // this that forgets.
+  let noffer: string | undefined = draft.stock > 0 ? draft.noffer : undefined
+  if (!noffer && node && draft.stock > 0) {
     onStep({ kind: 'offer', text: 'Minting the offer on your node over CLINK Manage…' })
     const result = await createOffer(signer, node, d, draft.priceSats)
     if (!result.ok) {
@@ -141,7 +163,7 @@ export const publish = async (
     noffer,
     listing,
     relaysOk,
-    ladder: { [d]: { units: unitsOf(String(draft.stock)), steps } },
+    ladder: { [d]: { units: unitsOf(String(draft.stock)), noffer, steps } },
   }
 }
 

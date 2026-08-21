@@ -149,7 +149,7 @@ a separate axis, and the shared-Pub design hands us the second without ever touc
 That is why it needed its own rule.
 
 **What the single Pub instance in this repo is.** It is the *seller's* node, and the seller is us:
-the throwaway identity in `/spike/.dev-key` owns the account, and the ~6,000 sats sitting in it are
+the throwaway identity in `/spike/.dev-key` owns the account, and the 8,000 sats sitting in it are
 our own. That is model 1 and it stays model 1. It becomes model 2 the moment a second person's sats
 live in it — not when we add a feature, but when someone else's balance appears in that table.
 Anyone we knowingly hand the guest `app.nprofile` to is someone we have agreed to hold money for;
@@ -592,14 +592,65 @@ Two reachable implementations:
 
   **Measured while building slice 3, and it is disqualifying as written** (`/docs/spike-findings.md` §13.17). `DeleteUserOffer` drops only the `UserOffer` row (`offerStorage.ts:27-29`); the settled invoices survive. But `GetUserOfferInvoices` looks the offer up first and throws `"Offer not found"` when it is gone (`offerManager.ts:89-93`), and that RPC is the **only** way the stored `payer_data` leaves the node — the sole other reader is the offer's own settlement `callback_url` (`paymentSideEffects.ts:27`), which our offers leave empty. So deleting a depleted offer permanently destroys the buyer's refund pointer for every invoice under it, and blinds the watcher to the item. An oversell *is* a payment that settles after depletion, so this would break slice 7 in exactly the case slice 7 exists for.
 
-  Two candidates that keep the invoice history, neither tested: `UpdateUserOffer` the price outside the payable range instead of deleting the row, or set a loopback `callback_url` at mint time so the pointer is delivered at settlement and never has to be read back. **Decide before slice 7.**
+  Two candidates that keep the invoice history, neither tested: `UpdateUserOffer` the price outside the payable range instead of deleting the row, or set a loopback `callback_url` at mint time so the pointer is delivered at settlement and never has to be read back. ~~**Decide before slice 7.**~~
+
+  **DECIDED IN SLICE 6, and the answer is neither of those: nothing is done to the offer at all.**
+  "Mark sold" publishes the item at stock 0, and `ladder.ts` `atStock` already strips the
+  `clink_offer` tag at that rung — so the listing stops advertising a payable pointer and every
+  storefront stops drawing a Buy button. The offer row itself is left untouched on the node.
+
+  What that buys, in order of importance:
+  - **The refund pointer survives.** `GetUserOfferInvoices` still resolves the offer, so slice 7
+    can still read the `payer_data` of a payment that lands late. That is the whole case slice 7
+    exists for.
+  - **It costs no node call.** No Manage `update`, no `delete`, no new failure mode on a path the
+    seller is using at a table with a phone. `builder/src/publish.ts` enforces it at one choke
+    point: at stock 0 the offer is dropped whatever the caller passed.
+  - **It works on the fixture's items**, whose offers Manage cannot touch at all (findings §13.20).
+    An implementation that required a Manage `update` would have been unusable on the live demo.
+
+  What it does not buy: the window stays open. A buyer holding a cached page can still reach the
+  offer and pay it. That is the §7.3 oversell, it is unchanged, and the honest line on stage is
+  that closing it properly needs (b) below — holding the CLINK service key ourselves — not a
+  cleverer use of the offer row.
 - **(b) Hold the CLINK service key ourselves.** The shop daemon becomes the pubkey in the `noffer`'s TLV `0`, evaluates inventory, and only then asks the Pub for an invoice. True strict mode with no race — at the cost of making the daemon a required always-on component and moving the service identity off the Pub.
 
 v1 was going to ship (a) and now ships neither. The oversell window in slice 3 is what the storefront closes on its own — a sold item draws no Buy button — plus the watcher shouting `OVERSOLD` at the seller when a second settlement lands. "Strict" was always going to mean "best-effort with a much smaller window," not "atomic"; today it means best-effort. Do not oversell it on stage.
 
 ### 7.5 Restock / edit
 
-Seller changes quantity or price in the admin panel → app republishes the 30402 with the same `d` tag → relays replace it → every storefront reflects it on next load. One signature.
+Seller changes quantity or price in the admin panel → app republishes the 30402 with the same `d` tag → relays replace it → every storefront reflects it on next load. ~~One signature.~~
+
+**Built in slice 6, and "one signature" was wrong by the width of the ladder.** There is no edit
+event in nostr — NIP-01 replaces on (kind, pubkey, `d`) and there is no update verb — so an edit
+is a fresh publish of the whole item. The real cost:
+
+- **`1 + units` signatures**, because the availability ladder is cut from one version of the
+  listing (§7.2) and an edited listing needs an edited ladder. Restock *is* an edit: changing the
+  quantity changes `units`, which changes how many rungs there are.
+- **Zero offer mints, unless the price changed.** The edit carries the item's existing
+  `clink_offer` forward, re-deriving the price from the pointer's own TLV 4 rather than trusting
+  the listing (`builder/src/admin.ts` `reusableOffer`). Two reasons, both load-bearing: Manage
+  `create` is explicitly not idempotent (`clink-manage.md:226`), so a seller fixing a typo three
+  times would otherwise leave three payable offers on their node; and the fixture's five offers
+  were minted natively and Manage cannot re-create them under the same identity anyway
+  (findings §13.20). A price change falls through to a fresh mint, and the superseded offer is
+  left alone rather than deleted — §7.4.
+- **A new `.ladder.json`, and a watcher restart.** Not optional, and the failure if it is skipped
+  is silent: the rungs the watcher is holding are now *older* than the listing on the relays, and
+  a relay answers OK to a replaceable event it does not store. The watcher would log `3/4 relays`
+  forever while the item stayed on sale after it sold. Findings §13.26. `spike/ladder.ts`
+  `isStale` catches it at watcher startup and refuses that item loudly; the builder's copy says
+  so at publish time.
+- **The slug is read-only during an edit.** Changing it would publish a *second* item and leave
+  the original on the relays with a ladder nothing re-cuts.
+
+Two kinds of item are deliberately not editable in the builder's form, because a round trip
+through it would lose data rather than change it: anything priced in fiat (this project has no
+conversion and no oracle — §6.1 — so an 80 MXN item would republish as 80 sats), and anything
+whose `d` falls outside this sale's prefix. `spike/check-admin.ts` drives the real published
+events through the round trip and fails on anything *lost*, which is the asymmetry that matters:
+gaining a tag is fine, losing one is unrecoverable.
 
 ### 7.6 Pickup
 
@@ -678,9 +729,15 @@ React, Tailwind or shadcn/ui.**
   `<input>`, `<output>` and `<dialog>` give the focus order, labelling and keyboard behaviour
   design.md §5 wanted Radix for, and ~200 dev packages for that is a poor trade in an app that
   must itself deploy as an nsite (rule 5) and is therefore fetched blob by blob from a gateway.
-- **Revisit at slice 6**, which is where the admin panel actually wants tables, dialogs and
-  toasts. If it does, that is a real reason and this line changes again; "the spec said React"
-  is not one.
+- ~~Revisit at slice 6, which is where the admin panel actually wants tables, dialogs and
+  toasts.~~ **Slice 6 revisited it and the answer is no. This line is closed, not deferred
+  again.** The admin panel wanted one list, two buttons per row and a textarea — it reuses the
+  item form as its edit form, because in nostr an edit *is* a re-publish under the same `d` and
+  there is no second form to build. It cost **+4.3 KB gzip in total** (53.0 → 57.3). React plus
+  ReactDOM is ~45 KB gzip before a single component, i.e. **ten times the feature it was
+  supposed to help build**, in an app that is itself fetched blob by blob from a cold gateway
+  (rule 5) and already carries a built storefront in `public/site`. There are no tables, and the
+  status line has been the toast since slice 4.
 - Measured at the end of slice 5: **148.3 KB raw / 52.9 KB gzip** cold (+2.1 KB gzip for the
   deploy module), plus a 4.2 KB gzip QR chunk now fetched on the bunker path *or* a deploy, and
   2.4 KB CSS. No budget applies here the way it does to the storefront — design.md §5 says
@@ -784,7 +841,8 @@ decode that replaced the build-time constant:
   (`clink-offers.md:29`), and has no TLV `5` handling at all. Hand-rolled it is —
   `storefront/src/offer.ts`, 126 lines, 14 assertions.
 
-  This says nothing about the builder, which is React and can afford the SDK. Note also that the
+  This says nothing about the builder, ~~which is React and~~ which can afford the SDK — the
+  builder is **not** React (corrected in slice 4, closed in slice 6 above). Note also that the
   SDK still passes an array to `subscribeMany` (`build/sender.js`) and is only safe because of
   the nested pin — see §13.9 in the findings.
 - A Blossom client library for uploads/mirroring
@@ -875,7 +933,8 @@ What it actually covers:
 
 What it deliberately does not do:
 
-- **Payment proven 2026-08-21.** 6,000 sats moved over Lightning into the seller's node and the
+- **Payment proven 2026-08-21.** 6,000 sats — 8,000 in total across three settled invoices by the
+  end of that day — moved over Lightning into the seller's node and the
   page's confirmation path fired, with no backend on either side. Two remaining honesty notes:
   `bike` (180k) and `couch` (210k) are priced above the node's inbound and will hand a buyer an
   invoice that cannot settle — a fixed-price offer is not range-checked
@@ -1052,7 +1111,59 @@ What it covers, and what it deliberately does not:
 headless version, which needs no browser and no phone:
 `node spike/deploy-nsite.ts --key .deploy-test-key` then `node spike/check-deploy.ts <npub>`.*
 
-**Slice 6 — Admin panel.** Edit, restock, mark sold, view settled sales, private notes via NIP-78.
+**Slice 6 — Admin panel. DONE 2026-08-21.** Edit, restock, mark sold, ~~view settled sales~~,
+private notes via NIP-78. Four of the five bullets shipped; the fifth was deleted rather than
+deferred, and the reason is the most interesting thing in the slice.
+
+Two new modules in `/builder` and two new scripts in `/spike`. **Zero new dependencies, in either
+package.**
+
+| file | what |
+|---|---|
+| `builder/src/admin.ts` | read the sale back off the relays, listing → draft, offer reuse, units sold |
+| `builder/src/notes.ts` | NIP-78 kind 30078, NIP-44 encrypted to self. One event for the shop |
+| `builder/src/admin.test.ts` | 12 tests, `node --test`, same style as the other four suites |
+| `spike/sales-report.ts` | settled sales, where the key already is — the deleted bullet's answer |
+| `spike/check-admin.ts` | drives the shipped admin module against the LIVE sale. No key, no node |
+
+**1. "View settled sales" has no CLINK path, and that deletes the bullet.** CLINK Manage's only
+resource is `offer` (`clink-manage.md:29`; `managementManager.ts:115-134` agrees) — there is no
+invoice or settlement resource anywhere in CLINK. Settled sales live behind
+`GetUserOfferInvoices`, which `nostrMiddleware.ts:52-80` routes only from a kind 21000 event, and
+kind 21000 is keyed on a raw ECDH secret NIP-46 does not expose (findings §13.18). **A browser
+holding no key cannot see the seller's sales.** Findings §13.25. So the panel shows `units −
+stock` off the relays, with no credential at all, and `spike/sales-report.ts` gives amounts,
+timestamps and refund-pointer presence on the machine where the key is. It is an architectural
+consequence of the custody claim in §3.1, and it is worth saying out loud rather than hiding.
+
+**2. An edit is a re-cut ladder, and the dangerous failure was the opposite of the predicted
+one.** See §7.5. The predicted failure — a stale rung republishing old text over new — needs the
+edit to land within `units` seconds of the original publish, a 1–3 second window. The reachable
+one is that a relay answers OK to a replaceable event it does not store, so a stale ladder fails
+*silently and successfully* and the item stays on sale after it sells. Findings §13.26. Fixed in
+`spike/ladder.ts` `isStale`, checked at watcher startup.
+
+**3. The fixture's five native offers stay native.** §14 has been holding this since slice 4. An
+edit reuses the `clink_offer` the listing already carries rather than minting, so Manage never
+needs to see them — which means the decision costs nothing and re-minting `mugs` mid-demo does
+not orphan the settled invoices slice 7's refund pointers live in (findings §13.17).
+
+### What slice 6 deliberately did not build
+
+- **No 30405 re-signing, and the deferral is closed rather than moved.** Slice 4 left reordering
+  to here. `orderBySale` renders collection members in order and strays after, so a
+  builder-authored item appears at the foot of the sale — which is publish order, which is
+  chronological, which is what a yard sale looks like. A drag-to-reorder UI for a nine-item sale
+  is a feature nobody asked for at the cost of one more signed event and a second list to keep
+  in sync with the first.
+- **No offer deletion, no offer `update`, no Manage `list`.** §7.4 explains the first two.
+  `list` had exactly one candidate use — deduping a mint by label, the fix `known-defects.md`
+  names for the idempotency gap — and that is money-path work this slice was told not to touch.
+- **No refund code**, though §7.4's decision makes it tempting. Slice 7 needs a node-enforced
+  frequency cap and a tested `BanDebit` kill switch first.
+- **No per-item note events.** One kind 30078 for the whole shop: one signature to save whichever
+  note changed, one query to load them all. Two tabs editing at once would last-write-win, which
+  is a yard sale with one seller and one laptop.
 
 **Slice 7 — Refunds.** Watcher auto-refunds oversold items using the buyer pointer our page put in `payer_data` (§7.3), paying via a kind `21002` debit from a **separate watcher key** whose grant carries a node-enforced frequency cap (§11 q10). Test the cap and the `BanDebit` kill switch against a funded node *before* the demo. *Demo: the money comes back.*
 
@@ -1072,7 +1183,7 @@ Full answers with citations live in `/docs/spike-findings.md`; field names live 
 | 1 | Node funded, channel with inbound liquidity | **CLOSED 2026-08-21.** Inbound *rented* from Olympus rather than funded — an empty Pub can never bootstrap itself. 6,000-sat test payment received. Keep the warning: an unfunded node still reports `max: 10000000`, and a fixed-price offer is not range-checked at all, so a successful invoice request is *not* proof it can receive |
 | 2 | Raw request/response captured | **CLOSED.** Request, decline, invoice and receipt all captured on the wire (findings §2, §5) |
 | 3 | Multiple offers per account? | **Yes, unlimited, per item.** `clink_offer` per listing; `item_ref` deleted (§6.1) |
-| 4 | Decline on custom logic? | **No pre-invoice hook.** Strict mode = delete the offer on depletion, or hold the service key ourselves (§7.4) |
+| 4 | Decline on custom logic? | **No pre-invoice hook,** and the answer under it moved twice. ~~Strict mode = delete the offer on depletion~~ — findings §13.17 disqualified that (deletion destroys the buyer's stored refund pointer) and **slice 6 decided the replacement: a sold item drops its `clink_offer` tag and the offer stays on the node, untouched.** Holding the service key ourselves is still the only true strict mode (§7.4) |
 | 5 | Settlement receipt on the wire? | **CLOSED, and worse than the source read suggested.** Kind `21001`, NIP-44 encrypted to the payer, `{"res":"ok"}`, **no preimage on a payment with `internal: 0`** — a real external settlement that a spec-following client would misread as internal (`clink-offers.md:333`). Not seller-readable. Rewrote §7.2 and §7.6 |
 | 6 | `payer_data` end-to-end? | **Node side now verified on the wire, not just in source** (findings §6): required key declared at mint, `code: 1` + `payer_data:["refund_pointer"]` when omitted, invoice when supplied. The key name is ours (§7.3). Wallet behaviour **OPEN — needs you**, and secondary: our page is the client |
 | 7 | nsite deploy + `/404.html` | **OPEN — needs you** (`nsyte` is a global install). NIP-5A itself read: `/404.html` confirmed required, plus the kind `10063` requirement in §6.4 |
@@ -1104,7 +1215,9 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 - No secrets in the repo. No `.env` with keys committed. Use NIP-46 bunker for any CI signing.
 - Treat every inbound event as hostile input: validate before parsing, bound sizes, verify signatures before acting.
 - Relays can withhold, delay, reorder, and replay — **confirmed, not theoretical**: `wss://relay.lightning.pub` replayed minutes-old kind `21001` events to a fresh subscriber before EOSE, and CLINK Offers defines no request-freshness rule and no single-use construct. Any retry path on the money side must be idempotent, **keyed on the settled invoice / payment hash, never the request event id**.
-- The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. Note the node's outbound is currently **6,000 sats**, all of it created by the one test sale — refunds cannot precede sales, so set the frequency cap against what has actually been sold rather than against a round number. **Let the node enforce both**: a CLINK Debit grant carries a frequency rule (`[number, unit, max]`) checked inside the payment transaction, and `BanDebit` revokes it in one tap. Our code should not be the only thing standing between a bug and the balance.
+- The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. Note the node's outbound is currently **8,000 sats**, all of it created by test sales — three
+  settled invoices, measured by `node spike/sales-report.ts` on 2026-08-21 and confirmed against
+  `lncli listchannels` — refunds cannot precede sales, so set the frequency cap against what has actually been sold rather than against a round number. **Let the node enforce both**: a CLINK Debit grant carries a frequency rule (`[number, unit, max]`) checked inside the payment transaction, and `BanDebit` revokes it in one tap. Our code should not be the only thing standing between a bug and the balance.
 - The watcher holds **no signing key at all** — it publishes kind 30402 events the seller pre-signed (§7.2). It does hold a node credential to read settlements, and that one is a **separate key** from the seller's identity and Pub account where possible: "User" scope on Lightning.Pub is not read-only, and the same credential that reads settlements can call `PayInvoice`. Slice 3's watcher currently reuses the fixture seller's throwaway `.dev-key`, because on this fixture the seller identity and the node account are one key; slice 7's refund path must not reuse it.
 - Never publish the account's default offer: its id is the account pointer, and an unauthorised debit/manage request against a known pointer pushes an approval prompt to the seller's wallet (§6.1).
 - The seller's node is the only thing holding funds, and it is theirs.
@@ -1143,8 +1256,14 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
   `blurhash` — see §6.1 and findings §13.21.
 - **Manage and the native RPC do not see the same offers** (findings §13.20), and the fixture's
   five were minted natively. Nothing is broken — they are tagged onto live listings and have been
-  paid against — but an edit flow going through Manage cannot touch them. Slice 6 decides: re-mint
-  them through Manage, or keep a native path for pre-slice-4 items.
+  paid against — but an edit flow going through Manage cannot touch them. ~~Slice 6 decides:
+  re-mint them through Manage, or keep a native path for pre-slice-4 items.~~ **Slice 6 decided:
+  neither.** An edit carries the item's existing `clink_offer` forward instead of minting
+  (§7.5), so Manage never has to see them and the question dissolves. Re-minting was the
+  expensive option and would have orphaned `mugs`' two settled invoices from its new offer,
+  which is where slice 7's refund pointers live (findings §13.17). A native path in the browser
+  was never available at all (findings §13.18). Only a **price change** mints, and then it is a
+  new offer for a new price, which is correct.
 - ~~Which second Blossom server?~~ **Answered in slice 5, and the answer was our own code.**
   BUD-11 11.md:50 requires the auth token be base64url; three of the four servers that will
   store an nsite's HTML reject base64url and accept standard base64. `builder/src/blossom.ts`

@@ -237,12 +237,16 @@ const listings = ITEMS.map(item =>
 // Every future state of every buyable item, signed here and now, so slice 3's watcher can
 // publish availability without ever holding a key. The reasoning is in ./ladder.ts; the two
 // properties that make it safe are below.
-const ladder: Record<string, { units: number; steps: ReturnType<typeof finalizeEvent>[] }> = {}
+const ladder: Record<string, { units: number; noffer?: string; steps: ReturnType<typeof finalizeEvent>[] }> = {}
 for (const item of ITEMS) {
   if (offerPriceSats(item) === undefined) continue // not buyable: nothing can sell, nothing to step
   const units = unitsOf(item.stock)
   ladder[listingD(item)] = {
     units,
+    // Carried on the file rather than inferred from a rung. A one-unit item's only rung is the
+    // stock-0 one and `atStock` strips `clink_offer` there, so inference silently loses exactly
+    // the items a yard sale is mostly made of. See ./ladder.ts `nofferOf`.
+    noffer: OFFERS[listingD(item)]?.noffer,
     // steps[i] is the listing after i+1 units have sold, so the last step is stock 0 / sold.
     //
     // created_at STRICTLY INCREASES as stock falls, and that is load-bearing rather than

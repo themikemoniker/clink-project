@@ -162,9 +162,15 @@ export const eventsToSign = (draft: Draft, pubkey: string, now: number): EventTe
   ]
 }
 
-/** How many signer approvals a publish will actually ask for. Shown before the seller starts. */
-export const approvalCount = (draft: Draft, mintOffer: boolean): number =>
-  draft.blobs.length + // one kind 24242 per blob — NEVER batch them (findings §9)
+/**
+ * How many signer approvals a publish will actually ask for. Shown before the seller starts.
+ *
+ * `uploads` defaults to every blob, which is right for a new item. An EDIT that keeps its photos
+ * uploads nothing — the blobs are already on Blossom and slice 6's `admin.ts` rebuilds their
+ * descriptors from the URLs — so it passes 0 and the count stops over-stating the cost by three.
+ */
+export const approvalCount = (draft: Draft, mintOffer: boolean, uploads = draft.blobs.length): number =>
+  uploads + // one kind 24242 per blob — NEVER batch them (findings §9)
   (mintOffer ? 1 : 0) + // the kind 21003 CLINK Manage create
   1 + // the listing
   unitsOf(String(draft.stock)) // the ladder

@@ -116,8 +116,19 @@ const asText = (value: unknown, fallback: string): string =>
  * prompts at the seller.
  *
  * `create` is explicitly NOT idempotent — "N identical requests create N offers"
- * (clink-manage.md:226). The caller is responsible for not minting twice for one item; the
- * builder does that by minting only on a first publish and reusing the tag on an edit.
+ * (clink-manage.md:226). The caller is responsible for not minting twice for one item, and as of
+ * slice 6 it is worth being exact about which half of that is true:
+ *
+ *   * **An EDIT does not mint.** `builder/src/admin.ts` `reusableOffer` carries the item's
+ *     existing `clink_offer` forward whenever the pointer's own TLV 4 still agrees with the price
+ *     being published, and `publish.ts` mints only when it comes back empty. So saving an item
+ *     ten times mints nothing, and a price change mints once.
+ *   * **A RETRY still mints.** `publish.ts` calls this before anything is signed, so a publish
+ *     that fails after this point — a declined signature, a bunker timeout, a relay refusal —
+ *     leaves an offer behind, and pressing Publish again mints a second one. Nothing tracks
+ *     whether a publish is a first attempt. That is a known, open defect against /CLAUDE.md's
+ *     "every retry on the money path must be idempotent": see /docs/known-defects.md, first row,
+ *     where the fix is a Manage `list` deduped on `label` before this call.
  */
 export const createOffer = async (
   signer: Signer,
