@@ -28,26 +28,32 @@
 // mint-offers.ts writes; run that first or the listings publish without a Buy button, which is
 // exactly the state slice 1 shipped in.
 //
-// Usage: node seed-listings.ts [--relays wss://a,wss://b] [--blossom https://x,https://y]
+// Usage: node seed-listings.ts [--key <file>] [--fixture <module>] [--relays wss://a,wss://b] [--blossom https://x,https://y]
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils'
-import { ITEMS, SALE, SALE_RELAYS, listingD, offerPriceSats } from './fixture.ts'
 import { atStock, unitsOf } from './ladder.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const KEY_FILE = join(HERE, '.dev-key')
-const OFFERS_FILE = join(HERE, '.offers.json')
-const LADDER_FILE = join(HERE, '.ladder.json')
-const PHOTO_DIR = join(HERE, 'seed-photos')
-
 const arg = (name: string, fallback: string) => {
   const i = process.argv.indexOf(`--${name}`)
   return i === -1 ? fallback : process.argv[i + 1]
 }
+// `--key`/`--fixture` seed a SECOND seller's sale from this same machinery — see mint-offers.ts's
+// note for why the two state files are derived from the key rather than flagged. `.ladder.json` is
+// the dangerous one: watch-sales.ts republishes whatever is in it, so a Mérida run that overwrote
+// the live sale's ladder would have the watcher republish another seller's listings under our key.
+const KEY = arg('key', '.dev-key')
+const KEY_FILE = join(HERE, KEY)
+const suffixed = (name: string) => join(HERE, KEY === '.dev-key' ? name : `${KEY}${name}`)
+const OFFERS_FILE = suffixed('.offers.json')
+const LADDER_FILE = suffixed('.ladder.json')
+const PHOTO_DIR = join(HERE, 'seed-photos')
+
+const { ITEMS, SALE, SALE_RELAYS, listingD, offerPriceSats } = await import(arg('fixture', './fixture.ts'))
 const RELAYS = arg('relays', SALE_RELAYS.join(',')).split(',')
 // `cdn.satellite.earth` was in this default until 2026-08-21 and never once accepted a blob: it
 // returns 401 for HTML (findings §7) and simply times out on images, so every seed paid

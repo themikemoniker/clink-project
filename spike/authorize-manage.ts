@@ -25,7 +25,7 @@
 // it survives slice 4 (see /docs/status.md). This script needs the raw key precisely because a
 // Signer cannot do this one call.
 //
-// Usage: node authorize-manage.ts [--nprofile <path|nprofile1…>] [--revoke]
+// Usage: node authorize-manage.ts [--key <file>] [--nprofile <path|nprofile1…>] [--revoke]
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -36,10 +36,17 @@ import { nmanageEncode } from '@shocknet/clink-sdk/build/nip19Extension.js'
 import { arg, connectPub } from './pub-rpc.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const KEY_FILE = join(HERE, '.dev-key')
-const OUT_FILE = join(HERE, '.nmanage')
+// `--key` onboards a SECOND seller onto this same Pub, and it is the whole of what that takes:
+// any pubkey that speaks to the guest pairing string has an account created for it on its first
+// authenticated call (`GetOrCreateNostrAppUser`, /docs/spike-findings.md §11), so the first RPC
+// below IS the signup. Read /docs/spec.md §3.1 before using it on anyone but us — a second
+// person's sats resting in our Pub is model 2, and model 2 means we are their custodian.
+// The default seller keeps writing plain `.nmanage`, so every path in /docs/status.md stays true.
+const KEY = arg('key', '.dev-key')
+const KEY_FILE = join(HERE, KEY)
+const OUT_FILE = join(HERE, KEY === '.dev-key' ? '.nmanage' : `${KEY}.nmanage`)
 
-if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — run seed-listings.ts first`)
+if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — pass --key <file>, or run seed-listings.ts first`)
 const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const pk = getPublicKey(sk)
 

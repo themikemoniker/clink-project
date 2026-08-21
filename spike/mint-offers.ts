@@ -20,14 +20,14 @@
 // approval, no wallet, and no human. Slice 4's builder should still speak Manage — it is the
 // portable path and the one worth demoing — and it should budget the one grant prompt.
 //
-// Usage: node mint-offers.ts [--nprofile <path|nprofile1...>] [--dry]
+// Usage: node mint-offers.ts [--key <file>] [--fixture <module>] [--nprofile <path|nprofile1...>] [--dry]
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getPublicKey, nip19 } from 'nostr-tools'
 import { hexToBytes } from '@noble/hashes/utils.js'
-import { ITEMS, listingD, offerPriceSats, REFUND_POINTER } from './fixture.ts'
+import { REFUND_POINTER } from './fixture.ts'
 import { arg, connectPub } from './pub-rpc.ts'
 
 // REFUND_POINTER moved to ./fixture.ts in slice 4 — the builder mints offers over CLINK Manage
@@ -36,12 +36,21 @@ import { arg, connectPub } from './pub-rpc.ts'
 export { REFUND_POINTER }
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const KEY_FILE = join(HERE, '.dev-key')
-const OUT_FILE = join(HERE, '.offers.json')
+// `--key`/`--fixture` are what make this script serve a SECOND seller on the same Pub — a fixture
+// is one seller's sale, and its offers are minted on the account that key owns. The state file is
+// derived from the key rather than flagged separately: `.offers.json` is read by the seeder AND by
+// watch-sales.ts, so one forgotten `--out` would silently point the live sale's watcher at another
+// seller's noffers. Deriving it makes that unrepresentable. Default seller: paths unchanged.
+const KEY = arg('key', '.dev-key')
+const KEY_FILE = join(HERE, KEY)
+const OUT_FILE = join(HERE, KEY === '.dev-key' ? '.offers.json' : `${KEY}.offers.json`)
+// REFUND_POINTER stays a STATIC import above: it is one string for every seller by design, and a
+// per-fixture copy of it is the exact drift fixture.ts's header exists to prevent.
+const { ITEMS, listingD, offerPriceSats } = await import(arg('fixture', './fixture.ts'))
 
 const DRY = process.argv.includes('--dry')
 
-if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — run seed-listings.ts first`)
+if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — pass --key <file>, or run seed-listings.ts first`)
 const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const pk = getPublicKey(sk)
 
@@ -107,7 +116,10 @@ for (const { item, sats } of wanted) {
 if (!DRY) {
   writeFileSync(OUT_FILE, JSON.stringify(offers, null, 2) + '\n')
   console.log(`\n# wrote ${Object.keys(offers).length} noffer(s) to ${OUT_FILE}`)
-  console.log('# now run: node seed-listings.ts   (republishes the 30402s carrying clink_offer)')
+  // Echo the flags back rather than the bare command: seeding the second seller's listings with
+  // the first seller's key is a sale published under the wrong npub, on four public relays.
+  const flags = KEY === '.dev-key' ? '' : ` --key ${KEY} --fixture ${arg('fixture', './fixture.ts')}`
+  console.log(`# now run: node seed-listings.ts${flags}   (republishes the 30402s carrying clink_offer)`)
 }
 close()
 process.exit(0)

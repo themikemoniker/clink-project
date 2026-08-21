@@ -21,8 +21,10 @@
 // So --pay now REQUIRES --pointer. An invoice that settles is a permanent row on the node
 // carrying whatever this file put in `payer_data`, and the node has no way to correct one later.
 //
-// Usage: node check-buy.ts [item-d-tag] [--pay] [--pointer <address-or-noffer>]
+// Usage: node check-buy.ts [item-d-tag] [--offers <file>] [--pay] [--pointer <address-or-noffer>]
 //   default item = the CHEAPEST offer, because the node's inbound is rented and small
+//   --offers picks WHICH SELLER to buy from — `.merida-key.offers.json` is the second seller's,
+//   whose noffers point at their own sub-account on the same Pub (findings §11)
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,7 +32,11 @@ import { decodeNoffer, invoiceSats, isPointer } from '../storefront/src/offer.ts
 import { requestInvoice } from '../storefront/src/buy.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const OFFERS_FILE = join(HERE, '.offers.json')
+const argOf = (name: string, fallback: string) => {
+  const i = process.argv.indexOf(`--${name}`)
+  return i === -1 ? fallback : (process.argv[i + 1] ?? fallback)
+}
+const OFFERS_FILE = join(HERE, argOf('offers', '.offers.json'))
 if (!existsSync(OFFERS_FILE)) throw new Error(`no ${OFFERS_FILE} — run mint-offers.ts first`)
 
 type Minted = { noffer: string; price_sats: number; payer_data: string[] }

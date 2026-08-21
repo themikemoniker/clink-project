@@ -11,6 +11,13 @@ dist/
 spike/.dev-key
 spike/seed-photos/
 
+# Every OTHER seller identity, and this one is a glob on purpose. Each new seller onboarded with
+# `node spike/authorize-manage.ts --key <file>` mints a fresh key on disk, and the named entries
+# further down this file only cover the ones that existed when they were written. A key that is
+# only ignored once somebody remembers to add a line is a key that gets committed.
+spike/.*-key
+spike/.*-key.*
+
 # Node credentials. admin.connect is nprofile:token = full node authority.
 admin.connect
 *.connect

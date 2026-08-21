@@ -72,11 +72,12 @@ now a deliberate boundary rather than an accident.
 | Slice-5 deploy test site | `https://npub1lfw6k46xe8theshxkw8sqwmja6u9svf90l09cyn3e02awvwmvxtqtmaeka.nsite.lol/` |
 | Seller pubkey (throwaway) | `fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0` |
 | Sale | kind 30405 `yardsale-2026-08`, 9 items on 4 public relays |
+| **Second seller** (2026-08-21) | `spike/.merida-key`, `npub1j7jwq…q900q`. kind 30405 `artesanias`, 8 items, 6 offers. nsite `https://npub1j7jwqfnwnkp3rk5lv9s7qlnfra609eepy42vmk80z5fq5nncxffq2q900q.nsite.lol/`, deployed 2026-08-21, **4 complete Blossom mirrors** (`blossom.band` refused the JS and HTML on content-type sniffing and fell out of the 10063 list; the photos it holds were uploaded before that). Proves findings §11: its offers live on its OWN custodial sub-account on the same Pub (`manage_id 2`, balance 0), auto-created by `GetOrCreateNostrAppUser` on its first RPC. Both keys are ours, so /docs/spec.md §3.1 says this is still model 1. `watch-sales.ts --key .merida-key` watches all 6 buyable items and republishes their stock; **no refund grant** — arm one with `authorize-refunds.ts` before `--refunds`, or an oversell here is logged and not paid |
 | Node | local Lightning.Pub 0.0.37 + LND, 1 private channel |
 | Node liquidity | **90,374 inbound / 8,000 outbound**, measured 2026-08-21 — drifts with every sale |
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** — `node spike/sales-report.ts` prints it now (`GetUserInfo`), so the number stops being a note here |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
-| Blossom | **four** servers, verified — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
+| Blossom | **four** servers, verified. `blossom.primal.net` answers a blob with a **302 to `r2a.primal.net/…/<hash>.txt`** — `fetch` follows it and `check-deploy.ts` passes, but a bare `curl` without `-L` returns 0 bytes and reads like a missing mirror. `blossom.band` now refuses the site's JS and HTML on content-type sniffing (it still holds the photos) and falls out of the kind 10063 list on its own — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
 | Storefront bundle | **32.01 KB gzip JS** + 2.12 CSS + 2.4 HTML cold, + 3.91 KB QR chunk on Buy. Budget raised to 33 in slice 9, with reasoning — spec §9 |
 | Builder bundle | **59.49 KB gzip cold** (+2.12 for slice 9), + a built storefront in `public/site` (~99 KB raw) |
 
@@ -84,7 +85,7 @@ Four items are buyable; the rest deliberately are not:
 
 | item | price | state |
 |---|---|---|
-| `mugs` | 1,000 sat | **`stock 1` of 3 — two units bought for real on 2026-08-21.** Re-verified 2026-08-21 after slice 6: the last unit is still there. The cheap demo item |
+| `mugs` | 1,000 sat | **SOLD OUT — 3/3, the last unit settled 2026-08-21T17:05Z.** It read `buyable` on the relays for an hour after that because no watcher was running; `watch-sales.ts --once` republished it. **There is no cheap item left on this sale** — the demo item is now the second seller's `jabon` at 800 sat |
 | `plants` | 6,000 sat | paid 2026-08-21, and **the watcher has marked it sold on the relays** |
 | `lamp` | 30,000 sat | buyable, `stock 3` — the expensive one, still untouched |
 | `bike` | 180,000 sat | has an offer, but priced **above inbound** — invoice issues, payment cannot settle |
@@ -115,8 +116,17 @@ node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
                                        # --pay REFUSES without --pointer as of slice 8: a settled
                                        # invoice stores that value forever and the node cannot fix it
 node mint-offers.ts [--dry]            # idempotent; reuses offers by label
+
+# the second seller (2026-08-21). --key picks the identity AND the Pub account; --fixture picks
+# the sale. State files derive from the key, so these CANNOT touch .offers.json/.ladder.json
+node authorize-manage.ts --key .merida-key                            # signup + Manage grant
+node mint-offers.ts   --key .merida-key --fixture ./merida-fixture.ts
+node seed-listings.ts --key .merida-key --fixture ./merida-fixture.ts # publishes to 4 relays
+node check-buy.ts artesanias-miel --offers .merida-key.offers.json    # their money path. Free
 node seed-listings.ts                  # republishes the 30402s AND cuts .ladder.json
 node watch-sales.ts [--once]           # slice 3: observe settlement, republish availability
+                                       # --key <file> picks the SELLER: offers, ladder, refund
+                                       # grant and journal all derive from it. One process each
 
 # slice 5: deploy
 node deploy-nsite.ts                   # storefront/dist -> 4 Blossom servers, 15128 + 10063
@@ -150,7 +160,7 @@ node authorize-manage.ts               # ONCE, at the desk. Grants Manage, write
 node authorize-manage.ts --revoke      # takes the grant back
 node check-manage.ts                   # mints a real offer over kind 21003. Exit 0 = it works
 node check-manage.ts --clean           # deletes the offers those runs leave behind
-node export-key-qr.ts --yes            # ONE-TIME: .dev-key -> nsec + QR, for the bunker import
+node export-key-qr.ts [--key <f>] --yes  # ONE-TIME: <key> -> nsec + QR, for the bunker import
 
 # node health
 export PATH="$HOME/lnd:$PATH"

@@ -20,7 +20,7 @@
 // clipboard manager) that keeps history. A QR on the screen is the shortest path between the
 // two devices that leaves nothing behind once the file is deleted.
 //
-// Usage: node export-key-qr.ts --yes
+// Usage: node export-key-qr.ts [--key <file>] --yes
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,15 +35,25 @@ const qrcode = (qrcodeModule as { toString?: unknown }).toString
   : ((qrcodeModule as { default: { toString(text: string, opts: object): Promise<string> } }).default)
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const KEY_FILE = join(HERE, '.dev-key')
-const NSEC_FILE = join(HERE, '.dev-key.nsec')
-const QR_FILE = join(HERE, '.dev-key.qr.svg')
+// `--key` because there is more than one seller now, and each one's identity has to reach a
+// bunker before the builder can sign as them. The outputs are named after the key rather than
+// fixed, so two exports cannot land on top of each other — these files are the private key in
+// plain text, and silently overwriting one with another seller's is how the wrong nsec gets
+// imported into the wrong bunker.
+const argOf = (name: string, fallback: string) => {
+  const i = process.argv.indexOf(`--${name}`)
+  return i === -1 ? fallback : (process.argv[i + 1] ?? fallback)
+}
+const KEY = argOf('key', '.dev-key')
+const KEY_FILE = join(HERE, KEY)
+const NSEC_FILE = join(HERE, `${KEY}.nsec`)
+const QR_FILE = join(HERE, `${KEY}.qr.svg`)
 
 if (!process.argv.includes('--yes')) {
   console.log(`This exports the private key in ${KEY_FILE} as an nsec and as a QR image.
 
-It is for one purpose: importing the fixture seller's identity into a NIP-46 bunker so the
-builder can sign as it without holding it. Re-run with --yes if that is what you are doing.`)
+It is for one purpose: importing a seller's identity into a NIP-46 bunker so the builder can
+sign as them without holding it. Re-run with --yes if that is what you are doing.`)
   process.exit(1)
 }
 

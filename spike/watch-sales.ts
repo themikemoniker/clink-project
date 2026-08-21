@@ -43,7 +43,7 @@
 // which owns nothing and can only ask the node to pay an invoice up to the grant's cap. The
 // watcher holding one key that both watches and spends would make the cap decorative.
 //
-// Usage: node watch-sales.ts [--nprofile <path|nprofile1…>] [--relays wss://a,wss://b] [--once]
+// Usage: node watch-sales.ts [--key <file>] [--nprofile <path|nprofile1…>] [--relays wss://a,wss://b] [--once]
 //                            [--refunds]
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -71,12 +71,20 @@ import {
 import { arg, connectPub } from './pub-rpc.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const KEY_FILE = join(HERE, '.dev-key')
-const OFFERS_FILE = join(HERE, '.offers.json')
-const LADDER_FILE = join(HERE, '.ladder.json')
-const REFUND_KEY_FILE = join(HERE, '.refund-key')
-const NDEBIT_FILE = join(HERE, '.ndebit')
-const JOURNAL_FILE = join(HERE, '.refunds.json')
+// One watcher process per seller, because every file below belongs to ONE Lightning.Pub account:
+// the ladder republishes that seller's listings, the journal records which of that seller's
+// oversells have been paid back, and the debit grant is issued against that seller's account
+// pointer. Sharing any of them across sellers is not a smaller deployment, it is a watcher
+// republishing one npub's stock under another's key, or a refund debited from the wrong account.
+// So ALL FIVE derive from `--key`; none of them is a separate flag that can be forgotten.
+const KEY = arg('key', '.dev-key')
+const suffixed = (name: string) => join(HERE, KEY === '.dev-key' ? name : `${KEY}${name}`)
+const KEY_FILE = join(HERE, KEY)
+const OFFERS_FILE = suffixed('.offers.json')
+const LADDER_FILE = suffixed('.ladder.json')
+const REFUND_KEY_FILE = suffixed('.refund-key')
+const NDEBIT_FILE = suffixed('.ndebit')
+const JOURNAL_FILE = suffixed('.refunds.json')
 
 // ponytail: fixed 5s poll. A yard sale settles a handful of invoices an hour and this is the
 // seller's own node's relay; if that ever stops being true, the upgrade is the live feed as a
@@ -97,7 +105,7 @@ const REFUNDS = process.argv.includes('--refunds')
 const RETRY_AFTER_S = 6 * 60
 const RELAYS = arg('relays', SALE_RELAYS.join(',')).split(',')
 
-if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — run seed-listings.ts first`)
+if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — pass --key <file>, or run seed-listings.ts first`)
 if (!existsSync(OFFERS_FILE)) throw new Error(`no ${OFFERS_FILE} — run mint-offers.ts first`)
 if (!existsSync(LADDER_FILE)) throw new Error(`no ${LADDER_FILE} — run seed-listings.ts first`)
 
