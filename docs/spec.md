@@ -13,7 +13,8 @@ machine observes settlement on their own node and republishes the kind 30402, an
 one-line description — see §7.2's "Who signs the republish" and `/spike/ladder.ts`. Slice 3
 corrected two things measured while building: `GetLiveUserOperations` cannot attribute a
 payment to an item (§7.2), and §7.4(a)'s "delete the offer on depletion" would destroy the
-buyer's refund pointer (§7.4). It also demoted spike question 8 from blocking to slice-4-only.
+buyer's refund pointer (§7.4). It also took spike question 8 off this slice entirely — q8 itself
+was answered from source the same day, in parallel (findings §8).
 
 **Status:** slice 2 shipped (2026-08-20), **and money has moved (2026-08-21)**. A static page
 mints an ephemeral key, sends a NIP-44-encrypted kind 21001 to the seller's own node over that
@@ -144,7 +145,9 @@ every future stock state of every buyable item, so a 10-item sale with a few mul
 costs a handful of extra signatures — but all of them at publish time, in the same sitting as
 the listings, where `perms` either helps or does not. What it removes is the alternative: a
 watcher that signed each stock update through a bunker would prompt the seller's phone **once
-per sale, during the sale**. That is why spike question 8 no longer gates slice 3.
+per sale, during the sale**, and would make the seller's phone a required participant in every
+sale. Spike question 8 turned out to be answerable — `perms` is honoured — but the ladder never
+had to wait for it.
 
 **The measured floor, now that spike question 8 is answered.** A 10-item publish with 2 photos
 an item costs **1 prompt** if `perms` is granted at connect, and **5** if it is ignored entirely —
@@ -367,7 +370,9 @@ What it buys:
 - A compromised watcher can publish only states the seller authorised. It cannot invent a price, retitle an item, or resurrect a sold one: each rung's `created_at` strictly increases as stock falls, so NIP-01's newest-per-address rule makes an out-of-order or replayed publish a no-op at the relay. Availability cannot run backwards by construction rather than by the watcher behaving.
 - **Signing happens at the desk, before the sale.** The alternative — a watcher signing each update through a NIP-46 bunker — would push an approval prompt to the seller's phone once per sale, during their own yard sale. `perms` would in fact cover it (§11 q8 is answered: both signers honour `sign_event:30402`), but a pre-granted signing permission living next to an always-on process is a worse posture than a watcher that holds no key at all. The ladder makes the question moot here rather than merely survivable.
 
-**The ceiling, stated plainly:** the ladder is cut from one version of the listing, so editing a price or a title mid-sale invalidates it — a stale rung would republish the old text over the new. Re-seed after any edit and the ladder is re-cut with it. If inventory ever becomes unbounded, or mid-sale edits become routine, this becomes a NIP-46-signing watcher and q8 becomes blocking again.
+**The ceiling, stated plainly:** the ladder is cut from one version of the listing, so editing a price or a title mid-sale invalidates it — a stale rung would republish the old text over the new. Re-seed after any edit and the ladder is re-cut with it. If inventory ever becomes unbounded, or mid-sale edits become routine, this becomes a NIP-46-signing watcher — buildable now that q8 is answered, and still a worse
+posture, because a standing `sign_event:30402` grant next to an always-on process is exactly
+what holding no key avoids.
 
 **Idempotency, and where the state lives.** The key is the settled invoice, never the request event id (§8). Slice 3 does not persist a seen-set at all: remaining stock is derived from the *count of distinct settled invoices the node reports for that item's offer*, so the node holds the state, a restart recomputes it, and a replayed kind 21001 request that never became a payment cannot move it.
 
@@ -675,8 +680,10 @@ the count of settled invoices, and publishes the matching pre-signed kind 30402.
 missing `clink_offer` tag: republishing a listing means signing as the seller, and the watcher
 must not hold the seller's key. §7.2's "Who signs the republish" is the answer — a pre-signed
 **availability ladder**, one signed event per reachable stock state, cut at seed time. The
-watcher holds no signing key. That also demoted spike question 8 (§11) from blocking to
-slice-4-only: a bunker-signing watcher would prompt the seller's phone once per sale.
+watcher holds no signing key. That also took spike question 8 (§11) off this slice: a
+bunker-signing watcher would have prompted the seller's phone once per sale. q8 closed from
+source the same day, in parallel — `perms` is honoured — which makes that watcher buildable but
+not preferable (§7.2).
 
 What it covers, and what it deliberately does not:
 
