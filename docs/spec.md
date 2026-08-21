@@ -529,7 +529,7 @@ Seller in builder app
   → authors items             → kind 30402 events, signed, published to relays
   → app generates static site → files hashed, uploaded to Blossom
   → app publishes manifest    → kind 15128, signed
-Buyer opens npub1xxx.<gateway> (or nsite:// in Titan)
+Buyer opens npub1xxx.<gateway>        (Titan's nsite:// does NOT reach us — see §14)
   → gateway resolves manifest → fetches blobs by hash → renders
 ```
 
@@ -1191,8 +1191,9 @@ None of it could run in a browser.
    the left-most DNS label… if the label is a valid npub, decode it and resolve the root site
    manifest" (`5A.md:156-158`) — so the gateway already had to decode our npub to serve us the
    bytes, and the page reads the same label back out of `location.hostname`. One build, any
-   seller. `?seller=npub1…` is the fallback for `npm run dev` and for Titan's `nsite://`, which
-   is **not in NIP-5A at all** and stays `UNVERIFIED`.
+   seller. `?seller=npub1…` is the fallback for `npm run dev`. It used to be described as the
+   fallback for Titan's `nsite://` too; that was answered on 2026-08-21 and the answer is that
+   Titan cannot address us at all — §14.
 
    This is a simplification, not extra work, and it is checked like a trust boundary because it
    is one: whoever controls the hostname controls whose signatures the page accepts. The bech32
@@ -1564,7 +1565,12 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 4. Refresh: item is sold.
 5. Show the seller's machine — no inbound ports open, no domain, no certificate, no processor account.
 6. Oversell deliberately. Show the automatic refund.
-7. Optional: open the same site in Titan over `nsite://` with no gateway at all.
+7. ~~Optional: open the same site in Titan over `nsite://` with no gateway at all.~~ **Cut
+   2026-08-21 — it does not work, see §14.** What replaces it, and it is a better answer to the
+   same question a judge is asking: serve `storefront/dist` from the demo machine and run
+   `node spike/check-deploy.ts <npub>` beside it. The page renders from local bytes while the
+   command proves those exact hashes are live on four independent Blossom servers. The gateway
+   is a cache, and a cache is not the architecture.
 
 **Say this before a judge says it.** There is no BOLT12 in this stack and there is no plain-QR
 payment path — the fallback for a neighbour with an ordinary wallet is *the page*, not a second
@@ -1585,9 +1591,27 @@ exchange for every payment being refundable.
   means per-unit `d` tags and the decision belongs before slice 4's authoring UI.
 - **Does any marketplace client actually render a kind 30405 collection's `summary`?** We put the
   sale's date and hours there because no tag exists for them. `UNVERIFIED`.
-- **What is `location.hostname` inside Titan's `nsite://` scheme?** `UNVERIFIED` — `nsite://`
-  appears nowhere in NIP-5A. Slice 5's `sellerFromLocation` reads the left-most label and falls
-  back to `?seller=`, which covers it either way, but nobody has run the page in Titan.
+- ~~**What is `location.hostname` inside Titan's `nsite://` scheme?**~~ **Answered 2026-08-21,
+  and it was the wrong question.** The question is not what the hostname looks like in Titan; it
+  is whether Titan can address one of our sites at all, and as far as its own README documents,
+  **it cannot**. Read from `github.com/btcjt/titan` (v0.1.10, 2026-05-29) rather than tried,
+  because trying it means an unsigned 9 MB Tauri binary on the machine holding the node keys:
+
+  - **It resolves registered names, not pubkeys.** The only address forms its README documents
+    are `nsite://titan` and `nsite://westernbtc`. Names are bought with a one-time Bitcoin
+    OP_RETURN registration ("~$0.10 … first-come, first-served, and permanent"). No
+    `nsite://npub1…` form appears in it.
+  - **Its resolution flow does not name our kinds.** Quoted: `kind 35129` name index → pubkey,
+    `kind 10002` relay list → `kind 35128` site manifest, then Blossom by sha256. We publish
+    **15128** (root site, no `d` tag — findings §7) and **10063** (BUD-03 servers). Measured on
+    the four sale relays 2026-08-21, all three of our pubkeys: `10063, 15128` and nothing else.
+    **Kind 10002 appears nowhere in this project.**
+  - One thing stays genuinely open: its overview prose claims "kind 15128/35128" support while
+    the flow diagram names only 35128, so an undocumented raw-npub path may exist. `UNVERIFIED`,
+    and only an install answers it.
+
+  ⇒ The no-gateway story is not Titan. It is that the manifest and the blobs are the site, and
+  `check-deploy.ts` proves it from the relays and Blossom without a gateway in the path at all.
 - ~~Which tag carries the image placeholder?~~ **Answered in slice 4: NIP-92 `imeta`, carrying the
   field names it inherits from NIP-94.** We write it, and we deliberately do not write
   `blurhash` — see §6.1 and findings §13.21.
