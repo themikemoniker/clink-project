@@ -32,14 +32,52 @@ Node 24 runs the `.ts` files directly (type stripping). No build step, no global
 
 ---
 
-## 1. Lightning.Pub running with inbound liquidity — `NEEDS HUMAN`
-
-Node is up and reachable over Nostr — proven below in §2 — but unfunded.
+## 1. Lightning.Pub running with inbound liquidity — **ANSWERED 2026-08-21**
 
 - [x] Installed on: local macOS machine (`~/lightning_pub`, lnpub `0.0.37`)
-- [ ] Channel confirmed on: _(date)_
-- [ ] Inbound capacity: _(sats)_
-- [ ] Test payment received: _(date)_
+- [x] Channel confirmed on: **2026-08-21 00:53 UTC**
+- [x] Inbound capacity: **98,160 sat** (100,000 capacity − 1,000 local reserve − 840)
+- [ ] Test payment received: _(date)_ — still the only thing that proves receive works
+
+**How it was obtained, because "deposit on-chain and let Pub open a channel" is not what
+happened and would not have worked.** The node had zero on-chain funds and zero channels, and
+Pub's own LSP flow (`lsp.ts:269-284`) pays for a channel out of the **liquidity-provider
+balance**, which was 0 — so it could never fire. Deadlock.
+
+The way out is that **inbound is rented, not funded**: you pay a fee, the LSP opens the channel
+with *their* sats on *their* side, and your node needs no on-chain balance at all. The fee is a
+bolt11, so it can be paid from any other wallet.
+
+Olympus (ZEUS) LSPS1, `https://lsps1.lnolymp.us/api/v1`, measured 2026-08-20:
+
+| | |
+|---|---|
+| `min_initial_lsp_balance_sat` | **100,000** — the floor; nothing smaller is sold |
+| `supports_zero_channel_reserve` | false |
+| fee for 100k inbound, 30 / 60 / 90-day lease | 6,496 / 6,825 / **7,157** sat |
+| `min_required_channel_confirmations` | 3 (but the channel arrived **active immediately** — a turbo open, so do not plan around the stated 3) |
+| lease | 13,000 blocks, funded 2026-08-21, **expires 2026-11-19** |
+
+Order `05fba71ae8f943949147afbe411661ab`, `COMPLETED`, funding outpoint
+`3f45f7d1988e11fd9f82b449d9294fcdc42b12b5ef34710123ebb575ba775153:0`.
+
+**This is a lease.** The inbound disappears on 2026-11-19. Put it in the calendar.
+
+**The channel is private (`announce_channel: false`), and that has a sharp edge.** An
+unannounced channel is invisible to the network, so an invoice is only payable if it carries a
+route hint. `lncli addinvoice --amt 1000` produced **0 route hints** and was unpayable;
+`--private` produced 1 hint via Olympus and was payable. Lightning.Pub gets this right — it
+calls `AddInvoiceReq(value, expiry, true, …)` (`lnd.ts:412`) and the third argument is
+`privateHints` (`addInvoiceReq.ts:3`) — so CLINK invoices from this node do carry the hint.
+
+**Cost floors that do not scale down**, all measured, for anyone tempted by a smaller channel:
+Olympus minimum 100,000 sat; LND `minchansize` default 20,000; LND on-chain anchor reserve
+~10,000 once any channel exists; Pub's `LSP_CHANNEL_THRESHOLD` 1,000,000 before it buys one
+itself. Item prices scale to any size; channels do not.
+
+**The node still has 0 outbound** (`local_balance: 0`). Correct for a seller, and a real
+constraint on **slice 7**: refunds need outbound, and outbound only exists after buyers have
+paid. A refund cannot be the first payment this node ever makes.
 
 **Non-obvious thing the spike found:** an unfunded node still passes the amount check.
 `getNofferInvoice` sets `maxSendable` from the channel balance, but falls back to
@@ -727,10 +765,14 @@ invalidate.
    the builder must go through the one-time `AuthorizeManage` approval even when it is the
    seller's own key. One prompt, then unlimited offer CRUD — acceptable, but budget for it
    in §8's count.
-5. **`blind` offers exist and are undocumented in CLINK.** `UserOffer.blind`
-   (entity line 42, migration `1760000000000-add_blind_to_user_offer.ts`), passed into
-   invoice creation (`offerManager.ts:275`). Likely blinded-path invoices. Not in any CLINK
-   spec — `UNVERIFIED`; find out before enabling it, it may affect receive reliability.
+5. **`blind` offers exist, are undocumented in CLINK, and on this node would be unpayable.**
+   `UserOffer.blind` (entity line 42, migration `1760000000000-add_blind_to_user_offer.ts`),
+   passed into invoice creation (`offerManager.ts:275`). Still in no CLINK spec. But
+   `addInvoiceReq.ts:6` reads `private: blind ? false : privateHints` — **`blind` switches
+   private route hints off.** Our only channel is unannounced (§1), so an invoice without
+   hints cannot be routed to at all: verified empirically, no hints → unpayable, hints →
+   payable. **Do not enable `blind`** unless the node has a public announced channel. The
+   original "may affect receive reliability" guess was right and now has a mechanism.
 6. **A `p:` offer-id prefix routes to a separate "product" system.**
    `offerManager.ts:299-307`: an `offer` string containing `:` with first segment `p` calls
    `productManager.NewProductInvoice(...)`, bypassing user offers, `payer_data` validation

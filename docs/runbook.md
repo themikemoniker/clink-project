@@ -64,7 +64,52 @@ No port forwarding, DNS, or Tor needed for either. The wallet reaches the node o
 
 A fresh node is 0 channels, 0 sats. Deposit on-chain from the paired wallet. Pub manages channels itself — it shops quotes from LSPs (Zeus, Voltage, Flashsats) and requests one when outbound is needed, and borrows liquidity from a bootstrap peer Pub until a channel is affordable.
 
-**Nothing about this is instant.** On-chain confirmation plus channel open is the long pole on the whole project. Start it days before demo day and send yourself a test payment to prove it end to end.
+**Nothing about this is instant** — except it was, once we stopped trying to fund it.
+
+### What actually worked (2026-08-21)
+
+Depositing on-chain and letting Pub open a channel **cannot bootstrap an empty node**: Pub pays
+the LSP out of its liquidity-provider balance (`lsp.ts:269-284`), and on a fresh install that
+balance is 0. Deadlock.
+
+Rent the inbound instead. You pay a **fee**, the LSP opens the channel with *their* sats on
+*their* side, and the node needs no on-chain balance at all. The fee is a bolt11, payable from
+any phone wallet.
+
+```bash
+export PATH="$HOME/lnd:$PATH"          # lncli is not on PATH by default
+
+# 1. peer with the LSP first, or the order is rejected
+lncli connect 031b301307574bbe9b9ac7b79cbe1700e31e544513eae0b5d7497483083f99e581@45.79.192.236:9735
+
+# 2. quote + order (100,000 is Olympus's minimum; nothing smaller is sold)
+curl -sL -X POST https://lsps1.lnolymp.us/api/v1/create_order \
+  -H 'content-type: application/json' \
+  -d '{"public_key":"<your node pubkey>","lsp_balance_sat":"100000","client_balance_sat":"0",
+       "required_channel_confirmations":0,"funding_confirms_within_blocks":6,
+       "channel_expiry_blocks":13000,"announce_channel":false}'
+
+# 3. pay the returned bolt11 from any wallet, then:
+lncli listchannels | grep -E 'active|remote_balance'
+```
+
+Cost on 2026-08-21: **7,157 sat for 100,000 inbound**, 90-day lease. The channel came up
+**active immediately** despite the order stating 3 confirmations. `remote_balance` is your
+inbound and the only number that matters.
+
+**It is a lease.** This one expires **2026-11-19**. Calendar it.
+
+**Floors that do not scale down**: Olympus minimum 100,000 sat, LND `minchansize` 20,000, LND
+anchor reserve ~10,000 on-chain, Pub's `LSP_CHANNEL_THRESHOLD` 1,000,000. You can price items
+at any size; you cannot rent a proportionally smaller channel.
+
+**Private channel caveat.** `announce_channel: false` means invoices must carry route hints or
+nobody can pay. Pub does this correctly (`lnd.ts:412` passes `privateHints = true`), but
+`blind` offers set it to false (`addInvoiceReq.ts:6`) and would be unpayable — see
+`/docs/spike-findings.md` §13.5.
+
+Still send yourself a test payment to prove it end to end. An invoice request succeeding proves
+nothing; `maxSendable` falls back to 10,000,000 whenever the liquidity provider is reachable.
 
 ---
 
