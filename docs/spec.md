@@ -433,16 +433,29 @@ Two things the pre-spike draft missed:
 
 Kind `5128` manifest snapshots also exist (`5A.md:59-65`) — a regular event pinning one version. Not needed for v1; useful later for "show me the sale as it was."
 
-Blobs go to **multiple** Blossom servers. They garbage-collect. Mirror — but note slice 1
-measured both halves of that advice to be harder than written: mirroring does **not** come free
-of signatures (§5, the batching lever is dead), and there is currently only **one** public server
-that will accept an nsite's HTML at all (`cdn.hzrd149.com`; `/docs/spike-findings.md` §7). Until
-a second one exists, "mirror your blobs" is advice we cannot follow for the site itself, only for
-the photos. Finding a second server is the highest-value infrastructure task after node funding.
+Blobs go to **multiple** Blossom servers. They garbage-collect. Mirror — and as of slice 5 we
+actually can. Slice 1 found exactly one public server that would accept an nsite's HTML and
+concluded that mirroring the site was advice we could not follow; **slice 5 found the cause was
+our own BUD-11 auth header**, which we were encoding as the base64url the spec requires and
+three of the four working servers reject. Standard base64 gets `cdn.hzrd149.com`,
+`blossom.primal.net`, `files.sovbit.host` and `nostr.download`, all four verified serving every
+blob of both deployed sites (`/docs/spike-findings.md` §9, §13.23).
 
-**Deploy is implemented** in `/spike/deploy-nsite.ts`. It refuses to publish a manifest unless at
-least one server holds a complete copy — a manifest whose blobs are missing is a site that 404s,
-and failing loudly at deploy beats discovering it from a buyer in a driveway.
+Mirroring also turns out to be nearly free of signatures, contra §5's pessimism: BUD-11 11.md:25
+makes a token with no `server` tag valid on every server, so **N blobs across M servers is N
+signatures**. The dead lever was batching *blobs* into one token, not reusing one token across
+*servers*.
+
+**One root site per pubkey** (`5A.md:16`), which is sharper than it reads: a second kind 15128
+under the same key silently replaces the first. The builder is an nsite too (rule 5), so it
+gets its own identity rather than sharing the seller's. Findings §13.22.
+
+**Deploy is implemented** in `/builder/src/deploy.ts`, with `/spike/deploy-nsite.ts` as the Node
+driver over it — the §13.13 lift pattern, so the browser and the script cannot diverge on the
+aggregate hash. It refuses to publish a manifest unless at least one server holds a complete
+copy — a manifest whose blobs are missing is a site that 404s, and failing loudly at deploy
+beats discovering it from a buyer in a driveway. `/spike/check-deploy.ts` verifies a deploy
+against the relays and Blossom, and reports the gateway separately as the cache it is.
 
 ### 6.5 CLINK
 
@@ -668,10 +681,15 @@ React, Tailwind or shadcn/ui.**
 - **Revisit at slice 6**, which is where the admin panel actually wants tables, dialogs and
   toasts. If it does, that is a real reason and this line changes again; "the spec said React"
   is not one.
-- Measured at the end of slice 4: **142.8 KB raw / 50.8 KB gzip** cold, plus a 4.2 KB gzip QR
-  chunk fetched only on the bunker path, and 2.4 KB CSS. No budget
-  applies here the way it does to the storefront — design.md §5 says "whatever it takes" — but
-  it is worth knowing it is ~1.6x the storefront and every KB is still a blob fetch.
+- Measured at the end of slice 5: **148.3 KB raw / 52.9 KB gzip** cold (+2.1 KB gzip for the
+  deploy module), plus a 4.2 KB gzip QR chunk now fetched on the bunker path *or* a deploy, and
+  2.4 KB CSS. No budget applies here the way it does to the storefront — design.md §5 says
+  "whatever it takes" — but it is worth knowing it is ~1.6x the storefront and every KB is still
+  a blob fetch.
+- **It also carries a built copy of the storefront**, in `public/site` (5 files, ~99 KB raw),
+  put there by `bundle-storefront.mjs` and deployed as blobs in the builder's own manifest.
+  Those are NOT in the bundle above and are fetched only when somebody presses Deploy — see
+  §10 slice 5 for why that beats inlining them as raw assets.
 
 ~~- Vite + React + TypeScript~~
 ~~- Tailwind + shadcn/ui (forms, dialogs, tables, toasts, upload progress)~~
@@ -727,8 +745,26 @@ downloads it.
   puts it in QR alphanumeric mode and drops this invoice from 63 modules to 55. Nearly all of the JS is secp256k1 for `verifyEvent`, which is not optional —
 `/CLAUDE.md` requires verifying every inbound event, and dropping it to hit a byte target would
 trade the security rule for a number. Only one runtime dependency ships: `nostr-tools`, pinned to
-an exact `2.24.3`. `qrcode` is a devDependency — the storefront QR is encoded at build time and
-inlined as an SVG `<symbol>`, so it costs the page zero JS.
+an exact `2.24.3`.
+
+**Slice 5 moved the storefront QR from build time to deploy time and removed the `qrcode`
+devDependency with it.** The QR encodes the site's own URL, which contains the seller's npub —
+so encoding it at build time is exactly what made the storefront a per-seller artifact. It is
+now injected into the `<!--QR-->` marker in `index.html` by `builder/src/deploy.ts`, using the
+`uqr` both apps already ship. The page still carries no encoder; what changed is the cold HTML,
+**441 B → 2,354 B gzip**. That +1.9 KB gzip is the honest price of one generic build, and it
+buys the whole of slice 5.
+
+Measured at the end of slice 5, and the JS is unchanged from slice 2 apart from the bech32 npub
+decode that replaced the build-time constant:
+
+| Asset | Raw | gzip |
+|---|---|---|
+| JS, cold load | 83.7 KB | **31.0 KB** |
+| JS, QR chunk (Buy button only) | 10.3 KB | 3.9 KB |
+| CSS | 5.8 KB | 2.0 KB |
+| HTML as built (no QR) | 0.7 KB | 0.4 KB |
+| HTML as deployed (QR injected) | 10.6 KB | 2.4 KB |
 
 **Shared:**
 - TypeScript throughout
@@ -950,7 +986,68 @@ What it covers, and what it deliberately does not:
 storefront and the item is there, with a working Buy button, having touched no server of ours.
 The headless version, which needs no phone: `cd spike && node check-manage.ts`.*
 
-**Slice 5 — Deploy from the app.** Generate site files, upload, publish kind 15128. *Demo: full zero-to-storefront in under two minutes.*
+**Slice 5 — Deploy from the app. DONE 2026-08-21.** The builder generates the site files,
+mirrors them to four Blossom servers and publishes the kind 15128 manifest plus the kind 10063
+server list — and the builder itself is now an nsite, which was the last thing rule 5 was owed.
+
+**Three blockers underneath the one-line description, and none of them was the deploy.**
+`/spike/deploy-nsite.ts` already did all of this correctly against real Blossom and real relays.
+None of it could run in a browser.
+
+1. **A static app cannot run `vite build`.** So the builder must already be carrying the
+   storefront's bytes. It carries them as **files in `public/site`** (put there by
+   `bundle-storefront.mjs`, a `prebuild` step) rather than inlined into its own JS as raw
+   assets: Vite copies `public/` verbatim, so the builder `fetch`es them from its own origin at
+   deploy time, and when the builder is deployed as an nsite they are blobs in its own manifest.
+   Zero bundle growth for an app that is itself fetched blob by blob from a gateway.
+
+2. **The storefront was compiled per seller, which makes one pre-built copy impossible.**
+   `main.ts` hardcoded `SELLER_PUBKEY`; `vite.config.ts` `define`d `__SELLER_NPUB__` and
+   `__SITE_URL__` and encoded the flyer QR from that URL. **The whole `define` block is gone.**
+   An nsite's canonical URL *is* `<npub>.<gateway>` (`5A.md:136`) and a host server "MUST parse
+   the left-most DNS label… if the label is a valid npub, decode it and resolve the root site
+   manifest" (`5A.md:156-158`) — so the gateway already had to decode our npub to serve us the
+   bytes, and the page reads the same label back out of `location.hostname`. One build, any
+   seller. `?seller=npub1…` is the fallback for `npm run dev` and for Titan's `nsite://`, which
+   is **not in NIP-5A at all** and stays `UNVERIFIED`.
+
+   This is a simplification, not extra work, and it is checked like a trust boundary because it
+   is one: whoever controls the hostname controls whose signatures the page accepts. The bech32
+   checksum is honoured rather than the string pattern-matched, so a flipped character resolves
+   to nobody rather than to a plausible wrong pubkey.
+
+3. **Rule 5 is a bootstrap problem only if you read it as self-deployment.** It is not: rule 5
+   says the builder must be *hosted* with no server of ours, and putting it on a gateway is a
+   developer action, not a seller action. So `node spike/deploy-nsite.ts ../builder/dist`
+   publishes the builder from a dev machine, the same tool and the same module the in-app deploy
+   uses for the seller's sale. One tool, two directories, no cycle. What it *did* need was its
+   own identity — see §6.4 on one root site per pubkey.
+
+What it covers, and what it deliberately does not:
+
+- **`/builder/src/deploy.ts`** — the browser-safe half: hashing, the aggregate, the QR
+  injection, both event templates, and the deploy itself. `/spike/deploy-nsite.ts` is now the
+  ~90 lines a browser cannot have (a filesystem walk and a key-backed Signer) driving it. The
+  §13.13 lift pattern, chosen for the aggregate hash specifically: it is the one thing here
+  that fails silently when it is wrong, so it gets exactly one implementation.
+- **`/builder/src/blossom.ts`** — the BUD-11 auth and the mirror, lifted out of `photos.ts` for
+  the same reason, and where **the find of the slice** lives: we were encoding the auth token as
+  the base64url 11.md:50 requires, and three of the four servers that will store an nsite's HTML
+  reject it. Standard base64 works on all five. Blobs live on four servers now, not one.
+- **`/spike/check-deploy.ts`** — relays, then Blossom, then what the page would show from the
+  hostname alone, then the gateway reported separately as the cache it is. The `check-buy.ts`
+  contract: it drives the shipped modules, so if it and the builder disagree, it is wrong.
+- **The 10063 is republished every deploy.** Findings §7 says once per seller; it is a
+  replaceable event and one signature of a kind the signer already granted, and a missing 10063
+  is a mandatory 404 (`5A.md:188-190`) with no other symptom. Cheap insurance beats a rule.
+- **No `/site` route in the builder, no preview, no gateway picker beyond a text field, no
+  redeploy diffing.** Slice 6 and 9.
+- **No named sites (kind 35128) and no snapshots (kind 5128).** §6.4 rules both out for v1;
+  nothing in slice 5 wanted them.
+
+*Demo: `cd builder && npm run dev`, connect a signer, press Deploy, and the sale is a URL. The
+headless version, which needs no browser and no phone:
+`node spike/deploy-nsite.ts --key .deploy-test-key` then `node spike/check-deploy.ts <npub>`.*
 
 **Slice 6 — Admin panel.** Edit, restock, mark sold, view settled sales, private notes via NIP-78.
 
@@ -1035,6 +1132,9 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
   means per-unit `d` tags and the decision belongs before slice 4's authoring UI.
 - **Does any marketplace client actually render a kind 30405 collection's `summary`?** We put the
   sale's date and hours there because no tag exists for them. `UNVERIFIED`.
+- **What is `location.hostname` inside Titan's `nsite://` scheme?** `UNVERIFIED` — `nsite://`
+  appears nowhere in NIP-5A. Slice 5's `sellerFromLocation` reads the left-most label and falls
+  back to `?seller=`, which covers it either way, but nobody has run the page in Titan.
 - ~~Which tag carries the image placeholder?~~ **Answered in slice 4: NIP-92 `imeta`, carrying the
   field names it inherits from NIP-94.** We write it, and we deliberately do not write
   `blurhash` — see §6.1 and findings §13.21.
@@ -1042,14 +1142,17 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
   five were minted natively. Nothing is broken — they are tagged onto live listings and have been
   paid against — but an edit flow going through Manage cannot touch them. Slice 6 decides: re-mint
   them through Manage, or keep a native path for pre-slice-4 items.
-- **Which second Blossom server?** `cdn.satellite.earth` needs an account (401). Blobs on one
-  server are one garbage collection away from a broken storefront. See spike findings §9.
-  **Slice 4 made this cheap to act on**: the builder writes a NIP-92 `fallback` per extra server
-  into each item's `imeta`, so adding one to `BLOSSOM` in `/builder/src/photos.ts` is the whole
-  change on the authoring side.
+- ~~Which second Blossom server?~~ **Answered in slice 5, and the answer was our own code.**
+  BUD-11 11.md:50 requires the auth token be base64url; three of the four servers that will
+  store an nsite's HTML reject base64url and accept standard base64. `builder/src/blossom.ts`
+  sends standard base64 and blobs now live on **four** servers — `cdn.hzrd149.com`,
+  `blossom.primal.net`, `files.sovbit.host`, `nostr.download` — each verified serving every blob
+  of both deployed sites. Findings §9 and §13.23. Two things still open at the edge: the
+  fixture's 21 photos are on `blossom.band` alone until `seed-listings.ts` is re-run, and
+  BUD-04 `PUT /mirror` is still untested (we push to each server directly instead).
 - What does the buyer see if their wallet can't speak CLINK? (Slice 8 — decide the copy early. Must include: no `payer_data` pointer means no automatic refund.)
 - Where does buyer↔seller pickup messaging live — NIP-17 DMs to the **ephemeral payer pubkey** stored on the invoice as `clink_requester_pub`? Note that key is ephemeral by design, so the buyer's page must keep it or the thread is unreachable. (Was "the receipt's payer pubkey" — we cannot read the receipt.)
-- Do we ship a hosted gateway convenience URL, or force gateway choice? (A hosted one is a centralization we should at least name.)
+- Do we ship a hosted gateway convenience URL, or force gateway choice? (A hosted one is a centralization we should at least name.) **Slice 5 forced the choice, weakly**: the builder has a gateway text field defaulting to `nsite.lol` and does not check that whatever is typed resolves. A dropdown of gateways is a list that goes stale, and the gateway is the one part of the URL we do not control.
 - Is `blind` on a Lightning.Pub offer worth using? It exists in the entity and reaches invoice creation, and is in no CLINK spec. `UNVERIFIED` — find out before enabling it; it may affect receive reliability. Slice 2 mints offers with it unset.
 - What is the `p:` offer-id prefix? It routes to a separate "product" system that bypasses `payer_data` validation and amount checks, and is in no CLINK spec. Slice 2 did **not** use it, and the `payer_data` bypass alone probably disqualifies it — a product offer cannot carry a refund pointer, so it cannot be refunded. Confirm before anyone reaches for it.
 - ~~Should the builder mint offers over CLINK Manage (21003) or the native RPC (21000)?~~ **Answered 2026-08-21: Manage, and it is forced rather than chosen.** The native kind 21000 uses Lightning.Pub's custom `nip44v1` envelope, keyed on the raw ECDH x-coordinate (`nostrPool.ts:110-113`), and NIP-46 never exposes raw ECDH or a private key — so a builder holding only a bunker connection cannot construct a 21000 request at all. CLINK's own `21001`–`21004` are standard NIP-44, which a bunker does expose. Slice 2 got away with the native RPC only because `/spike/.dev-key` is a raw key on disk. **Built in slice 4** (`/builder/src/manage.ts`), verified end to end against the live node by `/spike/check-manage.ts`, and the `fields` wrapper disagreement (§13.3) is handled. Two corrections to this line, both measured while building it: the `AuthorizeManage` prompt is **zero**, not one — it is `auth_type = "User"`, so the account's own key issues its own grant (findings §13.19) — and because that call is itself kind 21000 it needs a one-time bootstrap next to the node (`/spike/authorize-manage.ts`). Full evidence: findings §13.18, §13.19, §13.20.

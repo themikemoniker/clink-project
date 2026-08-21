@@ -1,185 +1,123 @@
-// Deploy a built directory as an nsite: blobs to Blossom, manifest to relays.
+// Deploy a built directory as an nsite, headlessly.
 //
-// This exists instead of `nsyte` because nsyte is not on npm (see /docs/spike-findings.md §7),
-// its alternatives cost either a Deno runtime with `deno install -A` or a 93 MB unsigned binary,
-// and slice 5 has to do this from a browser anyway — where shelling out to a binary is not an
-// option. Everything here is the same shape the builder will run in-page, minus the Signer.
+// SLICE 5 TURNED THIS INSIDE OUT. It used to be ~150 self-contained lines; the hashing, the
+// aggregate, the Blossom auth and both event shapes now live in `/builder/src/deploy.ts` and
+// this file is the ~90 lines a browser cannot have: a filesystem walk and a Signer over a key
+// on disk. Same pattern as slice 3's pub-rpc.ts lift (findings §13.13) and slice 4's
+// check-manage.ts — it imports the SHIPPED module rather than a copy, so if this and the
+// builder ever disagree, this is wrong.
 //
-// KEY HANDLING NOTICE: same throwaway /spike/.dev-key as seed-listings.ts, same /CLAUDE.md
-// rule-2 exception, same expiry — delete both when slice 4 lands a real Signer.
+// That makes it slice 5's headless verification, the way check-buy.ts and check-manage.ts are
+// slices 2 and 4's: a real deploy to real Blossom servers and real relays, driving the exact
+// code the builder runs, with no browser and no phone in the loop.
 //
-// Specs, read rather than recalled:
-//   NIP-5A  nips/5A.md      root manifest kind 15128, path tags, aggregate hash, resolution
-//   BUD-03  buds/03.md      kind 10063 user server list
-//   BUD-11  buds/11.md      kind 24242 upload auth (one per blob — see spike-findings §9)
+// It is also how the BOOTSTRAP CYCLE is broken. /CLAUDE.md rule 5 says the builder itself
+// deploys as an nsite — which reads like the builder has to deploy itself. It does not: rule 5
+// is about the builder being HOSTED with no server of ours, and putting it on a gateway is a
+// developer action, not a seller action. So `node deploy-nsite.ts ../builder/dist` publishes the
+// builder from this machine, the same way `node deploy-nsite.ts` publishes the storefront, and
+// the in-app deploy exists for the seller's sale. One tool, two directories, no cycle.
 //
-// Usage: node deploy-nsite.ts [dir] [--relays wss://a,wss://b] [--blossom https://x,https://y]
-import { createHash } from 'node:crypto'
+// KEY HANDLING NOTICE: the builder ships two Signer paths and neither is this one — a browser
+// has an extension or a bunker, and both hold the key out of reach. This script needs a Signer
+// and has no browser, so it wraps a key file the same way check-manage.ts does. Same
+// /CLAUDE.md rule-2 exception, same throwaway identity, and it adds no key path to the builder.
+//
+// Usage:
+//   node deploy-nsite.ts [dir]            deploy ../storefront/dist by default
+//     --key <file>                        default .dev-key. Use a throwaway for experiments
+//     --gateway <host>                    default nsite.lol — only changes the printed URL
+//     --relays wss://a,wss://b
+//     --blossom https://a,https://b
+//     --title <text> --description <text>
+//     --dry                               hash and build both events, publish nothing
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { dirname, extname, join, posix, relative } from 'node:path'
+import { dirname, join, posix, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SimplePool, finalizeEvent, getPublicKey, nip19 } from 'nostr-tools'
+import { finalizeEvent, getPublicKey, type EventTemplate, type VerifiedEvent } from 'nostr-tools/pure'
+import { decrypt, encrypt, getConversationKey } from 'nostr-tools/nip44'
 import { hexToBytes } from '@noble/hashes/utils'
+import { SALE, SALE_RELAYS } from './fixture.ts'
+import { contentType, deploy, DEFAULT_GATEWAY, type SiteFile } from '../builder/src/deploy.ts'
+import { SERVERS } from '../builder/src/blossom.ts'
+import type { Signer } from '../builder/src/signer.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const KEY_FILE = join(HERE, '.dev-key')
 
 const arg = (name: string, fallback: string) => {
   const i = process.argv.indexOf(`--${name}`)
   return i === -1 ? fallback : process.argv[i + 1]!
 }
-const positional = process.argv.slice(2).filter(a => !a.startsWith('--'))
+const positional = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && !all[i - 1]?.startsWith('--'))
 const DIR = positional[0] ?? join(HERE, '..', 'storefront', 'dist')
-const RELAYS = arg('relays', 'wss://relay.damus.io,wss://nos.lol,wss://relay.nostr.band,wss://relay.primal.net').split(',')
-// cdn.hzrd149.com first, and as of 2026-08-20 it is the only public Blossom server found that
-// will store an nsite's HTML/JS/CSS for an unknown pubkey. blossom.band is nostr.build: it takes
-// the sale's photos happily and answers `415 File type not allowed` for text. Twelve others
-// refuse anonymous uploads outright. See /docs/spike-findings.md §7.
-const BLOSSOM = arg('blossom', 'https://cdn.hzrd149.com').split(',')
+const KEY_FILE = join(HERE, arg('key', '.dev-key'))
+const DRY = process.argv.includes('--dry')
 
-if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — run seed-listings.ts first`)
-if (!existsSync(join(DIR, 'index.html'))) throw new Error(`${DIR} has no index.html — run \`npm run build\` in /storefront`)
-// 5A.md:196 — a host server that cannot match a path MUST fall back to /404.html. Without it
-// every wrong URL on the deployed site is the gateway's error page, not ours.
-if (!existsSync(join(DIR, '404.html'))) throw new Error(`${DIR} has no 404.html — NIP-5A 5A.md:196 requires it`)
+if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — pass --key <file>, or run seed-listings.ts first`)
+if (!existsSync(DIR)) throw new Error(`${DIR} does not exist — run \`npm run build\` first`)
 
 const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const pk = getPublicKey(sk)
-console.log(`# deploying ${DIR}\n# as ${nip19.npubEncode(pk)}`)
 
-// --- 1. walk the build ------------------------------------------------------------------
+// The stand-in Signer. Deliberately the narrowest possible shim over the raw key: four methods,
+// no storage, no reconnection, nothing the browser paths have.
+const signer: Signer = {
+  label: 'spike PlainKeySigner',
+  getPublicKey: async () => pk,
+  signEvent: async (e: EventTemplate) => finalizeEvent(e, sk) as VerifiedEvent,
+  nip44Encrypt: async (to, text) => encrypt(text, getConversationKey(sk, to)),
+  nip44Decrypt: async (to, ct) => decrypt(ct, getConversationKey(sk, to)),
+  close: async () => {},
+}
+
+// 5A.md:47 — "an absolute path ending with a filename and extension". POSIX separators
+// regardless of the host OS, because this is a URL path, not a filesystem path.
 const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap(name => {
     const full = join(dir, name)
     return statSync(full).isDirectory() ? walk(full) : [full]
   })
 
-const TYPES: Record<string, string> = {
-  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp',
-  '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain',
-}
-
-const files = walk(DIR).map(full => {
-  const bytes = readFileSync(full)
-  return {
-    // 5A.md:47 — "an absolute path ending with a filename and extension". POSIX separators
-    // regardless of the host OS, because this is a URL path, not a filesystem path.
-    path: '/' + relative(DIR, full).split(/[\\/]/).join(posix.sep),
-    bytes,
-    sha256: createHash('sha256').update(bytes).digest('hex'),
-    type: TYPES[extname(full).toLowerCase()] ?? 'application/octet-stream',
-  }
+const files: SiteFile[] = walk(DIR).map(full => {
+  const path = '/' + relative(DIR, full).split(/[\\/]/).join(posix.sep)
+  return { path, bytes: new Uint8Array(readFileSync(full)), type: contentType(path) }
 })
+
+const relays = arg('relays', SALE_RELAYS.join(',')).split(',')
+const servers = arg('blossom', SERVERS.join(',')).split(',')
+const gateway = arg('gateway', DEFAULT_GATEWAY)
+
+console.log(`# deploying ${DIR}`)
+console.log(`# as        ${pk}  (key: ${relative(HERE, KEY_FILE)})`)
 console.log(`# ${files.length} files, ${(files.reduce((n, f) => n + f.bytes.length, 0) / 1024).toFixed(1)} KB total`)
+if (DRY) console.log('# --dry: nothing will be uploaded or published\n')
 
-// --- 2. upload each blob ----------------------------------------------------------------
-// One kind 24242 auth per blob. A batched multi-`x` token is accepted and silently
-// misattributed by blossom.band — /docs/spike-findings.md §9. Never batch this.
-const authFor = (sha256: string) => {
-  const ev = finalizeEvent({
-    kind: 24242,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ['t', 'upload'],                                                    // 11.md:11-19
-      ['expiration', String(Math.floor(Date.now() / 1000) + 300)],        // short — 11.md:85-91
-      ['x', sha256],
-    ],
-    content: 'Deploy nsite',
-  }, sk)
-  return `Nostr ${Buffer.from(JSON.stringify(ev)).toString('base64url')}`
-}
+const result = await deploy(
+  signer,
+  relays,
+  files,
+  {
+    gateway,
+    servers,
+    meta: { title: arg('title', SALE.title), description: arg('description', 'A yard sale that takes Lightning, with no server anywhere in it.') },
+    dryRun: DRY,
+  },
+  step => console.log(`# ${step.text}`),
+)
 
-const live: string[] = []
-for (const server of BLOSSOM) {
-  let ok = 0
-  for (const f of files) {
-    try {
-      const res = await fetch(`${server}/upload`, {
-        method: 'PUT',
-        headers: { authorization: authFor(f.sha256), 'content-type': f.type },
-        body: f.bytes,
-        signal: AbortSignal.timeout(30_000),
-      })
-      if (!res.ok) {
-        console.log(`#   ${server} ${f.path}: ${res.status} ${(await res.text()).slice(0, 120)}`)
-        continue
-      }
-      const body = await res.json().catch(() => ({} as { sha256?: string }))
-      // A 200 is not evidence the server stored what we sent. Compare content-addresses.
-      if (body.sha256 && body.sha256 !== f.sha256) {
-        console.log(`#   ${server} MISATTRIBUTED ${f.path}: asked ${f.sha256.slice(0, 12)}, got ${String(body.sha256).slice(0, 12)}`)
-        continue
-      }
-      ok++
-    } catch (err) {
-      console.log(`#   ${server} ${f.path}: ${String(err).slice(0, 100)}`)
-    }
-  }
-  console.log(`# ${server}: ${ok}/${files.length} blobs stored`)
-  if (ok === files.length) live.push(server)
-}
-if (live.length === 0) throw new Error('no Blossom server holds a complete copy — refusing to publish a manifest that cannot resolve')
-
-// --- 3. the aggregate hash --------------------------------------------------------------
-// 5A.md:75-84, exactly: one `<sha256hash> <absolute-path>\n` line per path tag, sorted
-// ascending lexicographically, concatenated as UTF-8, sha256, lowercase hex. Hash first,
-// then path — the reverse order silently produces a wrong-but-plausible digest.
-const aggregate = createHash('sha256')
-  .update(files.map(f => `${f.sha256} ${f.path}\n`).sort().join(''))
-  .digest('hex')
-
-// --- 4. publish ---------------------------------------------------------------------------
-const now = Math.floor(Date.now() / 1000)
-
-// 5A.md:17 — root site, kind 15128, and it MUST NOT include a `d` tag.
-const manifest = finalizeEvent({
-  kind: 15128,
-  created_at: now,
-  tags: [
-    ...files.map(f => ['path', f.path, f.sha256]),      // 5A.md:45-49
-    ['x', aggregate, 'aggregate'],                       // 5A.md:56
-    ['title', 'Moving Sale — Colonia Americana'],
-    ['description', 'A yard sale that takes Lightning, with no server anywhere in it.'],
-    ...live.map(s => ['server', s]),                     // 5A.md:58, a hint; the 10063 is the rule
-  ],
-  content: '',
-}, sk)
-
-// BUD-03 03.md:7-11 — kind 10063, at least one `server` tag with the full URL including scheme,
-// most trusted first, content unused. NIP-5A 5A.md:188-190: a gateway MUST try these, and with
-// neither a 10063 nor `server` tags it MUST return 404. This is the tag that makes the site load.
-const serverList = finalizeEvent({
-  kind: 10063,
-  created_at: now,
-  tags: live.map(s => ['server', s]),
-  content: '',
-}, sk)
-
-const pool = new SimplePool()
-for (const ev of [manifest, serverList]) {
-  const results = await Promise.allSettled(
-    pool.publish(RELAYS, ev).map(p =>
-      Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8_000))]),
-    ),
-  )
-  const ok = results.filter(r => r.status === 'fulfilled').length
-  const why = results.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined
-  console.log(`# kind ${ev.kind} -> ${ok}/${RELAYS.length} relays` + (ok < RELAYS.length && why ? `  (${String(why.reason).slice(0, 80)})` : ''))
-  if (ok === 0) console.log(`#   WARNING: kind ${ev.kind} reached no relay; the site will not resolve`)
-}
-pool.close(RELAYS)
-
-const npub = nip19.npubEncode(pk)
+for (const f of result.files) console.log(`#   ${f.sha256.slice(0, 12)}  ${f.path}`)
 console.log(`
-# aggregate  ${aggregate}
-# manifest   ${manifest.id}
+# aggregate  ${result.aggregate}
+# manifest   ${result.manifest.id}
+# servers    ${result.servers.join(', ') || '(none — dry run)'}
 #
-# Try it on any nsite gateway:
-#   https://${npub}.nsite.lol/
-#   https://${npub}.nsite.lol/definitely-missing        <- should serve /404.html
+# ${result.url}/
+# ${result.url}/definitely-missing        <- should serve /404.html
 #
-# Verify what actually landed:
-#   nak req -k 15128 -a ${pk} wss://relay.damus.io | jq '.tags'
-#   nak req -k 10063 -a ${pk} wss://relay.damus.io | jq '.tags'`)
+# VERIFY AGAINST THE RELAY AND BLOSSOM, NEVER AGAINST THE GATEWAY. The gateway sends
+# cache-control: max-age=3600 and serves the previous build until it lapses, which looks
+# exactly like a broken deploy and is not (/docs/spike-findings.md §7):
+#   nak req -k 15128 -a ${pk} ${relays[0]} | jq '.tags'
+#   nak req -k 10063 -a ${pk} ${relays[0]} | jq '.tags'
+#   curl -sI ${result.servers[0] ?? servers[0]}/${result.files[0]?.sha256}`)
 process.exit(0)

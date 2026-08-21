@@ -127,6 +127,36 @@
         <button type="button" id="download-ladder">Download .ladder.json</button>
         <p class="hint" id="ladder-note"></p>
       </section>
+      <!-- 5. deploy ------------------------------------------------------------------ -->
+      <section>
+        <h2>5 · Publish the sale as a website</h2>
+        <p class="hint">
+          Your storefront is a handful of static files. They go to Blossom servers as blobs, and
+          a signed manifest on the relays says which blob is which path. That manifest is the
+          whole site: no host, no DNS, no certificate, no account. It is served at your own
+          npub, which is how the page knows whose sale to read.
+        </p>
+
+        <label for="gateway">Gateway</label>
+        <input id="gateway" type="text" value="nsite.lol" autocomplete="off" spellcheck="false" />
+        <p class="hint">
+          Any NIP-5A host will serve it — the gateway is only where you point people. Changing it
+          changes the URL printed on the flyer’s tear-off tabs, so set it before you deploy.
+        </p>
+
+        <p class="cost" id="deploy-cost"></p>
+        <button type="button" id="deploy" disabled>Deploy my storefront</button>
+
+        <p class="warn">
+          Gateways cache for an hour and serve the previous version until it lapses, while the
+          relays and Blossom update in seconds. Do not redeploy on the day of the sale.
+        </p>
+
+        <div id="deployed" hidden>
+          <p>Your sale is live at <a id="site-url" href="#" rel="noreferrer"></a></p>
+          <p class="hint" id="deploy-detail"></p>
+        </div>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

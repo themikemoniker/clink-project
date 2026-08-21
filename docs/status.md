@@ -4,26 +4,34 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-21**, end of slice 4.
+Last updated: **2026-08-21**, end of slice 5.
 
 ---
 
 ## One-paragraph summary
 
-Slices 0 through 4 are done. A static page hosted on Nostr reads listings off public relays and
+Slices 0 through 5 are done. A static page hosted on Nostr reads listings off public relays and
 takes Lightning payments by sending CLINK invoice requests to the seller's own node over relays.
 **This is proven with real money** — 6,000 sats settled on 2026-08-21 and the page read the
 settlement receipt that nobody else can decrypt. A watcher on the seller's machine closes the
 loop: it observes settlement on the node and republishes the listing, **holding no signing key**,
 so `plants` reads as sold on the relays today. And as of slice 4 a seller authors items in a
 static builder that holds no key either — signing through NIP-07 or a NIP-46 bunker, minting each
-item's offer on their own node over **CLINK Manage (kind 21003)**. There is no server of ours
-anywhere in it. Next up is slice 5: deploy from the app.
+item's offer on their own node over **CLINK Manage (kind 21003)**. **Slice 5 closed the loop: the
+builder now deploys the sale as a website**, hashing the storefront's files, mirroring them to
+four Blossom servers and publishing the kind 15128 manifest — and the builder itself is deployed
+as an nsite, which is the last thing `/CLAUDE.md` rule 5 was owed. There is no server of ours
+anywhere in it. Next up is slice 6: the admin panel.
 
-**The thing to know before touching slice 5.** Moving authoring behind a Signer made
-Lightning.Pub's native kind 21000 RPC *unreachable from the browser* — it is keyed on a raw ECDH
-secret that NIP-46 does not expose (findings §13.18). Every node call the builder makes is CLINK,
-or it does not happen. Anything still using kind 21000 (`mint-offers.ts`, `watch-sales.ts`,
+**The thing to know before touching slice 6.** The storefront is no longer compiled per seller.
+It reads its own npub out of `location.hostname` (NIP-5A `5A.md:156-158`), so one build serves
+any seller — that is what let the builder carry a pre-built copy at all. `SELLER_PUBKEY`,
+`__SELLER_NPUB__` and `__SITE_URL__` are gone; `?seller=npub1…` is the dev fallback.
+
+**And the one from slice 4, still true.** Moving authoring behind a Signer made Lightning.Pub's
+native kind 21000 RPC *unreachable from the browser* — it is keyed on a raw ECDH secret that
+NIP-46 does not expose (findings §13.18). Every node call the builder makes is CLINK, or it does
+not happen. Anything still using kind 21000 (`mint-offers.ts`, `watch-sales.ts`,
 `authorize-manage.ts`) is a script holding the raw key on the seller's own machine, and that is
 now a deliberate boundary rather than an accident.
 
@@ -34,12 +42,16 @@ now a deliberate boundary rather than an accident.
 | | |
 |---|---|
 | Storefront | `https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.nsite.lol/` |
+| Builder (slice 5, rule 5) | `https://npub1qqm97k4eg432zydvkclnhhnkyd7dgjxmndmaapk48jzms9uyl5qqlerxa2.nsite.lol/` |
+| Slice-5 deploy test site | `https://npub1lfw6k46xe8theshxkw8sqwmja6u9svf90l09cyn3e02awvwmvxtqtmaeka.nsite.lol/` |
 | Seller pubkey (throwaway) | `fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0` |
 | Sale | kind 30405 `yardsale-2026-08`, 9 items on 4 public relays |
 | Node | local Lightning.Pub 0.0.37 + LND, 1 private channel |
 | Node liquidity | **90,160 inbound / 8,000 outbound** — drifts with every sale |
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** |
-| Bundle | 30.9 KB gzip cold + 3.9 KB QR chunk on demand. Budget is **gzip** |
+| Blossom | **four** servers hold every blob, verified. Was one until slice 5 |
+| Storefront bundle | 31.0 KB gzip JS + 2.0 CSS + 2.4 HTML cold, + 3.9 KB QR chunk on Buy |
+| Builder bundle | 52.9 KB gzip cold, + a built storefront in `public/site` (~99 KB raw) |
 
 Four items are buyable; the rest deliberately are not:
 
@@ -63,7 +75,7 @@ Nothing here needs a build step; Node 24 runs the `.ts` files directly.
 ```bash
 # storefront
 cd storefront
-npm test            # 27 assertions, node --test, no framework
+npm test            # 30 tests, node --test, no framework
 npm run build       # tsc --noEmit && vite build
 npm run size        # raw + gzip per asset
 npm run dev         # http://localhost:5173
@@ -76,7 +88,14 @@ node check-buy.ts <item> --pay         # prints an invoice and waits. COSTS REAL
 node mint-offers.ts [--dry]            # idempotent; reuses offers by label
 node seed-listings.ts                  # republishes the 30402s AND cuts .ladder.json
 node watch-sales.ts [--once]           # slice 3: observe settlement, republish availability
-node deploy-nsite.ts                   # blobs to Blossom, kind 15128 + 10063 to relays
+
+# slice 5: deploy
+node deploy-nsite.ts                   # storefront/dist -> 4 Blossom servers, 15128 + 10063
+node deploy-nsite.ts --dry             # hash and build both events, publish nothing. Free
+node deploy-nsite.ts --key .deploy-test-key    # deploy to a throwaway, not the live npub
+node deploy-nsite.ts ../builder/dist --key .builder-key   # rule 5: the builder as an nsite
+node check-deploy.ts <npub>            # relays, then Blossom, then the gateway. No key needed
+node check-deploy.ts <npub> --skip-gateway     # skip the cache, check only what is true
 
 # slice 4: authoring, against the running node
 node authorize-manage.ts               # ONCE, at the desk. Grants Manage, writes .nmanage
@@ -102,9 +121,19 @@ broken; an edit flow through Manage just cannot touch them. Slice 6 decides whet
 the pre-signed ladder from the listings it publishes, so any edit to a price, a title or a photo
 means re-seeding before the watcher runs, or the watcher would republish the old text over the
 new. `seed-listings.ts` takes ~1 minute since `cdn.satellite.earth` came out of its default on
-2026-08-21 — it had never accepted a single blob and cost 21 x 20s of timeout per run. **Blobs
-now live on exactly one server**, which is one garbage collection from a broken storefront; a
-second server that takes anonymous uploads is still the highest-value infrastructure find.
+2026-08-21 — it had never accepted a single blob and cost 21 x 20s of timeout per run.
+
+**Blobs now live on four servers, and that was the highest-value infrastructure find.** It was
+not a server hunt: BUD-11 11.md:50 requires the auth token be base64url, and three of the four
+servers that will store an nsite's HTML reject base64url and accept standard base64
+(findings §9, §13.23). `builder/src/blossom.ts` sends standard base64 and both deployed sites
+report four complete mirrors.
+
+`seed-listings.ts` carries the same two-line change but **has not been re-run**, so the fixture's
+21 photos are still on `blossom.band` alone. Re-seeding mirrors them to four servers — and it
+re-cuts `.ladder.json` and republishes all nine listings, so it needs `watch-sales.ts` restarted
+after it, and it must not happen on demo day. Worth doing on a quiet day before then: one server
+holding the only copy of the demo's photos is the last single point of failure left.
 
 `spike/.dev-key` and `spike/.offers.json` are gitignored and **not reproducible from the repo**.
 Losing `.dev-key` loses the seller identity, the storefront's npub, and access to the 6,000 sats
@@ -131,6 +160,15 @@ target rather than nsec.app — nsec.app stores the key on somebody else's serve
 custody claim this project spends §3.1 arguing it does not make, and q8's residual risk is
 specifically about Amber's sign policy.
 
+### The second Blossom server — **CLOSED 2026-08-21, and it was not a server hunt**
+
+BUD-11 11.md:50 requires the auth token be base64url. Three of the four servers that will store
+an nsite's HTML reject base64url and accept standard base64, so we had been locked to one server
+by our own header since slice 1. Blobs now live on four, verified. Findings §9 and §13.23.
+
+The residue: the fixture's 21 photos are still on `blossom.band` alone until `seed-listings.ts`
+is re-run, which also re-cuts `.ladder.json` and needs the watcher restarted. Not demo-day work.
+
 ### Question 6, wallet half — does a third-party wallet supply `payer_data`?
 
 ```bash
@@ -155,10 +193,14 @@ twenty kind-`24242` Blossom auths cost one approval between them. The old 33-pro
 a seller who declines to remember anything thirty-three times. Nothing is over the ~15 threshold,
 so **slice 4 builds the publish flow as planned.**
 
-**Slice 4 turned this into a task with a button on it.** The builder sends the string below at
-connect; `bunker-scan` in `/builder` generates the `nostrconnect://` URI carrying it. So the
-confirmation run is now: import `spike/.dev-key` into your bunker, open the builder, click
-"Connect a bunker", scan, and publish one item.
+**Slice 4 turned this into a task with a button on it, and slice 5 added a second button.** The
+builder sends the string below at connect; `bunker-scan` in `/builder` generates the
+`nostrconnect://` URI carrying it. So the confirmation run is now: import `spike/.dev-key` into
+your bunker, open the builder, click "Connect a bunker", scan, publish one item, **then press
+Deploy**. That covers every unrun browser path in the project in one sitting.
+
+Note `15128`, `10063` and `24242` in the string: slice 5 signs all three, and they have been in
+`PERMS` since slice 4 precisely so this run would not need a second scan.
 
 Note `21003`, which every earlier copy of this string omitted — nothing signed a CLINK event as
 the seller before slice 4. Note `30405`. And note that neither signer accepts a bare `sign_event`
@@ -366,6 +408,128 @@ confirmation — see below.
 
 ---
 
+## Slice 5 — what shipped, and the three things that were not in the description
+
+Two new modules in `/builder`, one new spike script, one script turned inside out, and the
+storefront's build-time constants deleted.
+
+| file | what |
+|---|---|
+| `builder/src/deploy.ts` | hashing, the 5A aggregate, the QR injection, kind 15128 + 10063, the deploy |
+| `builder/src/blossom.ts` | the BUD-11 auth and the mirror, lifted out of `photos.ts`. **The find** |
+| `builder/bundle-storefront.mjs` | `prebuild`: builds /storefront into `builder/public/site` + a file list |
+| `builder/public/404.html` | the builder is an nsite too, and 5A.md:196 requires one |
+| `builder/src/deploy.test.ts` | 10 tests, `node --test`, same style as the other three suites |
+| `spike/check-deploy.ts` | relays → Blossom → what the page would show → the gateway, last |
+| `spike/deploy-nsite.ts` | now ~90 lines: a filesystem walk and a Signer over `.dev-key` |
+
+### 1. The storefront was compiled per seller, and it is not any more
+
+`main.ts` hardcoded `SELLER_PUBKEY`; `vite.config.ts` `define`d `__SELLER_NPUB__` and
+`__SITE_URL__` and encoded the flyer QR from that URL. A generic builder cannot ship a bundle
+with one seller's key in it, so **the whole `define` block is gone**.
+
+An nsite's canonical URL *is* `<npub>.<gateway>` (`5A.md:136`) and a host server "MUST parse the
+left-most DNS label… If the label is a valid `npub`, decode it and resolve the root site
+manifest" (`5A.md:156-158`). The gateway already had to decode our npub to serve us the bytes;
+the page reads the same label back out of `location.hostname`. `?seller=npub1…` is the fallback
+for `npm run dev`, and it also covers Titan's `nsite://`, which is **not in NIP-5A at all** and
+stays `UNVERIFIED`.
+
+It lives in `storefront/src/listing.ts` — the trust boundary file — because it is one: whoever
+controls the hostname controls whose signatures the page accepts. The bech32 checksum is
+honoured rather than the string pattern-matched, so a flipped character resolves to *nobody*
+rather than to a plausible wrong pubkey. 8 new assertions.
+
+**The QR moved with it, from build time to deploy time.** The deployer knows the npub and the
+gateway, so it substitutes the `<!--QR-->` marker in `index.html` on the way to Blossom, using
+the `uqr` both apps already ship. The page still carries no encoder; the cold HTML went
+**0.4 KB → 2.4 KB gzip**. That is the price of one generic build.
+
+### 2. The second Blossom server was our own header, not a missing server
+
+Findings §9 has asked a human for a second server since slice 1. It did not need one. BUD-11
+11.md:50 says the auth token MUST be base64url; we complied, and three of the four servers that
+will store an nsite's HTML answer `400` to base64url and `200` to standard base64:
+
+| server | base64url | standard base64 |
+|---|---|---|
+| `cdn.hzrd149.com` | 201 | 201 |
+| `blossom.primal.net` | 400 | **200** |
+| `files.sovbit.host` | 400 | **200** |
+| `nostr.download` | 400 | **201** |
+| `blossom.band` | jpeg only | jpeg only |
+
+Both sites deployed in slice 5 report **4 complete mirrors**, each blob verified to hash to its
+own `path` tag. Mirroring costs no extra signatures either: 11.md:25 makes a token with no
+`server` tag valid everywhere, so N blobs across M servers is N signatures — slice 4's
+`photos.ts` signed per (blob, server) and now does not.
+
+### 3. Rule 5's "bootstrap problem" is not one
+
+Rule 5 says the builder deploys as an nsite. That reads like the builder must deploy itself; it
+does not. Rule 5 is about the builder being *hosted* with no server of ours, and putting it on a
+gateway is a **developer** action, not a seller action. So `node spike/deploy-nsite.ts
+../builder/dist --key .builder-key` publishes it, using the same module the in-app deploy uses
+for the seller's sale. One tool, two directories, no cycle.
+
+What it did need was **its own identity**: a kind 15128 root site is one per pubkey
+(`5A.md:16`), so a second site under the seller's key would silently replace their storefront.
+Findings §13.22.
+
+### Where the storefront's bytes come from
+
+`builder/public/site/` — a built copy put there by a `prebuild` step, plus `public/site.json`
+listing the paths. Vite copies `public/` verbatim, so the files stay files: the builder fetches
+them from its own origin when somebody presses Deploy, and when the builder is an nsite they are
+blobs in its own manifest (`/site/index.html`, `/site.json` — all verified serving from the
+gateway). Inlining them as raw assets would have doubled the JS of an app that is itself fetched
+blob by blob. The bundle grew **50.8 → 52.9 KB gzip**, all of it the deploy module.
+
+### What slice 5 deliberately did not build
+
+- **No preview, no redeploy diffing, no deploy history.** A kind `5128` manifest snapshot
+  (`5A.md:60-65`) is what "show me the sale as it was" would use. Spec §6.4 rules it out for v1.
+- **No named sites (kind 35128).** Two sites under one pubkey is the only thing they buy and the
+  builder has its own key.
+- **No gateway picker beyond a text field**, and no check that the gateway resolves. It is the
+  one part of the URL we do not control, and a dropdown of gateways is a list that goes stale.
+- **`seed-listings.ts` was not re-run.** It has the two-line encoding fix, but the fixture's 21
+  photos are still on one server until somebody re-seeds. See above.
+
+### Verified how
+
+```
+cd builder    && npm test                     # 20/20 (10 new)
+cd storefront && npm test                     # 30/30 (8 new)
+cd spike      && npm test                     # 8/8, unchanged
+cd builder    && npm run build                # tsc clean; 148.3 KB raw / 52.9 KB gzip
+cd spike      && node deploy-nsite.ts --dry   # hashes and signs, publishes nothing
+cd spike      && node deploy-nsite.ts --key .deploy-test-key
+cd spike      && node deploy-nsite.ts ../builder/dist --key .builder-key
+cd spike      && node check-deploy.ts <npub>  # both sites
+cd spike      && node check-manage.ts         # 13/13 after the blossom.ts lift
+cd spike      && node check-buy.ts            # the money path, unchanged
+```
+
+`check-deploy.ts` is the one that matters. On both deployed sites it confirmed a signed kind
+15128 with no `d` tag, an aggregate `x` tag that still matches its own `path` tags, a kind 10063
+naming four servers, and **every blob served by every one of them, hashing to its own path tag**.
+It also drove `sellerFromLocation` with the real hostname through the storefront's own parser
+against the live relays: `npub1lvvw…q0lalws.nsite.lol` resolves and reads back the real sale —
+masthead, 9 items, 4 with a Buy button, 3 sold. That is the hostname change proven end to end.
+
+**What is NOT proven: the browser, again.** No Chrome extension was connected in this session, so
+nothing has driven the builder's Deploy button or watched the deployed page paint. Every module
+is exercised headlessly and every byte on the gateway is verified byte-identical, but the DOM
+half of slices 4 and 5 is still unrun. It is the same run that answers spike q8 on hardware.
+
+**And the gateway cache bit, exactly as documented.** A second deploy 10 minutes after the first
+left `check-deploy.ts` reporting `/index.html` STALE while sections 1–3 passed — the tool named
+the cache instead of a person finding it on demo day.
+
+---
+
 ## Traps that will cost an hour each
 
 - **A NIP-46 bunker cannot speak kind 21000.** Every native Lightning.Pub RPC — `AddUserOffer`,
@@ -402,6 +566,16 @@ confirmation — see below.
   *responses* but includes it on *receipts* — so the tag's presence signals nothing.
 - **A missing `preimage` does not mean an internal transfer**, whatever `clink-offers.md:333`
   says. Measured on a real external payment (findings §5).
+- **A kind 15128 root site is ONE PER PUBKEY** (`5A.md:16`). Deploying a second site under the
+  same key silently replaces the first — no error, and the old blobs are still on Blossom but
+  unreachable. The builder has its own key for exactly this reason (findings §13.22).
+- **The BUD-11 auth header is standard base64 here, not the base64url the spec requires.**
+  Three of the four servers that store an nsite's HTML reject base64url (findings §9). If a
+  Blossom upload starts 400ing on a new server, check the encoding before anything else.
+- **`/404.html` is served WITH a 404 status.** A verification script that checks `res.ok` will
+  report NIP-5A's mandatory fallback as a failure (findings §13.24).
+- **`spike/.deploy-test-key` and `spike/.builder-key` are gitignored and not reproducible.**
+  Losing `.builder-key` loses the builder's nsite URL. Neither holds funds.
 - **Redeploying does not appear immediately.** The nsite gateway sends
   `cache-control: public, max-age=3600` and serves the previous build until it lapses. The
   relays and Blossom update instantly; the gateway does not. **Do not redeploy on demo day.**
@@ -423,6 +597,6 @@ confirmation — see below.
 | `/docs/spike-findings.md` | measured evidence, `NEEDS HUMAN` blocks | wins over spec.md |
 | `/docs/spec.md` | architecture and the slice plan (§10) | |
 | `/docs/design.md` | the two design surfaces | |
-| `/builder` | slice 4's authoring app. Signer, CLINK Manage, photos, the ladder cut | |
+| `/builder` | the authoring app. Signer, CLINK Manage, photos, the ladder cut, the deploy | |
 | `/docs/runbook.md` | the node: install, funding, demo-day checklist | |
 | this file | where we are today | goes stale fastest |

@@ -7,6 +7,7 @@
 //   Gamma   kind 30402 extensions, kind 30405    GammaMarkets/market-spec spec.md
 //   CLINK   clink_offer tag value (an noffer)    clink-offers.md  (via /docs/clink-notes.md)
 import { verifiedSymbol, verifyEvent, type Event } from 'nostr-tools/pure'
+import { bech32 } from '@scure/base'
 import { decodeNoffer, MIN_PAYABLE_SATS, type Offer } from './offer.ts'
 
 export const LISTING_KIND = 30402 // 99.md:9
@@ -297,3 +298,51 @@ export const srcset = (
     aspect: ratio.w && ratio.h ? `${ratio.w} / ${ratio.h}` : '4 / 3',
   }
 }
+
+// --- who this page belongs to ---------------------------------------------------------------
+//
+// Slice 5 deleted the build-time SELLER_PUBKEY. An nsite IS its author: NIP-5A 5A.md:136 makes
+// a root site's canonical URL `<npub>.<gateway>`, and 5A.md:156-158 requires a host server to
+// "parse the left-most DNS label" and, "if the label is a valid npub, decode it and resolve the
+// root site manifest". So the gateway already had to decode our npub to serve us these bytes —
+// the page can read the same label back out and skip being compiled per seller entirely.
+//
+// That makes ONE storefront build serve any seller, which is what lets the builder carry a
+// pre-built copy and deploy it (spec §10 slice 5). It is a simplification, not a feature.
+//
+// This is a trust boundary like the rest of this file, for a reason worth stating: whoever
+// controls the hostname controls whose signatures this page will accept. That is exactly right
+// — an nsite's authority IS its pubkey, and a gateway serving npub A's bytes under npub B's
+// hostname has already broken NIP-5A. But it means the bech32 checksum must be honoured rather
+// than the string pattern-matched, or a mistyped label resolves to a plausible wrong pubkey.
+export type Seller = { pubkey: string; npub: string }
+
+const NPUB_LABEL = /^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/
+
+const decodeNpub = (label: string): Seller | null => {
+  if (!NPUB_LABEL.test(label)) return null
+  try {
+    const { prefix, words } = bech32.decode(label as `npub1${string}`, 90)
+    if (prefix !== 'npub') return null
+    const bytes = new Uint8Array(bech32.fromWords(words))
+    if (bytes.length !== 32) return null
+    return { pubkey: [...bytes].map(b => b.toString(16).padStart(2, '0')).join(''), npub: label }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The seller this page is serving, read from where it is being served from.
+ *
+ * 1. The left-most DNS label, if it is an npub (5A.md:156-158). This is the deployed path and
+ *    the only one that exists on a gateway.
+ * 2. `?seller=npub1…`, for `npm run dev` on localhost and for anything whose URL is not a
+ *    gateway subdomain. Titan's `nsite://` scheme is NOT in NIP-5A at all — UNVERIFIED what
+ *    `location.hostname` reads there — so this fallback is also what covers it if the label
+ *    turns out not to be an npub.
+ *
+ * Returns null when neither answers, and the page says so rather than fetching for nobody.
+ */
+export const sellerFromLocation = (hostname: string, search: string): Seller | null =>
+  decodeNpub(hostname.split('.')[0] ?? '') ?? decodeNpub(new URLSearchParams(search).get('seller') ?? '')

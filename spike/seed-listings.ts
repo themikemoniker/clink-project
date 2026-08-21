@@ -49,14 +49,20 @@ const arg = (name: string, fallback: string) => {
   return i === -1 ? fallback : process.argv[i + 1]
 }
 const RELAYS = arg('relays', SALE_RELAYS.join(',')).split(',')
-// blossom.band only. `cdn.satellite.earth` was in this default until 2026-08-21 and never once
-// accepted a blob: it returns 401 for HTML (findings §7) and simply times out on images, so every
-// seed paid 21 x 20s of AbortSignal.timeout for nothing — ~7 minutes of the run. Removing it is
-// not a decision to stop mirroring; it is deleting a server that was never a mirror. The flag is
-// still here, and the moment a second server that accepts anonymous uploads is found it belongs
-// in this string, because blobs on one server are one garbage collection from a broken
-// storefront (/docs/spec.md §14, findings §9).
-const BLOSSOM = arg('blossom', 'https://blossom.band').split(',')
+// `cdn.satellite.earth` was in this default until 2026-08-21 and never once accepted a blob: it
+// returns 401 for HTML (findings §7) and simply times out on images, so every seed paid
+// 21 x 20s of AbortSignal.timeout for nothing — ~7 minutes of the run.
+//
+// SLICE 5 put four servers back, and the comment that used to sit here — "the moment a second
+// server that accepts anonymous uploads is found it belongs in this string" — turned out to be
+// waiting on us rather than on the ecosystem. See `authFor` below and findings §9. The list is
+// `builder/src/blossom.ts`'s, copied rather than imported because that module signs through a
+// Signer and this script holds a raw key; this seeder is the throwaway half of the project and
+// is not worth a shim.
+const BLOSSOM = arg(
+  'blossom',
+  'https://cdn.hzrd149.com,https://blossom.primal.net,https://files.sovbit.host,https://nostr.download,https://blossom.band',
+).split(',')
 
 // --- the throwaway identity -------------------------------------------------------------
 if (!existsSync(KEY_FILE)) {
@@ -137,7 +143,10 @@ const authFor = (sha256: string) => {
     ],
     content: 'Upload yard sale photo',
   }, sk)
-  return `Nostr ${Buffer.from(JSON.stringify(ev)).toString('base64url')}`
+  // STANDARD base64, not the base64url BUD-11 11.md:50 requires. Three of the four servers that
+  // will store an nsite's HTML reject base64url outright and accept this; all five accept this.
+  // Measured 2026-08-21 — findings §9 has the table. Same constant as builder/src/blossom.ts.
+  return `Nostr ${Buffer.from(JSON.stringify(ev)).toString('base64')}`
 }
 
 for (const server of BLOSSOM) {

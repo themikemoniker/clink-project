@@ -87,7 +87,9 @@ export const renderMasthead = (sale: Sale | undefined, npub: string): HTMLElemen
     // needs to decide whether that stays a freeform line or earns a tag.
     sale?.summary && h('p', { class: 'dateline' }, sale.summary),
     sale?.location && h('p', { class: 'dateline' }, sale.location),
-    h('p', { class: 'byline' }, 'Published by ', h('code', {}, npub), ` · made with ${SITE_NAME}`),
+    // No npub when the page cannot tell whose sale it is (main.ts) — a byline reading
+    // "Published by" with nothing after it is worse than no byline.
+    npub && h('p', { class: 'byline' }, 'Published by ', h('code', {}, npub), ` · made with ${SITE_NAME}`),
   )
 
 export const renderIndex = (items: Item[]): HTMLElement => {
@@ -203,7 +205,9 @@ const sats = (n: number) => `${n.toLocaleString('en-US')} sats`
 // this, so the shapes accepted here are the shapes that code will handle — not "any string".
 // The node checks only `typeof === 'string'` (offerManager.ts:139-155), so a typo would sail
 // through and surface months later as a refund that went nowhere.
-const LN_ADDRESS = /^[^\s@]{1,64}@[a-z0-9.-]{3,253}\.[a-z]{2,24}$/i
+// {1,253} not {3,253} on the host: the shorter bound rejected `bob@ln.tips` and every other
+// address whose second-level domain is two characters, which is a buyer who cannot buy at all.
+const LN_ADDRESS = /^[^\s@]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,24}$/i
 // An noffer gets the real decoder rather than a shape regex — same checksum check we apply to
 // the seller's pointer, for the same reason: a flipped character is a wallet that is not theirs.
 const isPointer = (raw: string) => LN_ADDRESS.test(raw) || decodeNoffer(raw) !== null

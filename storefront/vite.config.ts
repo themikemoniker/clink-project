@@ -1,38 +1,19 @@
-import { npubEncode } from 'nostr-tools/nip19'
-import QRCode from 'qrcode'
 import { defineConfig } from 'vite'
 
-// Keep in step with SELLER_PUBKEY in src/main.ts. Slice 5 generates both.
-const SELLER_PUBKEY = 'fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0'
-
-// NIP-5A 5A.md:134-168 — a root site's canonical URL is a single DNS label, <npub>.<gateway>.
-// Which gateway is the deployer's choice, so this is a default, not a claim that it resolves.
-// Override at build: VITE_SITE_URL=https://... npm run build
-const SITE_URL = process.env.VITE_SITE_URL ?? `https://${npubEncode(SELLER_PUBKEY)}.nsite.lol`
-
-// The QR is print-only and its content is known at build time, so encoding it here costs the
-// page zero runtime bytes — a QR library in the bundle would be ~15KB of the ~30KB budget for
-// something no screen reader and no buyer on a phone ever sees.
-const qrSymbol = async (url: string) => {
-  const svg = await QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
-  const viewBox = /viewBox="([^"]+)"/.exec(svg)?.[1] ?? '0 0 33 33'
-  const inner = svg.slice(svg.indexOf('>', svg.indexOf('<svg')) + 1, svg.lastIndexOf('</svg>'))
-  return `<svg width="0" height="0" style="position:absolute" aria-hidden="true">` +
-    `<symbol id="qr" viewBox="${viewBox}">${inner}</symbol></svg>`
-}
-
+// Deliberately almost empty, and that is slice 5's doing.
+//
+// This file used to `define` __SELLER_NPUB__ and __SITE_URL__ from a hardcoded pubkey, and
+// encode the flyer's QR at build time from that URL. Both made the storefront a per-seller
+// artifact, which is incompatible with a builder that carries one pre-built copy and deploys it
+// for whoever is signed in. The page now reads its seller from `location.hostname` (NIP-5A
+// 5A.md:156-158) and its URL from `location.origin`.
+//
+// The QR moved to DEPLOY time rather than run time, so the page still ships no QR encoder: the
+// deployer knows the npub and the gateway, and substitutes the `<!--QR-->` marker in index.html
+// for a `<symbol id="qr">` on its way to Blossom. See builder/src/deploy.ts `withQR`.
+//
+// `assetsInlineLimit: 0` stays: every asset must be a real file, because an nsite manifest maps
+// paths to blobs and an inlined one has no path.
 export default defineConfig({
-  define: {
-    __SITE_URL__: JSON.stringify(SITE_URL),
-    __SELLER_NPUB__: JSON.stringify(npubEncode(SELLER_PUBKEY)),
-  },
   build: { target: 'es2022', assetsInlineLimit: 0 },
-  plugins: [
-    {
-      name: 'storefront-qr',
-      async transformIndexHtml(html) {
-        return html.replace('<!--QR-->', await qrSymbol(SITE_URL))
-      },
-    },
-  ],
 })

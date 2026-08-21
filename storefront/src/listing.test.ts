@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools/pure'
-import { orderBySale, parseListings, parseSales, srcset } from './listing.ts'
+import { orderBySale, parseListings, parseSales, sellerFromLocation, srcset } from './listing.ts'
 
 const sk = generateSecretKey()
 const PK = getPublicKey(sk)
@@ -232,4 +232,42 @@ test('an unparseable clink_offer tag leaves the item unbuyable, never half-parse
   assert.equal(with_('').offer, undefined)
   // An item with no tag at all is the slice-1 state, and must simply have no Buy button.
   assert.equal(one(base('y', [['price', '6000', 'sats']]))!.offer, undefined)
+})
+
+// --- who the page belongs to ------------------------------------------------------------------
+// Slice 5: the seller is read from the address the page is served at rather than compiled in.
+// Whoever controls the hostname controls whose signatures this page accepts, so a wrong label
+// must fail closed rather than resolve to a plausible pubkey.
+const NPUB = 'npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws'
+const HEX = 'fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0'
+
+test('the seller comes out of the left-most DNS label, per 5A.md:156-158', () => {
+  // The live storefront's own URL. Root site: `<npub>.<gateway>` (5A.md:136).
+  assert.deepEqual(sellerFromLocation(`${NPUB}.nsite.lol`, ''), { pubkey: HEX, npub: NPUB })
+  // A gateway on a deeper domain still puts the npub left-most.
+  assert.equal(sellerFromLocation(`${NPUB}.nsite.example.co.uk`, '')?.pubkey, HEX)
+})
+
+test('?seller= is the fallback for localhost and anything that is not a gateway subdomain', () => {
+  assert.equal(sellerFromLocation('localhost', `?seller=${NPUB}`)?.pubkey, HEX)
+  assert.equal(sellerFromLocation('localhost', `?x=1&seller=${NPUB}&y=2`)?.pubkey, HEX)
+  // The hostname wins when both are present: the address the bytes were served from is the
+  // authority, and a query string is the one thing a link can forge.
+  assert.equal(sellerFromLocation(`${NPUB}.nsite.lol`, '?seller=npub1nonsense')?.pubkey, HEX)
+})
+
+test('a label that is not a valid npub resolves to nobody, never to a plausible pubkey', () => {
+  assert.equal(sellerFromLocation('localhost', ''), null)
+  assert.equal(sellerFromLocation('nsite.lol', ''), null)
+  assert.equal(sellerFromLocation('', ''), null)
+  // One character flipped. The bech32 checksum is the whole reason this is not a regex: without
+  // it this decodes to a valid-looking 32 bytes that belong to nobody.
+  assert.equal(sellerFromLocation(`${NPUB.slice(0, -1)}x.nsite.lol`, ''), null)
+  // Right prefix, wrong length — a named-site or snapshot label (5A.md:158-168) is not an npub.
+  assert.equal(sellerFromLocation('npub1short.nsite.lol', ''), null)
+  assert.equal(sellerFromLocation(`${NPUB}extra.nsite.lol`, ''), null)
+  // An nprofile carries relay hints and is not a bare pubkey; it must not be mistaken for one.
+  assert.equal(sellerFromLocation('localhost', '?seller=nprofile1qqsw'), null)
+  // Hex is not accepted anywhere. A DNS label is an npub or nothing (5A.md:158).
+  assert.equal(sellerFromLocation('localhost', `?seller=${HEX}`), null)
 })

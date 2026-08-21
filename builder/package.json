@@ -4,7 +4,9 @@
   "type": "module",
   "description": "Seller-facing authoring app. Static, no backend, deploys as an nsite (rule 5).",
   "scripts": {
+    "predev": "node bundle-storefront.mjs",
     "dev": "vite",
+    "prebuild": "node bundle-storefront.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "node --test src/*.test.ts",

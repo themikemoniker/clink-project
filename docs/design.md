@@ -88,6 +88,12 @@ Requirements:
 
 Item QRs need a printable sticker sheet: one per item, ≥2cm square or phones won't read it reliably, item name and price above the code. Scan the thing, pay for the thing.
 
+**The storefront QR moved from build time to deploy time in slice 5.** It used to be a
+build-time constant, which is exactly what made the storefront compile per seller — the URL
+contains the seller's npub. It is now injected into `index.html` on its way to Blossom by
+`builder/src/deploy.ts`. The design requirement is unchanged and still met: the page ships no QR
+encoder. The cold HTML went from 0.4 KB to 2.4 KB gzip for it.
+
 ~~`SPIKE`: item QRs depend on per-item offers being mintable.~~ **Resolved, and the answer changed the design.** Per-item offers are mintable and are live (spec §6.1), so an item QR *could* encode the item's `noffer` — but slice 2 made every offer require a `refund_pointer` in `payer_data`, and a wallet scanning a raw QR has no way to supply one. The node declines it. So an item sticker that encodes the noffer today is a QR that cannot be paid.
 
 Item QRs therefore encode the **storefront deep link** (`#/item/<d-tag>`) until slice 8 decides what happens to buyers without a refund pointer. Scan the thing, land on the thing's page, pay there. That is one extra tap and it keeps the refund guarantee, which is the demo.

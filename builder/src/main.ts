@@ -15,9 +15,11 @@
 // design.md §5 still applies to the look: this is a tool, it should not cosplay as a newspaper,
 // and it should not look AI-generated either — warm paper neutrals, one accent, high contrast.
 import './style.css'
+import { SALE } from '../../spike/fixture.ts'
 import { approvalCount, normaliseSlug, type Draft } from './listing.ts'
 import { decodeNmanage, type ManagePointer } from './manage.ts'
 import { BLOSSOM, resize, upload } from './photos.ts'
+import { deploy, DEFAULT_GATEWAY, loadStorefront, storefrontPaths, type DeployStep } from './deploy.ts'
 import { downloadLadder, ladderFile, publish, RELAYS, type LadderFile, type Step } from './publish.ts'
 import {
   awaitBunkerScan,
@@ -55,6 +57,7 @@ const showSigner = () => {
   $('#signed-in').hidden = !signer
   $('#connect').hidden = !!signer
   $('#publish').toggleAttribute('disabled', !signer)
+  $('#deploy').toggleAttribute('disabled', !signer)
   if (signer) void signer.getPublicKey().then(pk => {
     $('#whoami').textContent = `${signer!.label} — ${pk.slice(0, 8)}…${pk.slice(-8)}`
   })
@@ -214,6 +217,55 @@ const onPhoto = async (input: HTMLInputElement) => {
   }
 }
 
+// --- deploy ------------------------------------------------------------------------------------
+// Slice 5. The storefront's files already live in this app (public/site, put there by
+// bundle-storefront.mjs), so "generate the site files" is a fetch rather than a build — a static
+// page cannot run `vite build`, and inlining the bytes into the bundle would double an app that
+// is itself fetched blob by blob from a gateway.
+const gateway = () => $<HTMLInputElement>('#gateway').value.trim() || DEFAULT_GATEWAY
+
+const onDeployStep = (step: DeployStep) => say(step.text, step.kind === 'done' ? 'ok' : 'busy')
+
+const doDeploy = async () => {
+  if (!signer) return
+  $('#deploy').toggleAttribute('disabled', true)
+  try {
+    say('Reading the storefront…')
+    const files = await loadStorefront()
+    const result = await deploy(signer, RELAYS, files, {
+      gateway: gateway(),
+      // NIP-5A 5A.md:39-41 — both optional, both free, and they are what makes the manifest
+      // legible to anything that indexes nsites.
+      meta: { title: SALE.title, description: SALE.summary },
+    }, onDeployStep)
+
+    $('#deployed').hidden = false
+    const link = $<HTMLAnchorElement>('#site-url')
+    link.href = result.url
+    link.textContent = result.url
+    $('#deploy-detail').textContent =
+      `${result.files.length} files on ${result.servers.length} Blossom server(s), manifest on ` +
+      `${result.relaysOk}/${RELAYS.length} relays. Site version ${result.aggregate.slice(0, 12)}…. ` +
+      `The first request may time out while the gateway fetches the blobs — reload once.`
+  } catch (err) {
+    say(err instanceof Error ? err.message : String(err), 'bad')
+  } finally {
+    $('#deploy').toggleAttribute('disabled', !signer)
+  }
+}
+
+// The same honesty as the item form's signature count: a deploy is one signed kind 24242 per
+// file plus the manifest and the server list.
+const refreshDeployCost = async () => {
+  // The list only — counting the files must not download them. They are fetched when somebody
+  // actually presses Deploy.
+  const n = (await storefrontPaths().catch(() => [])).length
+  $('#deploy-cost').textContent = n
+    ? `${n + 2} signatures: ${n} file uploads + 1 site manifest + 1 Blossom server list. ` +
+      `The uploads are all one kind, so your signer should ask about them once.`
+    : 'The storefront files are missing. Run `npm run build` in /builder.'
+}
+
 // --- wiring ------------------------------------------------------------------------------------
 $('#nip07').addEventListener('click', () => void connect(connectNip07))
 $('#bunker-url').addEventListener('click', () => {
@@ -237,6 +289,7 @@ $('#title').addEventListener('blur', () => {
   if (!slug.value) slug.value = normaliseSlug($<HTMLInputElement>('#title').value)
 })
 $('#download-ladder').addEventListener('click', () => downloadLadder(ladderFile({}, ladder)))
+$('#deploy').addEventListener('click', () => void doDeploy())
 $('#perms').textContent = PERMS.join(', ')
 
 if (!hasNip07()) $('#nip07').setAttribute('disabled', 'true')
@@ -247,4 +300,5 @@ if (saved) {
 }
 showSigner()
 refreshCost()
+void refreshDeployCost()
 void resumeBunker().then(s => s && useSigner(s))

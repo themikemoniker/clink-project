@@ -570,7 +570,11 @@ app" cannot shell out to a Go/Deno binary from a browser — so writing it makes
 rather than a greenfield. nsyte then has a second, better use: an independent checker to confirm
 our manifest is well-formed.
 
-- [x] Deployed with **our own `/spike/deploy-nsite.ts`**, not nsyte — see the tool table below
+- [x] Deployed with **our own `/spike/deploy-nsite.ts`**, not nsyte — see the tool table below.
+      **Slice 5 turned that script inside out**: the hashing, the aggregate, the Blossom auth
+      and both event shapes moved to `/builder/src/deploy.ts` (the §13.13 lift pattern) and the
+      script is now the ~90 lines a browser cannot have — a filesystem walk and a Signer over a
+      key on disk. It drives the shipped module, so it is also slice 5's headless verification
 - [x] Resolves at: `https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.nsite.lol/`
       → `200 text/html 3143B`, byte-identical to our `dist/index.html`
 - [x] `/404.html` fallback confirmed: **yes** — `/definitely-missing` → `404`, 951 bytes,
@@ -602,25 +606,31 @@ our manifest is well-formed.
       `max-age` should have lapsed, so `max-age` is not the whole story.
 
       ⇒ **Verify a deploy against the relay and Blossom, never against the gateway.** The
-      manifest is the source of truth:
-      `nak req -k 15128 -a <pubkey> wss://relay.damus.io | jq '.tags'`, then
-      `curl -sI https://cdn.hzrd149.com/<hash>` per blob. ⇒ **Do not redeploy on demo day**, or
-      budget an hour before the URL reflects it.
+      manifest is the source of truth. Slice 5 made that a command:
+      **`node spike/check-deploy.ts <npub>`** reads the kind 15128 and 10063 off the relays,
+      recomputes the aggregate hash from the `path` tags, fetches every blob from every server
+      in the 10063 and checks each one hashes to its own tag, then reports the gateway
+      separately as the cache it is. Reproduced live on 2026-08-21: sections 1–3 passed while
+      the gateway was still serving the previous `/index.html`, and the tool said so in those
+      words. ⇒ **Do not redeploy on demo day**, or budget an hour before the URL reflects it.
 
-**Blob hosting is the real constraint, and it nearly sank the deploy.** Details in §9, summary
-here because it changes what the project can claim:
+**Blob hosting was the real constraint, and slice 5 removed it.** Details in §9; summary here
+because it changes what the project can claim.
 
-- `blossom.band` is nostr.build. It stores the sale's **photos** fine and answers
-  `415 File type not allowed` for HTML/JS/CSS. It cannot host an nsite.
-- Of **fourteen** public Blossom servers probed with a real HTML upload from an unknown pubkey,
-  exactly **one** stored it: **`cdn.hzrd149.com`** → `201`, `type=text/html`, and it serves
-  `GET /<sha256>` with the right content-type. It takes JPEGs too, so it can be the only server.
-- The other twelve: `401 Pubkey not authorized by any storage rule`, `403 Public key not
-  authorized`, `400 unsupported content type`, or dead.
+Slice 1 probed fourteen public servers with a real HTML upload from an unknown pubkey and found
+exactly **one** that stored it — `cdn.hzrd149.com`. That made the "no hosting account" claim rest
+on one person's server choosing to accept anonymous uploads, which is a weaker foundation than
+"no server" and a fair thing for a judge to ask about.
 
-⇒ The "no hosting account" claim currently rests on **one person's server choosing to accept
-anonymous uploads**. That is a weaker foundation than "no server", and a judge may ask. It is
-also a single point of failure with garbage collection: see §14's open question.
+**Slice 5 found the cause was ours: the BUD-11 auth header encoding.** Sending standard base64
+instead of the spec's base64url turns three more servers from `400` into `200`. Blobs now live
+on **four** servers — `cdn.hzrd149.com`, `blossom.primal.net`, `files.sovbit.host`,
+`nostr.download` — each verified to serve every blob of both deployed sites, hashing to its own
+`path` tag. `blossom.band` still takes the photos and still refuses HTML, and it drops itself out
+of the site's server list by failing rather than by being remembered. Full table in §9.
+
+⇒ The claim is now "four independent servers, none of which knows who we are", which is a
+materially stronger version of the same sentence.
 
 **What the spike did verify from NIP-5A** (`nips/5A.md`), including two things spec §6.4
 gets wrong or omits — see §12:
@@ -867,9 +877,48 @@ loss, so the safe default is per-blob auth everywhere.
   replayed against any server until it expires, worst for `delete`. Short `expiration`s on
   uploads; any delete token gets both a `server` and an `x` tag.
 
-**Still needed from a human:** a second working Blossom server, so blobs survive one server
-garbage-collecting them, and so `PUT /mirror` can be tested. `cdn.satellite.earth` needs an
-account; if you have one, or a preferred server, name it.
+**ANSWERED IN SLICE 5, and the answer was our own header.** The "second working Blossom server"
+this section asked a human for did not need to be found. It needed the auth token encoded
+differently.
+
+11.md:50 says the token "MUST be encoded as Base64 URL-safe without padding (Base64url, as used
+by JWTs)". We complied. Measured 2026-08-21 with a real anonymous upload of an HTML file and
+again with a real JPEG, from a freshly generated pubkey:
+
+| server | base64url (what the spec says) | standard base64 | `GET /<sha256>` |
+|---|---|---|---|
+| `cdn.hzrd149.com` | **201** html, **201** jpeg | 201, 201 | `text/html`, `image/jpeg` |
+| `blossom.primal.net` | 400 `invalid base64 for auth event` | **200**, **200** | `text/html` (via one 302) |
+| `files.sovbit.host` | 400 `Invalid base64 in Authorization header` | **200**, **200** | `text/html` |
+| `nostr.download` | 400 (empty body) | **201**, **201** | `text/html` |
+| `blossom.band` | 200 jpeg only | 200 jpeg only | `image/jpeg` |
+
+Standard base64 is accepted by **all five**. Base64url by exactly one. Three of the four servers
+that will store an nsite's HTML for an unknown pubkey were rejecting us over a character class,
+and `blossom.band` — the only server we had — never showed it, because it accepts both.
+
+⇒ `/builder/src/blossom.ts` sends **standard base64**. It is a deliberate divergence from a MUST,
+in the direction four independent implementations accept. If a server ever appears that takes
+base64url and *not* standard base64, this becomes a per-server preference; none of the five is
+that server today.
+
+⇒ **Blobs now live on four servers, verified.** `node spike/check-deploy.ts <npub>` fetches every
+blob from every server in the kind 10063 and checks it hashes to its own `path` tag; both sites
+deployed in slice 5 report `4 complete mirror(s)`. The "one garbage collection from a broken
+storefront" risk this section has carried since slice 1 is closed, and `imeta fallback`
+(§13.21) finally carries something.
+
+Two smaller things measured with it:
+
+- **One signature covers a blob across every server.** 11.md:25 makes a token with no `server`
+  tag valid everywhere, so mirroring to four servers costs no extra approvals — N blobs on M
+  servers is N signatures. Slice 4's `photos.ts` signed per (blob, server) and now does not.
+- **`blossom.primal.net` answers the first `GET /<sha256>` with a 302** to its own storage and
+  200s thereafter. A gateway following redirects is unaffected; a client that does not follow
+  them would see an empty body. `redirect: 'follow'` is the default in `fetch`.
+- `cdn.satellite.earth` (401, needs an account), `blossom.f7z.io`, `blossom.nostr.hu`,
+  `media.utxo.nl` (all 401), `nostrmedia.com` (403, paid), `24242.io` (400, no text types) and
+  `cdn.nostrcheck.me` (timeout) still refuse anonymous uploads on either encoding.
 
 ---
 
@@ -1261,3 +1310,31 @@ invalidate.
     and ours match `image` tags instead. A generic NIP-92 client will not look for them. The
     fields are for our own storefront to read; the alternative was inventing a tag, which
     spec §14 exists to prevent.
+
+22. **A kind 15128 root site is ONE PER PUBKEY, so the builder cannot be deployed under the
+    seller's key.** `5A.md:16`: "Uses kind `15128` and MUST NOT include a `d` tag. This is a
+    single replaceable event per pubkey and serves as the root site for the pubkey." NIP-01
+    keeps the newest replaceable event per (kind, pubkey), so deploying a second site under the
+    same key silently *replaces* the first — no error, no warning, and the old site's blobs are
+    still on Blossom but unreachable because nothing maps a path to them.
+
+    This bites the moment /CLAUDE.md rule 5 is honoured: the builder is an nsite too, and it is
+    not the seller's site. Slice 5 gives it its own identity (`spike/.builder-key`) and the
+    storefront keeps the seller's. Named sites (kind `35128`, a `d` tag matching
+    `^[a-z0-9-]{1,13}$`, `5A.md:20-28`) are the mechanism for putting two sites under one
+    pubkey if that is ever wanted; spec §6.4 rules them out for v1 and nothing needs them yet.
+
+23. **The BUD-11 `Authorization` header must be standard base64, not the base64url the spec
+    requires.** See §9 — three of the four Blossom servers that will store an nsite's HTML
+    reject base64url outright, and this was the entire reason "find a second Blossom server" sat
+    open as the highest-value infrastructure task from slice 1 to slice 5. The generalisable
+    lesson is the inverse of §13.11's: there, a server returned 200 for something it had not
+    done; here, servers returned 400 for something we had done correctly. Neither a success nor
+    a failure code is evidence on its own — the only evidence is the content address coming
+    back, or the blob coming back out.
+
+24. **The gateway serves a 404 status with the `/404.html` body**, which is obvious in hindsight
+    and turns a naive `res.ok` check into a false failure. 5A.md:196 makes `/404.html` the
+    fallback for any unmatched path; the host serves it as the response to a request that did
+    not match, so the status is 404. `check-deploy.ts` hashes that body anyway and compares it
+    against the `/404.html` path tag. Cost ten minutes on the day.
