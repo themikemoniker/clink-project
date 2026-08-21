@@ -46,3 +46,20 @@ builder/public/site.json
 # Not the seller identity, hold no funds, regenerate freely.
 spike/.deploy-test-key
 spike/.builder-key
+
+# Slice 7, the refund path. NOT the seller identity and NOT the node account: .refund-key holds
+# no funds and can do exactly one thing — ask the node to pay a BOLT11, up to the frequency cap
+# on its grant. Still a private key, so still chmod 600 and still never committed.
+# Regenerate with `node spike/authorize-refunds.ts`; revoke with `--revoke`.
+spike/.refund-key
+
+# The ndebit pointer written by spike/authorize-refunds.ts. Not key material, but TLV 2 carries
+# the account pointer, same handling as spike/.nmanage (/docs/spec.md §6.1).
+spike/.ndebit
+
+# The refund journal: which oversells have been paid, keyed on the settled invoice. Local state
+# by necessity — a refund is a write and the node has nowhere to record one (spike/refund.ts).
+# It records the KIND of each buyer's pointer and never the pointer itself. Machine-specific,
+# and losing it means a paid refund could be paid twice, so back it up rather than commit it.
+spike/.refunds.json
+spike/.refunds.json.tmp

@@ -580,6 +580,22 @@ The refund itself is a kind `21002` debit from the watcher's key against the sel
 
 This is a feature, not an apology. Demo it. Sending money back to someone who never gave you an invoice is the single most persuasive thing in this project.
 
+**Built in slice 7. Three things the paragraph above did not have, and each was a decision rather than a detail.**
+
+1. **A pointer is not a destination, and the two kinds cost different things.** `render.ts` accepts a Lightning address *or* an noffer, and its placeholder is `you@yourwallet.com` — so the address is the common case. An noffer resolves to a BOLT11 over a relay, by `storefront/src/buy.ts` with the roles swapped: the watcher becomes the paying client and the *buyer's* node is the service. **A Lightning address resolves over LNURL-pay, which is HTTPS to a host we do not control.** It is not our server so it is not a rule 1 violation, but it is the only third-party dependency anywhere in this project and the first time a refund's success depends on somebody else's uptime.
+
+   The decision: **resolve both, and queue what cannot be resolved.** A failure is a `queued` row in `spike/.refunds.json` that the watcher reprints every five minutes, not a swallowed error — so a dead LNURL host becomes money the seller can hand over at the table rather than money that quietly stayed put. The buy form's hint text now says which is which, because a buyer who is asked for a pointer deserves to know that one of the two answers has a server in it.
+
+   The line for the stage, before a judge finds it: *a Lightning address is a hostname, and a hostname is a server. The noffer path has none.*
+
+2. **A refund is the project's first write, and the node has nowhere to record one.** §8's "the node holds the state" works because reading is idempotent for free; paying is not. The failure is one sentence — pay, crash before recording, restart, recompute the same oversell from the node, pay again.
+
+   The candidate tried first was CLINK's `k1`, the only single-use construct in the protocol: derive it from the settled invoice and a double refund becomes something the *node* refuses. **It collapsed on inspection, exactly where it was marked `UNVERIFIED`.** Lightning.Pub's k1 set is an in-memory array with a **5-minute TTL**, lost on restart, and it is consumed *before* validation so a refused request still burns it (findings §13.28). The derived `k1` is kept as a second layer against a crash loop; the durable answer is a journal in `spike/.refunds.json`, keyed on the settled invoice — which is the settlement identifier `/CLAUDE.md`'s idempotency rule actually names.
+
+   **It is written before the payment, not after**, because the dangerous crash is "while paying" rather than "after paying". A row left `pending` means we do not know whether money moved, and it is never retried automatically — retrying might double-pay and dropping it might strand a buyer, so it is printed until a human reconciles against the node.
+
+3. **The cap and the kill switch are the node's, and they were watched firing.** `spike/check-refund.ts` drops the grant's frequency rule to 1 sat, sends a 10-sat debit, and records `{"code":5,…,"range":{"min":1,"max":1}}`; then restores the cap, calls `BanDebit`, and records `{"code":1,"error":"Request Denied Warning"}` on a debit that was well within it. Both checks run inside the payment transaction, so a refusal is a rollback. Nothing is paid to prove either. Findings §13.29.
+
 ### 7.4 Strict mode (build behind the same interface)
 
 The intent stands: return an error instead of an invoice for a depleted item, so no payment occurs and no refund is needed.
@@ -1165,7 +1181,56 @@ not orphan the settled invoices slice 7's refund pointers live in (findings §13
   note changed, one query to load them all. Two tabs editing at once would last-write-win, which
   is a yard sale with one seller and one laptop.
 
-**Slice 7 — Refunds.** Watcher auto-refunds oversold items using the buyer pointer our page put in `payer_data` (§7.3), paying via a kind `21002` debit from a **separate watcher key** whose grant carries a node-enforced frequency cap (§11 q10). Test the cap and the `BanDebit` kill switch against a funded node *before* the demo. *Demo: the money comes back.*
+**Slice 7 — Refunds. DONE 2026-08-21.** The watcher auto-refunds oversold items using the buyer
+pointer our page put in `payer_data` (§7.3), paying via a kind `21002` debit from a **separate
+watcher key** whose grant carries a node-enforced frequency cap. The cap and the `BanDebit` kill
+switch were both driven against the funded node before anything ran unattended, and both were seen
+firing. *Demo: the money comes back.*
+
+Two new modules and three new scripts in `/spike`, one shared regex and one shared TLV parser
+lifted into `/storefront`. **Zero new dependencies in any package.**
+
+| file | what |
+|---|---|
+| `spike/ndebit.ts` | CLINK Debits kind 21002: `decodeNdebit`, `payDebit`, `payDebitBudget`, `k1For` |
+| `spike/refund.ts` | which invoice is owed money, pointer → BOLT11 (noffer *and* LNURL), the journal |
+| `spike/refund.test.ts` | 12 tests, `node --test`, same style as the other five suites |
+| `spike/authorize-refunds.ts` | the one-time grant, at the desk, with the raw key. The dance |
+| `spike/check-refund.ts` | proves the cap and `BanDebit` against the real node. Costs nothing |
+| `spike/watch-sales.ts` | `--refunds`, off by default |
+
+**1. The transport was answered in advance and the grant path was not.** Findings §10 did the
+credential work — `admin.connect` is never needed, a Debit grant with a frequency rule held by a
+separate key is the narrowest thing that permits refunds, and the node enforces the cap
+in-transaction. All of that held. What did not: §10 and the slice brief both named `EditDebit` as
+the grant path. `AuthorizeDebit` is commented out (`methods.proto:690-694`) and `EditDebit` throws
+`Debit does not exist` — it edits rules on a grant that already exists. **The only way to create
+one is for the account owner to answer a pending request**, so granting is a three-step dance:
+the refund key sends a *budget* request (no `bolt11`, nothing paid), the node pushes a
+`LiveDebitRequest` to the owner's key on the kind 21000 channel, and the owner answers
+`RespondToDebit` with `AUTHORIZE` and **its own** rules. Findings §13.27.
+
+**2. `k1` cannot carry the idempotency, and the brief said to check rather than assume.** Checked:
+the node's k1 set is in memory with a 5-minute TTL and is consumed before validation, so it covers
+a crash loop and nothing slower. The journal is the durable half. Findings §13.28, §7.3 above.
+
+**3. The one third-party server in the project is in the refund path, on purpose.** A Lightning
+address is LNURL-pay over HTTPS. Resolved, with a seller-visible queue when it fails. §7.3.
+
+### What slice 7 deliberately did not build
+
+- **No refund UI.** A browser behind a Signer cannot see the invoice it would be refunding
+  (findings §13.25), so a human in the loop would mean a terminal prompt next to the node rather
+  than a screen. Refunds are automatic, armed by `--refunds`, and bounded by the node.
+- **No partial refunds, no refund of a *non*-oversold sale.** "The buyer changed their mind" is a
+  conversation at a table, not a protocol. The watcher refunds exactly what §7.3 defines as owed.
+- **No retirement of the depleted offer**, and slice 7 is the slice entitled to revisit §7.4's
+  decision. It does not: `GetUserOfferInvoices` is the only reader of the stored refund pointer
+  and it throws once the offer row is gone (findings §13.17), so the refund path depends on
+  exactly the thing slice 6 chose to leave alone. The decision survives the slice that tested it.
+- **No `callback_url` at mint time.** Findings §13.17's other candidate would deliver `payer_data`
+  at settlement and remove the read-back dependency, at the cost of an HTTP listener on the
+  seller's machine. Polling already works and rule 1's spirit is fewer servers, not more.
 
 **Slice 8 — Fallback payment path.** BOLT11/BOLT12 for buyers without a CLINK-capable wallet, degrading to "pay and message me" semantics. This is what makes it usable by actual neighbors next month. Copy must state that a raw-QR payer forfeits the automatic refund, because they never supplied a `payer_data` pointer (§7.3).
 
@@ -1189,7 +1254,7 @@ Full answers with citations live in `/docs/spike-findings.md`; field names live 
 | 7 | nsite deploy + `/404.html` | **OPEN — needs you** (`nsyte` is a global install). NIP-5A itself read: `/404.html` confirmed required, plus the kind `10063` requirement in §6.4 |
 | 8 | Bunker prompt count for 10 items | **ANSWERED 2026-08-21 from source.** **1 prompt** with `perms` granted at connect, **5** without — both Amber and nsec.app honour `perms` for arbitrary kinds, and both key a remembered grant on `(app, type, kind)`, so twenty Blossom auths of one kind cost one approval. Under the ~15 threshold on every path; slice 4 builds as planned. Unmeasured on hardware — one confirmation run remains in findings §8 |
 | 9 | Blossom auth per upload | **Batching is permitted** — multiple `x` tags in one kind `24242` event (§5) |
-| 10 | Credential scoping for the watcher | **Better than feared.** `admin.connect` is never needed. Three levels exist (Admin / User / Guest); the refund path should use a **CLINK Debit grant held by a separate watcher key**, with a node-enforced frequency cap and `BanDebit` as the kill switch. Residual: observation still needs a User-scoped key, which implies spend authority over that account — so keep the observe key and the refund key separate, and try the credential-free loopback `callback_url` (§7.2) |
+| 10 | Credential scoping for the watcher | **CLOSED 2026-08-21 by slice 7, and it was built rather than only read.** `admin.connect` is never needed. The refund path is a **CLINK Debit grant held by a separate watcher key** (`spike/.refund-key`), with a node-enforced frequency cap and `BanDebit` as the kill switch — **both driven at the running node and seen firing**: the cap answers GFY `5` carrying `range.max`, the ban answers GFY `1`, and both checks run inside the payment transaction (findings §13.29). One correction: the grant is created by answering a pending `LiveDebitRequest` with `RespondToDebit`, **not** by `EditDebit`, which cannot create one (findings §13.27). Residual unchanged: observation still needs a User-scoped key, which implies spend authority — so the observe key and the refund key are separate and `watch-sales.ts` refuses to start if they are the same. The credential-free loopback `callback_url` was not tried; polling works and it would add an HTTP listener |
 | 11 | Guest account with its own offer? | **Yes, and slice 2 did it with no human in the loop.** *Custody consequence settled in §3.1–§3.2: the capability is real, and we use it only as an opt-in fallback for a seller with no node — never as a default.* The dev key spoke to the guest `app.nprofile`, got an account auto-created by `NostrUserAuthGuard`, and minted four offers — no pairing, no approval. **This corrects the `AuthorizeManage` assumption**: that grant gates CLINK Manage (kind 21003) only, not the native `AddUserOffer` RPC (kind 21000, `auth_type = "User"`). See findings §13.4. CLINK Enroll (kind `21004`) is still **not implemented** by Lightning.Pub 0.0.37 |
 
 **One item is still open** — 6, the wallet half only — and it has a `NEEDS HUMAN` block in the
@@ -1218,6 +1283,21 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 - The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. Note the node's outbound is currently **8,000 sats**, all of it created by test sales — three
   settled invoices, measured by `node spike/sales-report.ts` on 2026-08-21 and confirmed against
   `lncli listchannels` — refunds cannot precede sales, so set the frequency cap against what has actually been sold rather than against a round number. **Let the node enforce both**: a CLINK Debit grant carries a frequency rule (`[number, unit, max]`) checked inside the payment transaction, and `BanDebit` revokes it in one tap. Our code should not be the only thing standing between a bug and the balance.
+
+  **SATISFIED IN SLICE 7, and both were watched firing rather than asserted.** The grant is live at
+  **8,000 sats/day** on `spike/.refund-key`, with an expiry rule alongside it, set by
+  `node spike/authorize-refunds.ts`. `node spike/check-refund.ts` proves the mechanism without
+  spending anything: it moves the cap to 1 sat, sends a 10-sat debit, records
+  `{"code":5,…,"range":{"min":1,"max":1}}`, restores the cap, bans the grant, and records
+  `{"code":1,"error":"Request Denied Warning"}` on a debit the cap would have allowed
+  (findings §13.29). The kill switch is `node spike/authorize-refunds.ts --revoke`.
+
+  **Two honest caveats, because a cap that has never been crossed is not a cap.** First, 8,000/day
+  equals the node's whole outbound balance, so in normal operation the *balance* binds before the
+  rule does — which is why the proof moves the cap rather than spending the balance. Second, our
+  own code adds one guard the node cannot: a journal keyed on the settled invoice, because the node
+  has no "already refunded" field and CLINK's `k1` turned out to be in-memory with a 5-minute TTL
+  (findings §13.28). That guard is a file, and losing the file could double-pay a refund.
 - The watcher holds **no signing key at all** — it publishes kind 30402 events the seller pre-signed (§7.2). It does hold a node credential to read settlements, and that one is a **separate key** from the seller's identity and Pub account where possible: "User" scope on Lightning.Pub is not read-only, and the same credential that reads settlements can call `PayInvoice`. Slice 3's watcher currently reuses the fixture seller's throwaway `.dev-key`, because on this fixture the seller identity and the node account are one key; slice 7's refund path must not reuse it.
 - Never publish the account's default offer: its id is the account pointer, and an unauthorised debit/manage request against a known pointer pushes an approval prompt to the seller's wallet (§6.1).
 - The seller's node is the only thing holding funds, and it is theirs.

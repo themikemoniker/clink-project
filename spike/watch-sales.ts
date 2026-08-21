@@ -32,7 +32,19 @@
 // loaded while it is down shows stale stock. That is inherent to a serverless storefront, not
 // a bug to hide.
 //
+// SLICE 7 ADDED THE ONLY THING HERE THAT SPENDS. Read the block above `refundOversells` before
+// changing anything below it. The short version: refunds are off unless `--refunds` is passed,
+// they are capped by the node rather than by this file, and the seller revokes them with
+// `node authorize-refunds.ts --revoke` without touching this process.
+//
+// TWO KEYS, DELIBERATELY DIFFERENT, and this is /docs/spec.md §12 rather than fastidiousness.
+// The observe key is .dev-key, which is the seller's identity and owns the node account — and
+// "User" scope is not read-only, so it could call PayInvoice. The refund key is .refund-key,
+// which owns nothing and can only ask the node to pay an invoice up to the grant's cap. The
+// watcher holding one key that both watches and spends would make the cap decorative.
+//
 // Usage: node watch-sales.ts [--nprofile <path|nprofile1…>] [--relays wss://a,wss://b] [--once]
+//                            [--refunds]
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -41,14 +53,28 @@ import { SimplePool, getPublicKey, type Event } from 'nostr-tools'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import { decodeNoffer } from '../storefront/src/offer.ts'
 import { parseListings } from '../storefront/src/listing.ts'
-import { SALE_RELAYS } from './fixture.ts'
+import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
 import { isStale, nofferOf, targetStock } from './ladder.ts'
+import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
+import {
+  oversold,
+  readJournal,
+  resolvePointer,
+  settledByUs,
+  writeJournal,
+  type Journal,
+  type RefundState,
+  type Settled,
+} from './refund.ts'
 import { arg, connectPub } from './pub-rpc.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const KEY_FILE = join(HERE, '.dev-key')
 const OFFERS_FILE = join(HERE, '.offers.json')
 const LADDER_FILE = join(HERE, '.ladder.json')
+const REFUND_KEY_FILE = join(HERE, '.refund-key')
+const NDEBIT_FILE = join(HERE, '.ndebit')
+const JOURNAL_FILE = join(HERE, '.refunds.json')
 
 // ponytail: fixed 5s poll. A yard sale settles a handful of invoices an hour and this is the
 // seller's own node's relay; if that ever stops being true, the upgrade is the live feed as a
@@ -57,6 +83,16 @@ const POLL_MS = 5_000
 // The node is not trusted input either. A yard sale does not have this many settled invoices.
 const MAX_INVOICES = 5_000
 const ONCE = process.argv.includes('--once')
+// OFF BY DEFAULT, and the flag is the whole safety story that is ours rather than the node's.
+// Every `node watch-sales.ts` in the docs, the runbook and three slices of muscle memory keeps
+// meaning exactly what it meant in slice 3: observe and republish, spend nothing.
+const REFUNDS = process.argv.includes('--refunds')
+// How long a FAILED refund waits before it is tried again. Not a politeness delay: a failed debit
+// still consumed its k1 at the node, the k1 is derived from the settled invoice and so is
+// identical on a retry, and Lightning.Pub's k1 debouncer holds it in memory for 5 minutes
+// (K1_MAX_AGE, debitManager.ts:23). Retrying inside that window answers "K1 already processed"
+// and tries nothing. Six minutes clears it with a minute to spare.
+const RETRY_AFTER_S = 6 * 60
 const RELAYS = arg('relays', SALE_RELAYS.join(',')).split(',')
 
 if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — run seed-listings.ts first`)
@@ -65,6 +101,24 @@ if (!existsSync(LADDER_FILE)) throw new Error(`no ${LADDER_FILE} — run seed-li
 
 const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const SELLER = getPublicKey(sk)
+
+// The refund half loads only when armed, and it refuses to start half-configured rather than
+// discovering at the first oversell that it cannot pay. An oversell is the one moment this
+// process exists for; finding out then that the grant was never made is finding out too late.
+let refundSk = new Uint8Array()
+let debitNode: DebitPointer = { pubkey: '', relay: '' }
+const journal: Journal = REFUNDS ? readJournal(JOURNAL_FILE) : {}
+if (REFUNDS) {
+  if (!existsSync(REFUND_KEY_FILE)) throw new Error(`--refunds needs ${REFUND_KEY_FILE} — run authorize-refunds.ts first`)
+  if (!existsSync(NDEBIT_FILE)) throw new Error(`--refunds needs ${NDEBIT_FILE} — run authorize-refunds.ts first`)
+  refundSk = hexToBytes(readFileSync(REFUND_KEY_FILE, 'utf8').trim())
+  const decoded = decodeNdebit(readFileSync(NDEBIT_FILE, 'utf8').trim())
+  if (!decoded) throw new Error(`${NDEBIT_FILE} does not decode — re-run authorize-refunds.ts`)
+  debitNode = decoded
+  if (getPublicKey(refundSk) === SELLER) {
+    throw new Error('the refund key IS the seller key. The whole point is that it is not — /docs/spec.md §12')
+  }
+}
 
 type Minted = { noffer: string; price_sats: number }
 type Rung = { units: number; noffer?: string; steps: Event[] }
@@ -108,6 +162,12 @@ const { appPub, relays: nodeRelays, rpc, close } = connectPub(
 )
 console.log(`# node ${appPub.slice(0, 12)}… on ${nodeRelays.join(', ')}`)
 console.log(`# publishing listing updates to ${RELAYS.join(', ')}`)
+console.log(
+  REFUNDS
+    ? `# REFUNDS ARMED — oversells are paid automatically from ${getPublicKey(refundSk).slice(0, 16)}…, capped by the node.\n` +
+        `#   journal ${JOURNAL_FILE}   kill switch: node authorize-refunds.ts --revoke`
+    : `# refunds OFF. An oversell will be logged and nothing will be paid. Pass --refunds to arm them.`,
+)
 
 const pool = new SimplePool()
 
@@ -145,19 +205,19 @@ if (watching.length === 0) throw new Error('nothing left to watch — every ladd
 console.log(`# watching ${watching.length} item(s): ${watching.map(w => `${w.d}(${w.rung.units})`).join(' ')}\n`)
 
 // A settled invoice is one the node says was paid. Everything here is bounded and re-checked
-// rather than destructured off a trusted response: this is the number that decides whether an
-// item is still for sale.
-const settledCount = (res: unknown, offerId: string): number => {
+// rather than destructured off a trusted response: these are the rows that decide whether an item
+// is still for sale and, as of slice 7, who is owed money back.
+//
+// Slice 7 turned this from a count into the rows themselves. The count is still all the
+// availability half needs — `oversold(rows, 0).length` — but the refund half needs `amount` and
+// the stored `payer_data`, and re-fetching them would be a second call answering the same
+// question. Deduping and ordering live in ./refund.ts `oversold`, which is the tested one.
+const settledRows = (res: unknown, offerId: string): Settled[] => {
   const rows = (res as { invoices?: unknown }).invoices
-  if (!Array.isArray(rows)) return 0
-  const seen = new Set<string>()
-  for (const row of rows.slice(0, MAX_INVOICES)) {
-    if (typeof row?.invoice !== 'string' || row.invoice.length > 4_000) continue
-    if (row.offer_id !== offerId) continue // GetOfferInvoices filters by it; verify anyway
-    if (!(Number(row.paid_at_unix) > 0)) continue // include_unpaid:false already means this
-    seen.add(row.invoice) // the settled invoice IS the idempotency key
-  }
-  return seen.size
+  if (!Array.isArray(rows)) return []
+  return rows
+    .slice(0, MAX_INVOICES)
+    .filter(row => row?.offer_id === offerId) // GetUserOfferInvoices filters by it; verify anyway
 }
 
 // Never publish an event on the strength of where it was loaded from. The ladder is a file on
@@ -189,29 +249,170 @@ const publish = async (ev: Event) => {
 // so a poll that says the same thing as the last poll costs one RPC and nothing else.
 const lastSold = new Map<string, number>()
 
+// --- slice 7: the refund ---------------------------------------------------------------------
+//
+// THIS IS THE FIRST THING IN THE PROJECT THAT MOVES MONEY OUT. Everything above either reads the
+// node or republishes an event the seller signed at their desk. Three guards sit under it, and
+// only one of them is ours:
+//
+//   * THE NODE'S CAP. A frequency rule on the debit grant, summed over the interval and checked
+//     inside the payment transaction (assertDebitFrequency, debitManager.ts:376-401). A bug here
+//     costs at most one interval's cap. Proved firing by ./check-refund.ts.
+//   * THE NODE'S KILL SWITCH. `BanDebit`, also checked in-transaction, so it stops a payment
+//     already in flight. `node authorize-refunds.ts --revoke`.
+//   * THE JOURNAL, which is ours, and is the only one of the three that stops a DOUBLE refund
+//     rather than an oversized one. See ./refund.ts for why the node cannot hold this state and
+//     why CLINK's `k1` is a second layer rather than the answer.
+//
+// And one more, which is not a guard so much as an admission: `--refunds`. Without it this
+// process is exactly what slice 3 shipped and cannot spend. A watcher that starts paying because
+// somebody restarted it is not a thing to build by accident.
+const refundOversells = async (d: string, rows: Settled[], units: number) => {
+  for (const row of oversold(rows, units)) {
+    const done = settledByUs(journal, row.invoice)
+    if (done) {
+      // `pending` is the dangerous one and it never resolves itself: we sent a payment and never
+      // heard back, so whether money moved is unknown. Retrying might double-pay; dropping it
+      // might strand a buyer. So it is neither — it is printed, every tick, until a human
+      // reconciles against the node. That is the loud, persistent, seller-visible answer.
+      if (done.state !== 'paid') {
+        console.log(`# ${d}: REFUND ${done.state.toUpperCase()} for a ${done.sats} sat sale — ${done.note ?? ''}`)
+        if (done.state === 'pending') {
+          console.log(`#   this one was SENT and never acknowledged. Check the node's outgoing payments before rerunning.`)
+        }
+      }
+      continue
+    }
+
+    // A previously failed attempt. Retried, but not every five seconds: a failed debit still
+    // consumed its k1 at the node (DedupeK1 runs before any validation, debitManager.ts:258-262,
+    // which diverges from clink-debits.md:167-171), and that k1 is deterministic, so an immediate
+    // retry would collide with itself for the debouncer's 5-minute TTL and answer "K1 already
+    // processed" rather than trying anything.
+    const previous = journal[row.invoice]
+    const now = Math.floor(Date.now() / 1000)
+    if (previous && now - previous.at < RETRY_AFTER_S) continue
+
+    const pointer = row.data?.[REFUND_POINTER]
+    const kind = !pointer ? 'none' : decodeNoffer(pointer) ? 'noffer' : 'address'
+    const sats = Number(row.amount)
+    if (!(sats > 0)) continue
+
+    // NEVER LOG THE POINTER — /CLAUDE.md. The kind is what a seller needs to see.
+    const said = kind === 'noffer' ? 'an noffer' : kind === 'address' ? 'a Lightning address' : 'no pointer at all'
+    console.log(`# ${d}: refunding ${sats} sats to ${said}…`)
+
+    const resolved = await resolvePointer(pointer ?? '', sats)
+    if (!resolved.ok) {
+      // `queue: true` means a human is needed — no usable pointer, or the buyer's own node/host
+      // declined in a way retrying will not fix. `queue: false` is a transient host failure and
+      // gets another go on the next tick after the retry window.
+      record(row, d, sats, kind, resolved.queue ? 'queued' : 'failed', resolved.error)
+      console.log(`#   ${resolved.queue ? 'QUEUED — NEEDS YOU' : 'failed, will retry'}: ${resolved.error}`)
+      continue
+    }
+
+    // WRITE THE INTENT BEFORE THE PAYMENT. The dangerous crash is not "after paying", it is
+    // "while paying" — and a journal written after the fact cannot tell those apart. `pending`
+    // means unknown, and unknown is never retried automatically.
+    record(row, d, sats, kind, 'pending', 'sent, awaiting the node')
+
+    const paid = await payDebit(refundSk, debitNode, {
+      bolt11: resolved.bolt11,
+      amountSats: sats,
+      // Derived from the settled invoice, so a crash-loop restart re-derives the same one and the
+      // node refuses the duplicate. Five minutes of cover, in memory — ./ndebit.ts `k1For`.
+      k1: k1For(row.invoice),
+    })
+
+    if (paid.ok) {
+      record(row, d, sats, kind, 'paid', 'the node acknowledged', paid.preimage !== undefined)
+      console.log(`#   REFUNDED ${sats} sats.${paid.preimage === undefined ? ' (no preimage — which proves nothing either way, findings §5)' : ''}`)
+      continue
+    }
+
+    // code 0 is ours and means we never heard back, so the row stays `pending` — unknown, not
+    // failed. Anything else is the node saying no, which means nothing was paid and the row can
+    // safely go back to `failed` to be retried.
+    if (paid.code === 0) {
+      record(row, d, sats, kind, 'pending', paid.error)
+      console.log(`#   NO ANSWER — leaving this UNKNOWN rather than guessing: ${paid.error}`)
+      continue
+    }
+    const capped = paid.code === 5 && paid.range ? ` The node's cap is ${paid.range.max} sats per interval.` : ''
+    record(row, d, sats, kind, 'failed', `GFY ${paid.code}: ${paid.error}`)
+    console.log(`#   the node declined, GFY ${paid.code}: ${paid.error}${capped}`)
+    if (paid.code === 1) {
+      console.log(`#   code 1 usually means the grant is banned or missing. Run: node authorize-refunds.ts --show`)
+    }
+  }
+}
+
+const record = (
+  row: Settled,
+  d: string,
+  sats: number,
+  pointer: string,
+  state: RefundState,
+  note: string,
+  preimage?: boolean,
+) => {
+  journal[row.invoice] = {
+    invoice: row.invoice,
+    d,
+    sats,
+    state,
+    at: Math.floor(Date.now() / 1000),
+    pointer, // the KIND of pointer, never the pointer
+    note,
+    ...(preimage === undefined ? {} : { preimage }),
+  }
+  writeJournal(JOURNAL_FILE, journal)
+}
+
+// Everything still owed, printed on a schedule rather than once, because a line that scrolled
+// away an hour ago is not an answer to "who is owed money".
+const summarise = () => {
+  const open = Object.values(journal).filter(r => r.state !== 'paid')
+  if (open.length === 0) return
+  console.log(`\n# ${open.length} REFUND(S) NOT PAID — ${JOURNAL_FILE}`)
+  for (const r of open) {
+    console.log(`#   ${r.state.padEnd(7)} ${r.d.padEnd(28)} ${String(r.sats).padStart(7)} sats  ${r.pointer.padEnd(8)} ${r.note ?? ''}`)
+  }
+  console.log('#   `queued` and `pending` need a person. Hand the money over at the table if you must.\n')
+}
+
 const tick = async () => {
   for (const { d, rung, offerId } of watching) {
-    let sold: number
+    let rows: Settled[]
     try {
       // structs.proto:893-896 — { offer_id, include_unpaid }. include_unpaid:false makes the
       // storage layer filter on paid_at_unix > 0 (paymentStorage.ts:527-533), i.e. exactly the
       // settled set for this one item's offer.
-      sold = settledCount(await rpc('GetUserOfferInvoices', { offer_id: offerId, include_unpaid: false }), offerId)
+      rows = settledRows(await rpc('GetUserOfferInvoices', { offer_id: offerId, include_unpaid: false }), offerId)
     } catch (err) {
       console.log(`# ${new Date().toISOString()} ${d}: ${String(err).slice(0, 120)}`)
       continue
     }
-
-    if (lastSold.get(d) === sold) continue
+    // `oversold(rows, 0)` is every distinct settled invoice for this item, deduped on the invoice
+    // string — the settled invoice IS the idempotency key (spec §8).
+    const sold = oversold(rows, 0).length
 
     if (sold > rung.units) {
-      // Oversold: two buyers reached the last unit (/docs/spec.md §7.3). Slice 7 is the
-      // automatic refund; until it exists this is the loud line that tells the seller to hand
-      // money back at the table. The pointer to send it to is in this item's stored
-      // `payer_data` — which is why this watcher does NOT delete the depleted offer. See the
-      // note under `watching` above.
+      // Oversold: two buyers reached the last unit (/docs/spec.md §7.3). This used to be only a
+      // loud line telling the seller to hand money back at the table; slice 7 makes it the
+      // refund. The pointer to send it to is in this item's stored `payer_data` — which is why
+      // this watcher does NOT delete the depleted offer. See the note under `watching` above.
+      //
+      // Run BEFORE the `lastSold` early-out below, because a refund can fail on a tick where the
+      // settled count has not moved: a queued LNURL host comes back up, a `failed` row passes its
+      // retry window. Availability is driven by the count changing; refunds are driven by the
+      // journal, and they are different clocks.
       console.log(`# ${d}: OVERSOLD — ${sold} settled against ${rung.units} unit(s). Refund owed.`)
+      if (REFUNDS) await refundOversells(d, rows, rung.units)
     }
+
+    if (lastSold.get(d) === sold) continue
 
     const target = targetStock(rung.units, sold)
     if (target === rung.units) {
@@ -241,6 +442,7 @@ const tick = async () => {
 }
 
 await tick()
+if (REFUNDS) summarise()
 if (ONCE) {
   pool.close(RELAYS)
   close()
@@ -248,3 +450,6 @@ if (ONCE) {
 }
 console.log(`# polling every ${POLL_MS / 1000}s — ctrl-c to stop`)
 setInterval(() => void tick().catch(err => console.log(`# tick failed: ${String(err).slice(0, 160)}`)), POLL_MS)
+// Anything owed and unpaid, reprinted on a slow loop. A `queued` refund is money the seller still
+// owes a buyer, and a line that scrolled past forty minutes ago does not tell them that.
+if (REFUNDS) setInterval(summarise, 5 * 60_000)

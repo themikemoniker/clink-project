@@ -188,6 +188,21 @@ implicitly a request for **unrestricted access** to the `pointer`.
 - Duplicate `k1` while a session is pending SHOULD get a GFY, e.g. code `6`
   (`"K1 already processed"`, `clink-debits.md:279`).
 
+**What Lightning.Pub 0.0.37 actually does — measured on the wire 2026-08-21, slice 7. Three
+divergences, and together they disqualify `k1` as an idempotency key for anything durable.**
+Evidence and citations in `/docs/spike-findings.md` §13.28; reproduce with
+`node spike/check-refund.ts`.
+
+| the spec says | the node does |
+|---|---|
+| single-use "within the scope of the pointer", no lifetime given | in-memory array, **5-minute TTL**, swept once a minute, **lost on restart** (`debitManager.ts:19-37`; the `doNdebit` comment says so outright at `:256-257`) |
+| validation failures MUST NOT consume it | `DedupeK1` runs **before** the invoice is decoded and before any rule is checked (`debitManager.ts:258-262`), so a request the node then refuses still burns the `k1` |
+| duplicate SHOULD get e.g. code `6` | the message `"K1 already processed"` with **`code: 1`** (`debitTypes.ts:98`, `debitManager.ts:261`). **Match on the message, not the code.** |
+
+⇒ A `k1` derived from a settlement identifier is a useful *second* layer against a crash loop and
+is not a substitute for our own record. It also means a failed debit cannot be retried for ~5
+minutes, because the derived `k1` is the same one — `spike/watch-sales.ts` waits 6.
+
 ### 3.4 Response payloads
 
 `clink-debits.md:178-217`:
@@ -212,6 +227,18 @@ Responses are always addressed to the pubkey that **signed the request**
 | `4` | Rate Limited | `retry_after`: `<unix_timestamp>` (optional) |
 | `5` | Invalid Amount (outside range or budget) | `range`: `{"min":<sats>,"max":<sats>}` (optional) |
 | `6` | Invalid Request (malformed payload, missing fields) | — |
+
+**Confirmed on the wire 2026-08-21 (slice 7), for the two this project depends on.** A debit that
+exceeds the grant's frequency cap comes back as code `5` **carrying `range`**, where `max` is the
+cap the node enforced — so a client can report the number rather than the message:
+
+```json
+{"res":"GFY","code":5,"error":"Invalid Amount","range":{"min":1,"max":1}}
+```
+
+`min` is hardcoded to 1 rather than being a real floor (`ndebitFailure`, `debitTypes.ts:104-114`).
+A banned grant comes back as code `1`, `"Request Denied Warning"`. Both are produced inside the
+payment transaction, so both are refusals rather than reversals — `/docs/spike-findings.md` §13.29.
 
 ---
 

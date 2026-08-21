@@ -949,7 +949,11 @@ of that account's sats.
 rule, held by a separate watcher key.** This is the important find:
 
 - The seller authorises the watcher's pubkey once, via `AuthorizeManage`/`EditDebit`-style
-  approval in ShockWallet (`debitManager.ts:147-187`).
+  approval in ShockWallet (`debitManager.ts:147-187`). **Corrected in slice 7 — this line named
+  the wrong RPC.** `AuthorizeDebit` is commented out and `EditDebit` throws `Debit does not
+  exist` when there is no grant to edit; the only way to *create* one is for the account owner to
+  answer a pending `LiveDebitRequest` with `RespondToDebit`. Full read and the working sequence in
+  §13.27; `/spike/authorize-refunds.ts` is that sequence.
 - The grant may carry a **frequency rule** — `[number, unit, max]`
   (`debitManager.ts:406-431`). On every debit the node sums that key's debit payments over
   the interval and rejects with GFY `5` plus the `max` if the cap would be exceeded.
@@ -982,7 +986,18 @@ balance. Two mitigations, both cheap:
   and it is worth a slice-3 experiment.
 
 **No `UNVERIFIED` here except one:** whether the frequency rule can be set to a *daily* cap
-via the ShockWallet UI as opposed to the raw RPC — `UNVERIFIED`, check when pairing.
+via the ShockWallet UI as opposed to the raw RPC — `UNVERIFIED`, check when pairing. (A daily cap
+over the **raw RPC** is now verified and live: `IntervalType.DAY` with `number_of_intervals: 1`,
+set by `/spike/authorize-refunds.ts` and read back by `GetDebitAuthorizations`. The ShockWallet UI
+half is still unverified and nothing depends on it.)
+
+**Slice 7 built all of this and measured it.** Everything above was a source read; §13.27, §13.28
+and §13.29 are the wire. The three things that changed: the grant path is `RespondToDebit` and not
+`EditDebit`; the `k1` cannot carry idempotency because the node's k1 set is in memory with a
+5-minute TTL; and the cap and `BanDebit` were both seen firing, with the cap naming itself in the
+GFY `range`. The credential split this section argues for is shipped —
+`spike/.dev-key` observes, `spike/.refund-key` pays, and `watch-sales.ts` refuses to start with
+`--refunds` if they are the same key.
 
 ---
 
@@ -1407,3 +1422,144 @@ invalidate.
     timestamps are not stale — a sold-out item's live listing *is* its own last rung — and an
     item with no live listing is not judged at all, because "the relay is down" and "your ladder
     is stale" have opposite remedies.
+
+27. **`AuthorizeDebit` is commented out AND `EditDebit` cannot create a grant, so the only way to
+    authorise a debit is to answer a request the node is already holding.** Read from source and
+    then driven end to end on 2026-08-21, against the running Lightning.Pub 0.0.37.
+
+    The slice-7 brief said "`AuthorizeDebit` is commented out. `EditDebit` is the grant path."
+    The first sentence is right; the second is not, and building on it fails with
+    `Debit does not exist`.
+
+    - `AuthorizeDebit` — the whole rpc sits inside a `/* … */` block
+      (`proto/service/methods.proto:690-694`). Unreachable.
+    - `EditDebit` is live and is `auth_type = "User"`, `nostr = true`
+      (`methods.proto:696-701`), taking `DebitAuthorizationRequest { authorize_npub, repeated
+      DebitRule rules, optional request_id }` (`structs.proto:755-759`) exactly as the brief
+      describes. But its first statement is
+      `const access = await GetDebitAccess(...); if (!access) throw new Error("Debit does not
+      exist")`, and its only other statement is `UpdateDebitAccessRules`
+      (`debitManager.ts:99-105`). **It edits the rules on a grant that already exists.**
+    - `AddDebitAccess` is the only function that inserts a `DebitAccess` row, and it has exactly
+      two callers in the whole node: `debitStorage.ts:45`, which creates a row with
+      `authorize: false` on the way to a ban, and `debitManager.ts:153` inside
+      `handleAuthorization`.
+    - `handleAuthorization` is reached only from `RespondToDebit`
+      (`methods.proto:714-719`, `auth_type = "User"`, `nostr = true`), which answers a **pending**
+      request. A request only becomes pending when a debit arrives from a pubkey with no grant:
+      `doNdebit` returns `{status:'authRequired'}` and `handleAuthRequired` pushes a
+      `LiveDebitRequest` to the account's own key (`debitManager.ts:216-221`).
+
+    ⇒ **Granting is a three-step dance and there is no shorter route**, which is what
+    `/spike/authorize-refunds.ts` is:
+
+    1. the key being granted sends a kind 21002 **budget** request (`{pointer, amount_sats,
+       frequency}`, no `bolt11`). `doNdebit` branches on `frequency` before it looks at any
+       invoice (`debitManager.ts:277-301`), so **nothing is paid**.
+    2. the node pushes a `LiveDebitRequest` to the account owner's key over **kind 21000**, with
+       the fixed `requestId: "GetLiveDebitRequests"` — the same channel and the same fixed-id
+       shape as `GetLiveUserOperations` (§13.16). It is `encryptV1`, tagged `['p', owner]`
+       (`nostrPool.ts:175-183`). `/spike/pub-rpc.ts` gained an `onPush` hook to catch it.
+    3. the owner answers `RespondToDebit` with `AUTHORIZE` **and its own rules**. The node stores
+       `debit.rules` off the response verbatim (`debitManager.ts:153-157`), so the requestor
+       proposes and the owner disposes.
+
+    Two shapes that cost a round trip each and are not obvious from the proto text:
+
+    - **`DebitRule` nests its oneof under a `rule` key.** The message's only field is the oneof,
+      so the generated shape is `{ rule: { type: 'frequency_rule', frequency_rule: {…} } }`, not
+      `{ type, frequency_rule }` (`proto/autogenerated/ts/types.ts:1700-1702`, validator at
+      `:1708-1717`; the node's reader agrees at `debitTypes.ts:40-41`). Sending it flat returns
+      `invalid request body` with no field named. It comes back in the same nested shape from
+      `GetDebitAuthorizations` (`debitTypes.ts:58-83`).
+    - **`authorize_npub` is HEX, exactly as on the Manage side** (§13.19). The row stores `npub`
+      and matches it against `event.pub` (`debitStorage.ts:27-29`, fed from `debitManager.ts:250`).
+      Verified for Debits rather than inherited: `check-refund.ts` asserts the grant the node
+      reports back is 64 hex characters.
+
+    Confirmed working: `node spike/authorize-refunds.ts` produced `debit_id 1 AUTHORIZED` with
+    both a frequency rule and an expiration rule on the first run after the shape was corrected.
+
+28. **CLINK's `k1` cannot carry refund idempotency, because Lightning.Pub's k1 set is in memory
+    with a 5-minute TTL — and it is consumed by requests the node then refuses.** The slice-7
+    brief marked this `UNVERIFIED` and asked for it to be read from source rather than inferred.
+    It was, and the candidate collapses. Two separate divergences, both measured on the wire by
+    `spike/check-refund.ts` on 2026-08-21.
+
+    **(a) It does not survive a restart, and the window is 5 minutes, not 20.** `K1Debouncer` is
+    a plain array on a class instance, `K1_MAX_AGE = 1000 * 60 * 5`, swept once a minute
+    (`debitManager.ts:19-37`). The source comment in `doNdebit` says it outright: *"k1 will
+    persist in memory for up to 5 minutes before getting cleared"* (`debitManager.ts:256-257`).
+    Note this is a **different** deduper from the event-id one in §13.1, which is 20 minutes —
+    they are easy to conflate and neither is persisted.
+
+    ⇒ The proposed design — derive `k1` from the settled invoice so a double refund is refused by
+    the node — is a real second layer against a crash loop and is **not** an answer to
+    "the watcher restarted an hour later". `/spike/refund.ts` keeps the derived `k1` and adds a
+    journal keyed on the settled invoice, written before the payment, for the durable half.
+
+    **(b) A `k1` is consumed before any validation, contradicting the spec.**
+    `clink-debits.md:167-171` (quoted at `/docs/clink-notes.md` §3.3) says a `k1` is consumed when
+    the service *accepts* a request for approval or payout, and that structural and payload
+    validation failures **MUST NOT** consume it — "the requestor MAY retry the same `k1`".
+    `doNdebit` calls `DedupeK1` immediately after the pointer check, before it decodes the
+    invoice, looks up the grant, or checks any rule (`debitManager.ts:258-262`). Measured:
+
+    ```
+    first:  {"ok":false,"code":1,"error":"Request Denied Warning"}
+    second: {"ok":false,"code":1,"error":"K1 already processed"}
+    ```
+
+    The first request was refused outright (the grant was banned) and still burned the `k1`.
+
+    ⇒ **Practical consequence, and it shaped the watcher.** Our `k1` is derived from the settled
+    invoice and is therefore identical on a retry, so a refund that fails cannot be retried for up
+    to 5 minutes — the retry answers "K1 already processed" and attempts nothing.
+    `watch-sales.ts` waits `RETRY_AFTER_S = 6 minutes` before retrying a `failed` row for exactly
+    this reason.
+
+    **(c) A duplicate `k1` answers GFY code `1`, not `6`.** `clink-debits.md:279` gives code `6`
+    ("K1 already processed") as the example. Lightning.Pub returns that *message* with
+    `code: 1` (`k1AlreadyProcessedReason` at `debitTypes.ts:98`, returned at
+    `debitManager.ts:261`). **Match on the message, not the code.** Third cheap upstream PR,
+    next to the `clink_version`-on-response one (§13.2) and the missing-preimage one (§5).
+
+29. **The debit frequency cap is real, is enforced inside the payment transaction, and names
+    itself in the refusal.** Not a source read — driven at the running node by
+    `spike/check-refund.ts` on 2026-08-21, and it is the evidence `/CLAUDE.md`'s "the refund path
+    needs a hard cap and a kill switch" asks for.
+
+    With the grant's cap moved to 1 sat and a 10-sat debit sent from the refund key:
+
+    ```
+    {"ok":false,"code":5,"error":"Invalid Amount","range":{"min":1,"max":1}}
+    ```
+
+    Three things worth having:
+
+    - **The GFY names the cap.** `ndebitFailure(5, { max })` fills in `range: { min: 1, max: cap }`
+      (`debitTypes.ts:104-114`), so a client can report the number it hit rather than a message.
+      This matches `/docs/clink-notes.md` §3.5, where code `5` carries `range` — the Debits
+      envelope, `{"res":"GFY",…}`, and **not** the Offers one.
+    - **The check is in-transaction.** `assertDebitFrequency` is passed into
+      `PayAppUserInvoice` and runs inside the payment transaction against a `txId`
+      (`debitManager.ts:376-401`), summing this key's prior debit payments over the interval
+      (`checkFrequencyCap`, `:404-425`). It is not an advisory pre-check, so it holds under
+      concurrency, and a refusal is a rollback rather than a payment that was talked out of
+      happening — the probe invoice was still unsettled afterwards.
+    - **`BanDebit` stops a payment already within the cap.** The same in-transaction function
+      throws `DebitUnauthorizedError` on a ban row whether or not the grant was ever authorised
+      (`debitManager.ts:381-390`), measured as `{"ok":false,"code":1,"error":"Request Denied
+      Warning"}` on a debit that the restored 8,000-sat cap would otherwise have allowed.
+
+    **A cap set to the balance cannot fire.** The live grant is 8,000 sats/day and the node's
+    outbound is 8,000 sats, so the balance runs out before the rule does. That is still a real
+    bound on a bug — one day's worth of what the node can send — but it is not the property a cap
+    is bought for, and it is why `check-refund.ts` proves the mechanism by moving the cap down to
+    1 sat rather than by spending the balance. Say the distinction out loud rather than claiming
+    a cap that has never been crossed.
+
+    **An expiry rule deletes the grant rather than suspending it.** `validateAccessRules` calls
+    `RemoveDebitAccess` and returns GFY `3` the first time a debit arrives after
+    `expires_at_unix` (`debitManager.ts:443-449`). It fails closed, which is right, but re-arming
+    is the whole three-step dance of §13.27 again — do not let it lapse mid-demo.

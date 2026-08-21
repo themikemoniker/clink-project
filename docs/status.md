@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-21**, end of slice 6.
+Last updated: **2026-08-21**, end of slice 7.
 
 ---
 
@@ -22,8 +22,11 @@ builder now deploys the sale as a website**, hashing the storefront's files, mir
 four Blossom servers and publishing the kind 15128 manifest — and the builder itself is deployed
 as an nsite, which is the last thing `/CLAUDE.md` rule 5 was owed. **Slice 6 added the admin
 panel** — edit, restock, mark sold and private notes, all of it either a public relay read or an
-event encrypted to the seller's own key. There is no server of ours anywhere in it. Next up is
-slice 7: refunds.
+event encrypted to the seller's own key. There is no server of ours anywhere in it. **Slice 7
+closed the loop the other way: the watcher now sends money back.** An oversold item is refunded
+automatically over a CLINK Debit (kind 21002) from a separate key that holds no funds and no
+identity, capped by the seller's own node rather than by our code — and the cap and the `BanDebit`
+kill switch have both been watched firing. Next up is slice 8: the fallback payment path.
 
 **The thing slice 6 found, and it is the one to say on stage.** "View settled sales" has no CLINK
 path at all. Manage's only resource is the offer; there is no invoice or settlement resource
@@ -60,6 +63,7 @@ now a deliberate boundary rather than an accident.
 | Node | local Lightning.Pub 0.0.37 + LND, 1 private channel |
 | Node liquidity | **90,374 inbound / 8,000 outbound**, measured 2026-08-21 — drifts with every sale |
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** |
+| Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
 | Blossom | **four** servers, verified — *for anything deployed after the slice-5 fix.* Two things predate it and are still on one server each: see the two single points of failure below |
 | Storefront bundle | 31.0 KB gzip JS + 2.0 CSS + 2.4 HTML cold, + 3.9 KB QR chunk on Buy |
 | Builder bundle | **57.3 KB gzip cold** (+4.3 for slice 6), + a built storefront in `public/site` (~99 KB raw) |
@@ -107,6 +111,15 @@ node deploy-nsite.ts --key .deploy-test-key    # deploy to a throwaway, not the 
 node deploy-nsite.ts ../builder/dist --key .builder-key   # rule 5: the builder as an nsite
 node check-deploy.ts <npub>            # relays, then Blossom, then the gateway. No key needed
 node check-deploy.ts <npub> --skip-gateway     # skip the cache, check only what is true
+
+# slice 7: refunds — the only thing here that spends
+node authorize-refunds.ts              # ONCE, at the desk. Mints .refund-key, grants the debit
+node authorize-refunds.ts --show       # list grants, change nothing
+node authorize-refunds.ts --revoke     # THE KILL SWITCH. BanDebit. One call
+node authorize-refunds.ts --cap 2000   # re-cap an existing grant (EditDebit)
+node check-refund.ts                   # proves the cap AND BanDebit fire. Costs NOTHING.
+                                       # Leaves the grant REMOVED — re-run authorize-refunds.ts
+node watch-sales.ts --refunds          # slice 3's watcher, armed. Off without the flag
 
 # slice 6: the admin panel
 node check-admin.ts [<npub>]           # drives /builder's admin module against the LIVE sale.
@@ -185,7 +198,12 @@ blocks with exact commands live in `/docs/spike-findings.md`.
 
 `spike/.dev-key` is backed up to `~/.lamppost-key-backup/dev-key-2026-08-21.hex` (chmod 600,
 verified to derive the same seller pubkey). **That backup is on this machine only — get a copy
-off it.** Losing this key loses the seller identity, the storefront's npub and nsite URL, and
+off it.**
+
+**`spike/.dev-key.nsec` and `spike/.dev-key.qr.svg` are still in the working tree** — the seller's
+private key in two more formats, chmod 600 and gitignored. Asked again in slice 7 and the answer
+was to leave them because the import is imminent. **Delete both the moment the scan is done**;
+`node spike/export-key-qr.ts --yes` regenerates them in seconds if it is not. Losing this key loses the seller identity, the storefront's npub and nsite URL, and
 access to the sats in the node account.
 
 The import itself is unrun and needs a phone. `node spike/export-key-qr.ts --yes` writes the nsec
@@ -733,8 +751,150 @@ more surface than when it was written.
 
 ---
 
+## Slice 7 — what shipped, and the two things the brief had wrong
+
+Two new modules and three new scripts in `/spike`, one regex and one TLV parser lifted into
+`/storefront` so three callers share them. **Zero new dependencies in any package.**
+
+| file | what |
+|---|---|
+| `spike/ndebit.ts` | CLINK Debits kind 21002. `decodeNdebit`, `payDebit`, `payDebitBudget`, `k1For` |
+| `spike/refund.ts` | `oversold`, `resolvePointer` (noffer *and* LNURL), the journal. **The tested one** |
+| `spike/refund.test.ts` | 12 tests, `node --test`, same style as the other five suites |
+| `spike/authorize-refunds.ts` | the one-time grant, with the raw key, at the desk |
+| `spike/check-refund.ts` | proves the cap and `BanDebit` against the live node. Costs nothing |
+| `builder/src/manage.test.ts` | Phase 0: the 9 tests `decodeNmanage` shipped without in slice 4 |
+
+### 1. `EditDebit` is not the grant path, and nothing can create a grant on its own
+
+`AuthorizeDebit` is commented out — that half of the brief is right (`methods.proto:690-694`).
+But `EditDebit` opens with `if (!access) throw new Error("Debit does not exist")`
+(`debitManager.ts:99-105`): it edits rules on a grant that already exists. `AddDebitAccess`, the
+only insert, has two callers, and the only one that produces an *authorised* row is
+`handleAuthorization` — reached from `RespondToDebit`, which answers a **pending** request.
+
+So granting is a three-step dance and `authorize-refunds.ts` is that dance: the refund key sends a
+kind 21002 **budget** request (no `bolt11`, so nothing is paid), the node pushes a
+`LiveDebitRequest` to the owner's key on the kind 21000 channel with the fixed requestId
+`"GetLiveDebitRequests"`, and the owner answers `RespondToDebit` with `AUTHORIZE` **and its own
+rules** — the requestor proposes, the owner disposes. `pub-rpc.ts` gained an `onPush` hook for the
+middle step. Findings §13.27.
+
+Two shapes that each cost a round trip: **`DebitRule` nests its oneof under a `rule` key**
+(`{rule:{type:'frequency_rule',frequency_rule:{…}}}` — flat returns `invalid request body` with no
+field named), and **`authorize_npub` is HEX**, same misnomer as the Manage side, verified rather
+than inherited.
+
+### 2. `k1` cannot carry the idempotency, and a refund is the project's first write
+
+The brief's candidate was to derive CLINK's single-use `k1` from the settled invoice so a double
+refund is refused by the node. It marked the load-bearing part `UNVERIFIED` and said to read the
+source. Read: `K1Debouncer` is an in-memory array with a **5-minute TTL**, swept once a minute,
+lost on restart, and the `doNdebit` comment says so outright. Worse, `DedupeK1` runs **before** the
+invoice is decoded or any rule is checked, so a request the node then refuses still burns its `k1`
+— contradicting `clink-debits.md:167-171`. And a duplicate answers **code `1`**, not the `6` the
+spec's example gives. Findings §13.28.
+
+⇒ The derived `k1` stays as a second layer against a crash loop. The durable answer is
+`spike/.refunds.json`, keyed on the settled invoice, **written before the payment** — because the
+dangerous crash is "while paying", not "after paying". A row left `pending` is never retried
+automatically; it is reprinted every five minutes until a human reconciles against the node.
+
+That divergence also set a constant: a `failed` refund waits **6 minutes** before a retry, because
+the derived `k1` is identical on a retry and would collide with the debouncer for 5 of them.
+
+### 3. The one third-party server in the project is in the refund path, deliberately
+
+`render.ts` accepts a Lightning address or an noffer, and the placeholder is `you@yourwallet.com`
+— so the address is the common case. An noffer resolves over a relay (it is `buy.ts` with the roles
+swapped, the watcher paying and the *buyer's* node serving). A Lightning address resolves over
+**LNURL-pay, which is HTTPS to a host we do not control**.
+
+Resolved, with a **seller-visible queue** when it fails: a `queued` row in the journal, reprinted
+every five minutes, so a dead LNURL host is money the seller can hand over at the table rather than
+money that quietly stayed put. The buy form's hint text now says which of the two has a server in
+it. The stage line: *a Lightning address is a hostname, and a hostname is a server.*
+
+### 4. The cap and the kill switch, watched firing
+
+```
+# 3. the cap — dropping it to 1 sat and sending a 10-sat debit
+   node said: {"ok":false,"code":5,"error":"Invalid Amount","range":{"min":1,"max":1}}
+# 4. the kill switch — restoring the cap to 8000, then BanDebit
+   node said: {"ok":false,"code":1,"error":"Request Denied Warning"}
+# 5. k1 replay
+   second: {"ok":false,"code":1,"error":"K1 already processed"}
+```
+
+`check-refund.ts`, 21/21, and **it costs nothing**: every debit above is one the node refuses, and
+a refusal is a rollback rather than a payment talked out of happening. Both checks run inside the
+payment transaction (`assertDebitFrequency`), so they hold under concurrency and `BanDebit` stops a
+payment already in flight.
+
+**The live grant is 8,000 sats/day with a 30-day expiry**, on `spike/.refund-key`. Two honest
+caveats, both in spec §12: 8,000 equals the node's whole outbound balance, so in normal operation
+the balance binds before the rule does — which is why the proof moves the cap rather than spending
+it; and an expiry rule **deletes** the grant on first use after it lapses (GFY 3), so re-arming is
+the whole dance again. Do not let it lapse mid-demo.
+
+### Verified how
+
+```
+cd storefront && npm test          # 31/31 (+1)
+cd builder    && npm test          # 41/41 (+9), build clean, 57.37 KB gzip (+0.05)
+cd spike      && npm test          # 22/22 (+12)
+cd spike      && node check-manage.ts     # 20/20 — the mint dedupe, against the node. Then --clean
+cd spike      && node check-refund.ts     # 21/21 — the cap and the kill switch. Costs nothing
+cd spike      && node authorize-refunds.ts   # debit_id 2 AUTHORIZED, 8000/day
+cd spike      && node watch-sales.ts --once  # unarmed, unchanged from slice 3
+cd spike      && node check-buy.ts && node check-admin.ts && node sales-report.ts
+```
+
+### What is NOT proven, and it is the demo beat
+
+**No refund has actually been paid.** Every debit driven so far is one the node refused, which is
+what proves the cap and proves nothing about the happy path. Two links are untested on the wire:
+`payDebit`'s `{"res":"ok"}` branch, and `resolvePointer`'s LNURL branch.
+
+And there is a reason it could not be done incidentally: **all three settled invoices on the node
+carry `@example.com` refund pointers**, left by `check-buy.ts`. A real oversell today would
+correctly `queue` rather than pay. Proving the beat needs a fresh sale carrying a real pointer:
+
+1. `node check-buy.ts yardsale-2026-08-mugs --pay` and pay it from a real wallet, supplying **that
+   wallet's own Lightning address or noffer** as the refund pointer. 1,000 sats.
+2. Engineer the oversell — `mugs` has one unit left, so a second payment does it, or re-cut the
+   ladder with a lower `units`.
+3. `node watch-sales.ts --refunds`. The money comes back.
+
+Net cost is routing fees. It needs a wallet and a person, which is why slice 7 stopped here.
+
+**Still NOT proven: the browser half**, unchanged across slices 4, 5, 6 and now 7 —
+`/docs/prompts/browser-verify-and-deploy.md`.
+
+---
+
 ## Traps that will cost an hour each
 
+- **`AuthorizeDebit` is commented out, and `EditDebit` cannot create a grant either.** It throws
+  `Debit does not exist`. The only way to create one is to answer a pending `LiveDebitRequest` with
+  `RespondToDebit` — the three-step dance in `spike/authorize-refunds.ts`. Findings §13.27.
+- **`DebitRule` nests its oneof under a `rule` key.** `{rule:{type:'frequency_rule',frequency_rule:
+  {…}}}`. Sending it flat returns `invalid request body` naming no field.
+- **`authorize_npub` wants HEX on the Debits side too**, not just Manage. Same misnomer.
+- **CLINK's `k1` is in-memory on this node with a 5-MINUTE TTL** (not the 20 of the event-id
+  deduper — they are different sets), lost on restart, and **consumed before validation**, so a
+  refused request burns it. A duplicate answers code `1`, not `6`. Never build durable idempotency
+  on it. Findings §13.28.
+- **A debit frequency cap set to the node's balance can never fire**, because the balance binds
+  first. Prove a cap by moving it down and crossing it, not by spending.
+- **A debit expiry rule DELETES the grant** on first use after it lapses, rather than suspending
+  it (GFY 3). Re-arming is the whole authorisation dance again.
+- **`watch-sales.ts` spends only with `--refunds`.** Every other invocation is slice 3's watcher
+  exactly as it was. Do not add refunds to a default path.
+- **Losing `spike/.refunds.json` can double-pay a refund.** It is the only record that a refund
+  happened; the node has no such field. Back it up, do not commit it.
+- **Never log a refund pointer or a preimage.** The journal stores the *kind* of pointer
+  ('noffer'/'address'/'none') and whether a preimage existed, never either value.
 - **A NIP-46 bunker cannot speak kind 21000.** Every native Lightning.Pub RPC — `AddUserOffer`,
   `GetUserOffers`, `GetUserOfferInvoices`, `AuthorizeManage` — needs a raw ECDH secret NIP-46 does
   not expose (findings §13.18). In the browser it is CLINK or nothing. If you find yourself

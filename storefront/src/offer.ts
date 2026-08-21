@@ -72,6 +72,17 @@ const bigEndian = (bytes: Uint8Array | undefined): number | undefined => {
   return bytes.reduce((n, b) => n * 256 + b, 0)
 }
 
+// A Lightning address, `user@host`. It lives here rather than in render.ts as of slice 7, because
+// it stopped being a form-validation regex the moment something started *paying* what it accepts:
+// the page collects the buyer's refund pointer with it, and /spike/refund.ts resolves the same
+// string over LNURL-pay and sends money to whatever comes back. Two copies of that rule would be
+// a page accepting a pointer the watcher cannot pay, which surfaces months later as a refund that
+// went nowhere. The node itself checks only `typeof === 'string'` (offerManager.ts:139-155).
+//
+// {1,253} not {3,253} on the host: the shorter bound rejected `bob@ln.tips` and every other
+// address whose second-level domain is two characters, which is a buyer who cannot buy at all.
+export const LN_ADDRESS = /^[^\s@]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,24}$/i
+
 export const decodeNoffer = (raw: string): Offer | null => {
   if (typeof raw !== 'string' || raw.length > MAX_NOFFER || !raw.startsWith('noffer1')) return null
   let data: Uint8Array

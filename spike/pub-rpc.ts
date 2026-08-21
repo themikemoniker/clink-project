@@ -35,7 +35,22 @@ export type PubRpc = {
   close: () => void
 }
 
-export const connectPub = (sk: Uint8Array, pairing: string): PubRpc => {
+/**
+ * Watch the pushes nobody asked for.
+ *
+ * The node uses this same kind 21000 channel for unsolicited messages, tagged with a FIXED
+ * `requestId` naming the stream rather than a request of ours: `"GetLiveUserOperations"` on every
+ * settlement (paymentSideEffects.ts:107) and `"GetLiveDebitRequests"` when a debit arrives from a
+ * pubkey with no grant (debitManager.ts:216-221). Both are `encryptV1` kind 21000 events tagged
+ * to the account's own key (nostrPool.ts:175-183), so they land in the same `onevent` as an RPC
+ * reply and, until slice 7, fell on the floor because nothing was waiting on that id.
+ *
+ * Slice 7 needs one of them: `"GetLiveDebitRequests"` is the ONLY way to create a debit grant.
+ * See /spike/authorize-refunds.ts for why `EditDebit` cannot do it.
+ */
+export type OnPush = (res: any) => void
+
+export const connectPub = (sk: Uint8Array, pairing: string, onPush?: OnPush): PubRpc => {
   const pk = getPublicKey(sk)
   const nprofile = (existsSync(pairing) ? readFileSync(pairing, 'utf8') : pairing).trim()
   const decoded = nip19.decode(nprofile)
@@ -68,8 +83,11 @@ export const connectPub = (sk: Uint8Array, pairing: string): PubRpc => {
       }
       // Unsolicited pushes land here too — a settled invoice arrives with the fixed
       // requestId "GetLiveUserOperations" (paymentSideEffects.ts:107). Nothing is waiting on
-      // that id, so it falls through. See the note in watch-sales.ts on why we poll instead.
-      pending.get(res.requestId)?.(res)
+      // that id, so it falls through to `onPush` if a caller wanted it, and on the floor
+      // otherwise. See the note in watch-sales.ts on why we poll instead.
+      const waiting = pending.get(res.requestId)
+      if (waiting) waiting(res)
+      else onPush?.(res)
     },
   })
 

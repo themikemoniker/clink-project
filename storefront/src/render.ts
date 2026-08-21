@@ -6,7 +6,7 @@
 // remember to call — which is why there is no sanitiser here.
 import { requestInvoice, type Outcome } from './buy.ts'
 import { srcset, type Item, type Money, type Sale } from './listing.ts'
-import { decodeNoffer } from './offer.ts'
+import { decodeNoffer, LN_ADDRESS } from './offer.ts'
 
 // The working name, settled in slice 2. It appears twice and quietly: as the masthead when a
 // sale has no title of its own, and as a colophon — which is where a printer's mark belongs on
@@ -201,13 +201,9 @@ export const renderDetail = (item: Item): HTMLElement => {
 
 const sats = (n: number) => `${n.toLocaleString('en-US')} sats`
 
-// A Lightning address (user@host) or an noffer. Slice 7's watcher has to be able to actually pay
-// this, so the shapes accepted here are the shapes that code will handle — not "any string".
-// The node checks only `typeof === 'string'` (offerManager.ts:139-155), so a typo would sail
-// through and surface months later as a refund that went nowhere.
-// {1,253} not {3,253} on the host: the shorter bound rejected `bob@ln.tips` and every other
-// address whose second-level domain is two characters, which is a buyer who cannot buy at all.
-const LN_ADDRESS = /^[^\s@]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,24}$/i
+// A Lightning address (user@host) or an noffer. Slice 7's watcher does now actually pay this, so
+// the shapes accepted here are the shapes that code handles — `LN_ADDRESS` moved into offer.ts
+// in slice 7 so the page and /spike/refund.ts cannot drift apart on what a pointer is.
 // An noffer gets the real decoder rather than a shape regex — same checksum check we apply to
 // the seller's pointer, for the same reason: a flipped character is a wallet that is not theirs.
 const isPointer = (raw: string) => LN_ADDRESS.test(raw) || decodeNoffer(raw) !== null
@@ -312,11 +308,19 @@ export const renderBuy = (item: Item): HTMLElement | false => {
     h('label', { for: field.id }, 'Where should a refund go?'),
     // Not a dark pattern and not optional: the offer declares this key required, so the node
     // declines a payment that arrives without it (/docs/spec.md §7.3). Say why, once, plainly.
+    // Slice 7 made this copy true rather than merely reassuring. It used to say "A Lightning
+    // address or noffer" and stop, which was accurate about what the field accepts and silent
+    // about what the two cost. They are not equivalent: an noffer is paid over a relay to the
+    // buyer's own node, and a Lightning address is a hostname, which means a server that has to
+    // be up when the refund is sent. Saying so is the difference between a buyer who knows why
+    // they were asked and one who finds out from a queue entry weeks later.
     h(
       'p',
       { class: 'hint' },
       'A Lightning address or noffer. If two people buy the last one, this is where your money ' +
-        'comes back — the seller’s node will not take a payment it could not refund.',
+        'comes back — the seller’s node will not take a payment it could not refund. ' +
+        'An noffer is refunded over the same relays as this page; a Lightning address has to be ' +
+        'looked up on its provider’s server, so use an noffer if you have one.',
     ),
     field,
     submit,
