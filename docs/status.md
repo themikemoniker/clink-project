@@ -599,4 +599,5 @@ the cache instead of a person finding it on demo day.
 | `/docs/design.md` | the two design surfaces | |
 | `/builder` | the authoring app. Signer, CLINK Manage, photos, the ladder cut, the deploy | |
 | `/docs/runbook.md` | the node: install, funding, demo-day checklist | |
+| `/docs/prompts/` | session briefs for the work that comes next | |
 | this file | where we are today | goes stale fastest |
