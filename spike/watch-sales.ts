@@ -57,12 +57,14 @@ import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
 import { isStale, nofferOf, targetStock } from './ladder.ts'
 import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
 import {
+  matchingPayments,
   oversold,
   readJournal,
   resolvePointer,
   settledByUs,
   writeJournal,
   type Journal,
+  type Outgoing,
   type RefundState,
   type Settled,
 } from './refund.ts'
@@ -370,16 +372,74 @@ const record = (
   writeJournal(JOURNAL_FILE, journal)
 }
 
+// The node's recent outgoing payments, for reconciling a `pending` row against reality.
+//
+// structs.proto:616-624 — GetUserOperationsRequest is SIX cursors and a size, and
+// paymentManager.ts:1130-1135 dereferences every one of them (`req.latestOutgoingInvoice.id`)
+// with no default. A request missing any cursor throws inside the node rather than answering, so
+// they are all sent as zeros, which means "from the beginning".
+//
+// Note `latestOutgoingUserToUserPayemnts` in the RESPONSE. The typo is the node's
+// (structs.proto:657) and reading the correctly-spelled key gets undefined.
+const CURSOR = { ts: 0, id: 0 }
+const outgoingPayments = async (): Promise<Outgoing[]> => {
+  const res = (await rpc('GetUserOperations', {
+    latestIncomingInvoice: CURSOR,
+    latestOutgoingInvoice: CURSOR,
+    latestIncomingTx: CURSOR,
+    latestOutgoingTx: CURSOR,
+    latestIncomingUserToUserPayment: CURSOR,
+    latestOutgoingUserToUserPayment: CURSOR,
+    max_size: 100,
+  })) as Record<string, { operations?: Outgoing[] }>
+  // A refund leaves as an outgoing invoice payment. The user-to-user list is included because an
+  // internal transfer between two accounts on this same node lands there instead, and a buyer
+  // whose wallet is also on this Pub is not a hypothetical on a demo machine.
+  return [
+    ...(res.latestOutgoingInvoiceOperations?.operations ?? []),
+    ...(res.latestOutgoingUserToUserPayemnts?.operations ?? []),
+  ]
+}
+
 // Everything still owed, printed on a schedule rather than once, because a line that scrolled
 // away an hour ago is not an answer to "who is owed money".
-const summarise = () => {
+//
+// SLICE 8 ADDED THE RECONCILIATION HALF. A `pending` row is the one the watcher will never
+// resolve on its own — it is printed until a human checks the node — so the least this can do is
+// print what the node has that looks like it. Amount and time are all there is to match on: the
+// node stores no link back to the settled invoice that caused a debit. So it is evidence, it says
+// so, and nothing in this file branches on it.
+const summarise = async () => {
   const open = Object.values(journal).filter(r => r.state !== 'paid')
   if (open.length === 0) return
   console.log(`\n# ${open.length} REFUND(S) NOT PAID — ${JOURNAL_FILE}`)
   for (const r of open) {
     console.log(`#   ${r.state.padEnd(7)} ${r.d.padEnd(28)} ${String(r.sats).padStart(7)} sats  ${r.pointer.padEnd(8)} ${r.note ?? ''}`)
   }
-  console.log('#   `queued` and `pending` need a person. Hand the money over at the table if you must.\n')
+  console.log('#   `queued` and `pending` need a person. Hand the money over at the table if you must.')
+
+  const pending = open.filter(r => r.state === 'pending')
+  if (pending.length === 0) return console.log('')
+  let ops: Outgoing[]
+  try {
+    ops = await outgoingPayments()
+  } catch (err) {
+    console.log(`#   (could not read the node's outgoing payments: ${String(err).slice(0, 100)})\n`)
+    return
+  }
+  for (const r of pending) {
+    const hits = matchingPayments(ops, r.sats, r.at)
+    console.log(`#   ${r.d} — ${hits.length} outgoing payment(s) of ${r.sats} sats near that time:`)
+    for (const o of hits) {
+      console.log(`#     ${new Date(Number(o.paidAtUnix) * 1000).toISOString()}  ${o.operationId}${o.internal ? '  (internal)' : ''}`)
+    }
+    console.log(
+      hits.length === 0
+        ? '#     nothing matched, which SUGGESTS the debit never left. It is not proof.'
+        : '#     MATCHED ON AMOUNT AND TIME ONLY — the node stores no link to the sale. Confirm before acting.',
+    )
+  }
+  console.log('')
 }
 
 const tick = async () => {
@@ -442,7 +502,7 @@ const tick = async () => {
 }
 
 await tick()
-if (REFUNDS) summarise()
+if (REFUNDS) await summarise()
 if (ONCE) {
   pool.close(RELAYS)
   close()
@@ -452,4 +512,4 @@ console.log(`# polling every ${POLL_MS / 1000}s — ctrl-c to stop`)
 setInterval(() => void tick().catch(err => console.log(`# tick failed: ${String(err).slice(0, 160)}`)), POLL_MS)
 // Anything owed and unpaid, reprinted on a slow loop. A `queued` refund is money the seller still
 // owes a buyer, and a line that scrolled past forty minutes ago does not tell them that.
-if (REFUNDS) setInterval(summarise, 5 * 60_000)
+if (REFUNDS) setInterval(() => void summarise().catch(() => {}), 5 * 60_000)

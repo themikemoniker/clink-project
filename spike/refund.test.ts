@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { bech32 } from '@scure/base'
 import { decodeNdebit, k1For } from './ndebit.ts'
-import { lnurlpUrl, oversold, settledByUs, type Journal, type Settled } from './refund.ts'
+import { lnurlpUrl, matchingPayments, oversold, settledByUs, type Journal, type Settled } from './refund.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const bytes = (n: number, fill = 7) => new Uint8Array(n).fill(fill)
@@ -196,4 +196,64 @@ test('the name half cannot escape the well-known path', () => {
   // A query string cannot be smuggled in either — it would otherwise reach the host as real
   // parameters rather than as part of the name.
   assert.equal(lnurlpUrl('bob?amount=1@example.com'), 'https://example.com/.well-known/lnurlp/bob%3Famount%3D1')
+})
+
+// --- reconciling a `pending` row (slice 8) ---------------------------------------------------
+//
+// This one is a HEURISTIC and the tests are written to keep it honest about that. The node stores
+// no link between a debit it paid and the settled invoice that caused it, so amount and time are
+// the only handles. Everything below asserts that it stays evidence for a human rather than
+// creeping into a decision: no fuzzy amounts, no unbounded window, no confident empty answer.
+
+const op = (over: Partial<{ paidAtUnix: number; amount: number; operationId: string }> = {}) => ({
+  paidAtUnix: 1_787_000_000,
+  amount: 1000,
+  operationId: 'op-1',
+  ...over,
+})
+
+test('a pending refund matches the node payment of the same amount at about that time', () => {
+  const hits = matchingPayments([op(), op({ amount: 6000, operationId: 'op-2' })], 1000, 1_787_000_000)
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0]!.operationId, 'op-1')
+})
+
+test('the amount must match exactly, because a refund is for what the buyer paid', () => {
+  // No tolerance, deliberately. Routing fees are carried in separate fields
+  // (structs.proto:641-642) and do not move `amount`, so a near-miss here is a DIFFERENT payment
+  // and showing it to a seller as a probable match is worse than showing nothing.
+  assert.equal(matchingPayments([op({ amount: 999 })], 1000, 1_787_000_000).length, 0)
+  assert.equal(matchingPayments([op({ amount: 1001 })], 1000, 1_787_000_000).length, 0)
+})
+
+test('the window is bounded on both sides of the attempt', () => {
+  const at = 1_787_000_000
+  // Both directions matter: the journal row is written BEFORE the payment, so the node's own
+  // timestamp is normally later — but a slow answer is exactly the case that produces a `pending`
+  // row, so the window has to be wide enough to contain one and narrow enough to mean something.
+  assert.equal(matchingPayments([op({ paidAtUnix: at + 14 * 60 })], 1000, at).length, 1)
+  assert.equal(matchingPayments([op({ paidAtUnix: at - 14 * 60 })], 1000, at).length, 1)
+  assert.equal(matchingPayments([op({ paidAtUnix: at + 16 * 60 })], 1000, at).length, 0)
+  assert.equal(matchingPayments([op({ paidAtUnix: at - 16 * 60 })], 1000, at).length, 0)
+})
+
+test('two payments of the same amount both surface, because we cannot tell them apart', () => {
+  // The failure mode this protects: picking one and calling it the match. If the node has two
+  // 1,000-sat payments in the window then this refund is one of them and the software does not
+  // know which, so the seller gets both rows and decides.
+  const hits = matchingPayments(
+    [op({ operationId: 'later', paidAtUnix: 1_787_000_060 }), op({ operationId: 'earlier' })],
+    1000,
+    1_787_000_000,
+  )
+  assert.deepEqual(hits.map(h => h.operationId), ['earlier', 'later'])
+})
+
+test('a node answer of the wrong shape reconciles to nothing rather than throwing', () => {
+  // Same posture as everywhere else that reads this node: it is not trusted input either. The
+  // watcher runs unattended for the length of a yard sale and must not die printing a summary.
+  assert.deepEqual(matchingPayments(undefined, 1000, 1), [])
+  assert.deepEqual(matchingPayments({ operations: [] }, 1000, 1), [])
+  assert.deepEqual(matchingPayments([null, 'nonsense', {}], 1000, 1), [])
+  assert.deepEqual(matchingPayments([op({ paidAtUnix: NaN })], 1000, 1), [])
 })

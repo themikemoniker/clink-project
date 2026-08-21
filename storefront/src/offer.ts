@@ -83,6 +83,17 @@ const bigEndian = (bytes: Uint8Array | undefined): number | undefined => {
 // address whose second-level domain is two characters, which is a buyer who cannot buy at all.
 export const LN_ADDRESS = /^[^\s@]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,24}$/i
 
+// What counts as a refund pointer, for every party that has an opinion about one: the buy form
+// validates it, /spike/check-buy.ts refuses to settle an invoice without one, and
+// /spike/watch-sales.ts classifies a stored one before /spike/refund.ts resolves it. It lived in
+// render.ts until slice 8, where a third caller made a private const in a DOM file the wrong home
+// — a shape the page accepts and the watcher cannot pay is a refund that silently never arrives.
+//
+// An noffer gets the real decoder rather than a shape regex, for the same reason the seller's
+// pointer does: a flipped character passes any regex and addresses a wallet that is not theirs.
+export const isPointer = (raw: string): boolean =>
+  typeof raw === 'string' && (LN_ADDRESS.test(raw.trim()) || decodeNoffer(raw.trim()) !== null)
+
 export const decodeNoffer = (raw: string): Offer | null => {
   if (typeof raw !== 'string' || raw.length > MAX_NOFFER || !raw.startsWith('noffer1')) return null
   let data: Uint8Array

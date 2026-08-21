@@ -147,6 +147,37 @@ export const settledByUs = (journal: Journal, invoice: string): RefundRecord | u
   return row && row.state !== 'failed' ? row : undefined
 }
 
+// --- reconciling a `pending` row against the node -------------------------------------------
+//
+// A `pending` row means we sent a debit and never heard back, so whether money moved is unknown.
+// The watcher refuses to guess and that is correct (retrying might double-pay, dropping it might
+// strand a buyer) — but "go and look at the node's outgoing payments" is an investigation, and on
+// a demo day it is a line in a terminal nobody is reading. This turns it into a glance.
+//
+// IT IS A HEURISTIC, NOT A KEY, and it is labelled one everywhere it prints. The node stores no
+// link between a debit and the settled invoice that caused it, so all we can match on is amount
+// and time. Two refunds of the same amount inside the window are indistinguishable here. A match
+// is evidence for a human, never an input to a decision this program makes.
+export type Outgoing = { paidAtUnix: number; amount: number; operationId: string; internal?: boolean }
+
+// How far either side of the attempt to look. Wide, because the row is written BEFORE the payment
+// and the interesting failure is precisely the one where the node took a long time to answer.
+const MATCH_WINDOW_S = 15 * 60
+
+export const matchingPayments = (ops: unknown, sats: number, at: number): Outgoing[] => {
+  if (!Array.isArray(ops)) return []
+  return ops
+    .filter((o: Outgoing) => {
+      if (!o || typeof o !== 'object') return false
+      // Amount is exact: a refund is for what the buyer paid, never a rounded figure. Fees are
+      // carried in separate fields (structs.proto:641-642) and do not move this number.
+      if (Number(o.amount) !== sats) return false
+      const t = Number(o.paidAtUnix)
+      return Number.isFinite(t) && Math.abs(t - at) <= MATCH_WINDOW_S
+    })
+    .sort((a: Outgoing, b: Outgoing) => a.paidAtUnix - b.paidAtUnix)
+}
+
 // --- turning a pointer into a BOLT11 --------------------------------------------------------
 
 export type Resolved = { ok: true; bolt11: string } | { ok: false; error: string; queue: boolean }

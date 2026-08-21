@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { bech32 } from '@scure/base'
-import { decodeNoffer, invoiceSats, PRICE_FIXED, PRICE_SPONTANEOUS } from './offer.ts'
+import { decodeNoffer, invoiceSats, isPointer, PRICE_FIXED, PRICE_SPONTANEOUS } from './offer.ts'
 
 // A real noffer, minted by the running Lightning.Pub 0.0.37 through `AddUserOffer` on
 // 2026-08-20 (/spike/mint-offers.ts) and encoded by @shocknet/clink-sdk's own `nofferEncode`.
@@ -128,4 +128,45 @@ test('an invoice whose amount cannot be trusted reads as null, never as zero', (
   assert.equal(invoiceSats('not an invoice'), null)
   assert.equal(invoiceSats('lnbc99999999999999u1' + 'q'.repeat(20)), null)
   assert.equal(invoiceSats(''), null)
+})
+
+// --- what counts as a refund pointer ---------------------------------------------------------
+//
+// `isPointer` moved here from render.ts in slice 8, when /spike/check-buy.ts became a third
+// caller. It is not form validation: the page accepts a string with it, the node stores that
+// string on a settled invoice forever, and /spike/refund.ts pays whatever it resolves to. A shape
+// the page accepts and the watcher cannot pay is a refund that silently never arrives — so there
+// is one definition, and this is where it is checked.
+
+test('a refund pointer is a Lightning address or a real noffer, and nothing else', () => {
+  assert.equal(isPointer('bob@walletofsatoshi.com'), true)
+  assert.equal(isPointer(REAL), true)
+  // The bug this file's LN_ADDRESS regex actually shipped: a two-character second-level domain
+  // was rejected, which is `ln.tips` and every address like it — a buyer who could not buy.
+  assert.equal(isPointer('bob@ln.tips'), true)
+  // Trimmed, because a pasted pointer arrives with whitespace and the page trims before sending.
+  // Asserted rather than assumed: the same paste-with-a-newline gap was a real defect in
+  // decodeNmanage (/docs/known-defects.md, closed by slice 7's Phase 0).
+  assert.equal(isPointer('  bob@ln.tips\n'), true)
+})
+
+test('a pointer that is neither shape is refused rather than sent to the node', () => {
+  assert.equal(isPointer('not a pointer'), false)
+  assert.equal(isPointer('bob@'), false)
+  assert.equal(isPointer('@host.com'), false)
+  assert.equal(isPointer(''), false)
+  assert.equal(isPointer('   '), false)
+  // A BOLT11 is not a refund pointer. It is a single-use invoice for one amount that will be
+  // expired long before an oversell is detected, and accepting one here would look like it worked.
+  assert.equal(isPointer('lnbc10u1p4g07g5pp5' + 'q'.repeat(20)), false)
+  // Not a string at all — this is a stored value read back off a node, not only form input.
+  assert.equal(isPointer(undefined as unknown as string), false)
+  assert.equal(isPointer(null as unknown as string), false)
+})
+
+test('an noffer with a broken checksum is not a pointer, however address-like it looks', () => {
+  // The reason this uses the real decoder rather than a /^noffer1/ shape test: a flipped
+  // character passes any regex and addresses a wallet that is not the buyer's.
+  assert.equal(isPointer(REAL.slice(0, -1) + (REAL.at(-1) === 'q' ? 'p' : 'q')), false)
+  assert.equal(isPointer('noffer1nonsense'), false)
 })

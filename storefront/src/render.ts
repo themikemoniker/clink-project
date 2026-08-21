@@ -6,7 +6,7 @@
 // remember to call — which is why there is no sanitiser here.
 import { requestInvoice, type Outcome } from './buy.ts'
 import { srcset, type Item, type Money, type Sale } from './listing.ts'
-import { decodeNoffer, LN_ADDRESS } from './offer.ts'
+import { isPointer } from './offer.ts'
 
 // The working name, settled in slice 2. It appears twice and quietly: as the masthead when a
 // sale has no title of its own, and as a colophon — which is where a printer's mark belongs on
@@ -50,7 +50,7 @@ export const formatPrice = (price: Money | undefined): string | undefined => {
 
 // Only when there is genuinely more than one. A yard sale item is one thing unless it says so,
 // and "1 left" on every row is noise.
-const stockNote = (item: Item): string | undefined =>
+export const stockNote = (item: Item): string | undefined =>
   item.stock !== undefined && item.stock > 1 ? `${item.stock} available` : undefined
 
 const photo = (item: Item, sizes: string): HTMLElement => {
@@ -192,6 +192,23 @@ export const renderDetail = (item: Item): HTMLElement => {
 }
 
 // ---- the Buy button -------------------------------------------------------------------------
+//
+// WHY THE FUNCTIONS BELOW ARE EXPORTED, AND WHY THERE IS NO DOM HARNESS — slice 8's decision, and
+// /docs/known-defects.md carried it as one since the slice 0-5 review ("needs a DOM harness, which
+// is a new dependency and a new test style; that is a decision, not a follow-up fix").
+//
+// The measurement that settled it: this file touches `document` only inside function bodies, so
+// `await import('./render.ts')` succeeds in bare node with no globals installed. Every decision in
+// here — which copy a decline gets, whether a stock line is worth printing, how a number reads —
+// is therefore already testable, and was untested only because it was private. Exporting four
+// names cost nothing and bought ./render.test.ts.
+//
+// What is still untested is the markup itself: renderIndex, renderDetail and renderBuy build DOM
+// and there is no assertion in this repo about what they build. That is the honest boundary. It
+// needs jsdom (~2 MB of devDependency) or a browser, the browser is a session that already exists
+// (/docs/prompts/browser-verify-and-deploy.md), and the one bug this file has actually shipped —
+// LN_ADDRESS rejecting two-character second-level domains — was a decision, not markup, and is
+// now covered in offer.test.ts. Revisit if a markup bug ever ships.
 // design.md §1: "The Buy button is exempt from the metaphor. It must read as a modern, obviously
 // tappable control. This is the moment money moves; clarity beats the bit."
 //
@@ -199,21 +216,14 @@ export const renderDetail = (item: Item): HTMLElement => {
 // waiting, invoice, paid — because a purchase is the only stateful thing on this page and a
 // framework to hold four states would cost more bytes than the payment code itself.
 
-const sats = (n: number) => `${n.toLocaleString('en-US')} sats`
-
-// A Lightning address (user@host) or an noffer. Slice 7's watcher does now actually pay this, so
-// the shapes accepted here are the shapes that code handles — `LN_ADDRESS` moved into offer.ts
-// in slice 7 so the page and /spike/refund.ts cannot drift apart on what a pointer is.
-// An noffer gets the real decoder rather than a shape regex — same checksum check we apply to
-// the seller's pointer, for the same reason: a flipped character is a wallet that is not theirs.
-const isPointer = (raw: string) => LN_ADDRESS.test(raw) || decodeNoffer(raw) !== null
+export const sats = (n: number) => `${n.toLocaleString('en-US')} sats`
 
 const REFUND_POINTER = 'refund_pointer' // the key our offers declare required — /docs/spec.md §7.3
 
 // The five Offers codes (clink-offers.md:188-192), turned into something a person in a driveway
 // can act on. Codes are matched exhaustively rather than falling through to the node's own text,
 // because the node's text is written for developers.
-const declineText = (out: Extract<Outcome, { ok: false }>): string => {
+export const declineText = (out: Extract<Outcome, { ok: false }>): string => {
   switch (out.code) {
     case 1:
       return out.payerData?.length

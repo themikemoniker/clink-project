@@ -517,17 +517,40 @@ and with the key supplied, a BOLT11 (§2). Both reproduce on demand:
 Lightning.Pub `payer_data` extension to the error payload is therefore confirmed on the wire,
 not just in source, and our page reads it to re-prompt.
 
-**NEEDS HUMAN — only the wallet half now** (~5 minutes; the node is funded as of 2026-08-21)
+**DEMOTED PERMANENTLY IN SLICE 8, from source, and it can no longer change a design.** The
+question stayed open on the reasoning that it decides slice 8's fallback: *if* a third-party
+wallet could be prompted for an arbitrary `payer_data` key then there is a middle tier of buyer
+who is refundable without our page. Reading `offerManager.ts` before building on that shows the
+middle tier does not exist, whatever any wallet does. Two lines, both verified 2026-08-21:
+
+- **`payer_data` on an offer is a REQUIRED-key list, and there is no optional tier.**
+  `ValidateExpectedData` (`offerManager.ts:139-142`) returns `{passed:true, validated:{}}` the
+  moment `expectedKeys` is empty or absent. A key is required or it is not requested; the node
+  has no third state.
+- **A key the offer does not declare is DISCARDED, not stored.** The invoice is written with
+  `payer_data: validated ? { data: validated } : undefined` (`offerManager.ts:276`), and
+  `validated` is built by looping over `expectedKeys` alone (`:147-152`). So a generous wallet
+  that volunteered `refund_pointer` against an offer minted `payer_data: []` would have it
+  dropped on the floor — the settled invoice carries `{data:{}}` and the refund path finds
+  nothing.
+
+⇒ **The two tiers are the only tiers.** An offer either demands the pointer, in which case a
+wallet that cannot supply it cannot pay at all; or it does not, in which case the payment is
+unrefundable *by construction* and no wallet behaviour can rescue it. Slice 8's option (c) —
+"relax the requirement to optional" — was therefore never implementable, and this is why it was
+rejected without needing a phone. See spec §7.3.
+
+**What is left of the question is annotation, not decision** (~5 minutes, whenever a phone is
+free). It would tell us whether a CLINK wallet scanning a *raw* `noffer` gets a usable prompt,
+which would make a raw-noffer sticker work for CLINK-wallet users specifically. It does not
+change the sticker: the storefront deep link serves every wallet, and slice 8 chose it for that
+reason rather than for lack of an answer here.
 
 1. Pay one of our fixture offers' `noffer` **from ShockWallet on another device** —
-   `node -p "require('./.offers.json')['yardsale-2026-08-plants'].noffer"` prints one.
+   `node -p "require('./.offers.json')['yardsale-2026-08-lamp'].noffer"` prints one. `lamp` is
+   30,000 sats, so do not complete it — the decline is the answer and it arrives before money
+   moves.
 2. Record: does the wallet prompt for `refund_pointer`, silently fail, or show the error text?
-
-This is now a *secondary* question, and slice 2 is why. Our page is the client sending the
-21001, so the refund pointer arrives whatever a third-party wallet does. What the answer
-changes is slice 8's fallback copy: if ShockWallet cannot supply the key, then every offer we
-mint is unpayable by any wallet but ours, and the item-QR sticker in `/docs/design.md` §4 has
-to point at the item page rather than the offer. We have already assumed the worst there.
 
 Paste evidence:
 

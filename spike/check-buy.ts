@@ -11,12 +11,22 @@
 // With --pay it stops at the invoice and waits for a human to pay it from a phone, which is the
 // one thing left that no amount of code can prove — see /docs/spike-findings.md §1.
 //
-// Usage: node check-buy.ts [item-d-tag] [--pay]
+// THE REFUND POINTER IS AN ARGUMENT AS OF SLICE 8, and the reason is a defect this file shipped.
+// It hardcoded `check-buy@example.com`, so all three settled invoices on the live node carry a
+// pointer that resolves to nothing — which made slice 7's refund path unprovable by construction
+// (a real oversell today correctly `queue`s rather than pays) and left two rows open in
+// /docs/known-defects.md. A test fixture that writes unusable data into the one field the money
+// path reads back is not a placeholder, it is a slice that cannot be finished.
+//
+// So --pay now REQUIRES --pointer. An invoice that settles is a permanent row on the node
+// carrying whatever this file put in `payer_data`, and the node has no way to correct one later.
+//
+// Usage: node check-buy.ts [item-d-tag] [--pay] [--pointer <address-or-noffer>]
 //   default item = the CHEAPEST offer, because the node's inbound is rented and small
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { decodeNoffer, invoiceSats } from '../storefront/src/offer.ts'
+import { decodeNoffer, invoiceSats, isPointer } from '../storefront/src/offer.ts'
 import { requestInvoice } from '../storefront/src/buy.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -26,6 +36,23 @@ if (!existsSync(OFFERS_FILE)) throw new Error(`no ${OFFERS_FILE} — run mint-of
 type Minted = { noffer: string; price_sats: number; payer_data: string[] }
 const offers: Record<string, Minted> = JSON.parse(readFileSync(OFFERS_FILE, 'utf8'))
 const WAIT_FOR_PAYMENT = process.argv.includes('--pay')
+
+// The same shape check the buy form makes (storefront/src/offer.ts `isPointer`), run here for the
+// same reason: /spike/refund.ts is what eventually pays this, and a pointer it cannot resolve is
+// a queued row and a manual handover rather than a refund.
+const pointerArg = process.argv[process.argv.indexOf('--pointer') + 1]
+const POINTER = process.argv.includes('--pointer') ? (pointerArg ?? '') : 'check-buy@example.com'
+if (process.argv.includes('--pointer') && !isPointer(POINTER)) {
+  throw new Error(`--pointer ${JSON.stringify(POINTER)} is neither a Lightning address nor an noffer`)
+}
+if (WAIT_FOR_PAYMENT && !process.argv.includes('--pointer')) {
+  throw new Error(
+    '--pay needs --pointer <lightning-address-or-noffer>.\n' +
+      '  A settled invoice stores this value forever and it is the ONLY route the refund path has\n' +
+      '  back to the buyer. The default `check-buy@example.com` is deliberately unresolvable, and\n' +
+      '  three invoices on this node already carry it. Pass a wallet you control.',
+  )
+}
 // Cheapest first: the node has 98,160 sat of rented inbound (findings §1) and two of the four
 // fixture items are priced above it. A fixed-price offer is not range-checked, so those two
 // hand you a perfectly valid invoice that can never settle.
@@ -38,6 +65,10 @@ const offer = decodeNoffer(minted.noffer)
 if (!offer) throw new Error('the storefront refuses to decode the noffer we just minted')
 console.log(`# ${label} — ${minted.price_sats} sats`)
 console.log(`#   service ${offer.pubkey.slice(0, 12)}…  relay ${offer.relay}  priceType ${offer.priceType}  TLV price ${offer.priceSats}`)
+// NEVER LOG THE POINTER ITSELF (/CLAUDE.md, and /spike/refund.ts's header draws the same line):
+// it is a credential addressed to a wallet and the name half identifies a person. The KIND is
+// what a person running this needs to see, and it is what the journal stores too.
+console.log(`#   refund pointer: ${decodeNoffer(POINTER) ? 'an noffer' : 'a Lightning address'}${process.argv.includes('--pointer') ? '' : ' (the UNRESOLVABLE default — --pay would refuse)'}`)
 
 let failures = 0
 const check = (ok: boolean, what: string) => {
@@ -56,7 +87,7 @@ check(!declined.ok && declined.payerData?.includes('refund_pointer') === true, '
 // 2. The price-agreement check is the one that stops a node charging what it likes. Ask for the
 // same offer while expecting a different number and the page must refuse the invoice it gets.
 console.log('\n# expecting the wrong price — the page must refuse the invoice')
-const wrong = await requestInvoice(offer, { refund_pointer: 'check-buy@example.com' }, minted.price_sats + 1, label, () => {})
+const wrong = await requestInvoice(offer, { refund_pointer: POINTER }, minted.price_sats + 1, label, () => {})
 console.log(`   ${JSON.stringify(wrong)}`)
 check(!wrong.ok && wrong.code === 0, 'refused rather than displayed')
 
@@ -69,7 +100,7 @@ const settled = new Promise<{ payload: Record<string, unknown>; event: any }>(re
 })
 const paid = await requestInvoice(
   offer,
-  { refund_pointer: 'check-buy@example.com' },
+  { refund_pointer: POINTER },
   minted.price_sats,
   label,
   (payload, event) => receipt!(payload, event),
