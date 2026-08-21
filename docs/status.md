@@ -74,7 +74,7 @@ now a deliberate boundary rather than an accident.
 | Sale | kind 30405 `yardsale-2026-08`, 9 items on 4 public relays |
 | Node | local Lightning.Pub 0.0.37 + LND, 1 private channel |
 | Node liquidity | **90,374 inbound / 8,000 outbound**, measured 2026-08-21 — drifts with every sale |
-| Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** |
+| Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,000 sats** — `node spike/sales-report.ts` prints it now (`GetUserInfo`), so the number stops being a note here |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
 | Blossom | **four** servers, verified — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
 | Storefront bundle | **32.01 KB gzip JS** + 2.12 CSS + 2.4 HTML cold, + 3.91 KB QR chunk on Buy. Budget raised to 33 in slice 9, with reasoning — spec §9 |

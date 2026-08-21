@@ -1254,7 +1254,11 @@ invoice or settlement resource anywhere in CLINK. Settled sales live behind
 kind 21000 is keyed on a raw ECDH secret NIP-46 does not expose (findings §13.18). **A browser
 holding no key cannot see the seller's sales.** Findings §13.25. So the panel shows `units −
 stock` off the relays, with no credential at all, and `spike/sales-report.ts` gives amounts,
-timestamps and refund-pointer presence on the machine where the key is. It is an architectural
+timestamps, refund-pointer presence and — since the balance question came up after slice 9 — the
+account balance and what of it is still payable, on the machine where the key is. That last pair
+is `GetUserInfo` (`methods.proto:513-518`), *not* `latest_balance`: that field is on
+`LiveUserOperation` and `PayInvoiceResponse`, never on the `UserOperation` rows
+`GetUserOperations` returns. It is an architectural
 consequence of the custody claim in §3.1, and it is worth saying out loud rather than hiding.
 
 **2. An edit is a re-cut ladder, and the dangerous failure was the opposite of the predicted

@@ -109,12 +109,45 @@ for (const offer of offers) {
   })
 }
 
+// --- what is actually in the account ---------------------------------------------------------
+//
+// `sats in` above is what the offers took since the account was created. It is NOT what is left:
+// refunds (slice 7) and withdrawals both leave without touching an offer. `GetUserInfo` is the
+// only read that answers "what is in there now" — auth_type "User" and nostr-routed like every
+// other call in this file (`methods.proto:513-518`), empty request, and the balance it returns is
+// the account row itself: `balance: user.balance_sats` (`appUserManager.ts:76`).
+//
+// `max_withdrawable` is the honest companion, not decoration: `balance - max(fee, serviceFeeFloor)`
+// (`paymentManager.ts:460-467` via `appUserManager.ts:73,77`), i.e. the largest invoice this
+// account can still pay once the Pub takes its cut. That is the number that bounds a refund from
+// this side, and it is smaller than the balance.
+//
+// TWO THINGS TO SAY OUT LOUD.
+//
+//   1. This is the CUSTODIAL balance inside Lightning.Pub, not channel liquidity. A refund is
+//      bounded by whichever runs out first — this number, the node's outbound (8,000 sats when
+//      slice 7 measured it), or the CLINK Debit cap. Do not read it as "the node can send this".
+//   2. The same response carries this account's `noffer`, `ndebit` and `nmanage`
+//      (`appUserManager.ts:82-84`; an `ndebit` is a spend-authorisation pointer). Only the two
+//      integers come out of it. /CLAUDE.md keeps credentials out of logs, and a report that
+//      printed the account's own ndebit would be handing out spend authority in a scrollback.
+//
+// NOT `latest_balance`: that field exists on `LiveUserOperation` (`structs.proto:678-681`, the
+// push on every settlement) and on `PayInvoiceResponse` (`structs.proto:544`), and NOT on the
+// `UserOperation` rows `GetUserOperations` returns (`structs.proto:634-646`). Reading it off the
+// `--outgoing` rows gets `undefined`.
+//
+// A failure here must not cost the sales report, which was useful before the balance existed.
+const info = await rpc('GetUserInfo', {}).catch(() => undefined)
+const balance = Number.isFinite(Number(info?.balance)) ? Number(info.balance) : undefined
+const withdrawable = Number.isFinite(Number(info?.max_withdrawable)) ? Number(info.max_withdrawable) : undefined
+
 rows.sort((a, b) => b.sats - a.sats || a.label.localeCompare(b.label))
 const total = rows.reduce((n, r) => n + r.sats, 0)
 const count = rows.reduce((n, r) => n + r.settled, 0)
 
 if (JSON_OUT) {
-  console.log(JSON.stringify({ rows, total, count }, null, 2))
+  console.log(JSON.stringify({ rows, total, count, balance, withdrawable }, null, 2))
 } else {
   console.log(`# node ${appPub.slice(0, 12)}… on ${relays.join(', ')}`)
   console.log(`# acting as ${nip19.npubEncode(getPublicKey(sk))}`)
@@ -133,6 +166,12 @@ if (JSON_OUT) {
     )
   }
   console.log(`\n# ${count} settled invoice(s), ${total} sats received`)
+  console.log(
+    balance === undefined
+      ? '# account balance unavailable — GetUserInfo did not answer'
+      : `# ${balance} sats in the account right now, ${withdrawable} of that payable after the Pub's fee.` +
+        ' Custodial balance, not channel liquidity — a refund is bounded by both.',
+  )
   if (rows.some(r => r.settled > r.withPointer)) {
     console.log('# some settled invoices carry no refund pointer — an oversell on those cannot be paid back')
   }
