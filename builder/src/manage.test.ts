@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { bech32 } from '@scure/base'
-import { decodeNmanage } from './manage.ts'
+import { decodeNmanage, matchingOffer, type OfferData } from './manage.ts'
 
 // The real pointer written by /spike/authorize-manage.ts on 2026-08-21, against the running
 // Lightning.Pub 0.0.37, encoded by @shocknet/clink-sdk's own `nmanageEncode`. Its TLV 2 is the
@@ -135,4 +135,72 @@ test('surrounding whitespace survives a copy-paste, and nothing else does', () =
   // The seller pastes this out of `cat spike/.nmanage`, which ends in a newline.
   assert.deepEqual(decodeNmanage(`  ${REAL}\n`), decodeNmanage(REAL))
   assert.equal(decodeNmanage(REAL.replace('1', '1 ')), null)
+})
+
+// --- item 3 (2026-08-24): mintOffer deduped on the label alone --------------------------------
+//
+// `existing.find(o => o.label === label)` picked the FIRST offer sharing the label and price-
+// checked only that one. A price edit deliberately leaves the superseded offer on the node, so
+// from the first edit onward the list holds two under one label — old-price A and new-price B —
+// and `find` kept returning A, disagreeing on price, falling through, and minting C. Then D. Every
+// retry after any post-mint failure minted another.
+//
+// Testing this against the FIXTURE account would have proved nothing either way: its five offers
+// were minted natively and CLINK Manage `list` cannot see natively-minted offers at all
+// (findings §13.20), so an empty list there is correct behaviour rather than a broken fix.
+
+const beBytes = (n: number) => {
+  const out: number[] = []
+  for (let v = n; v > 0; v = Math.floor(v / 256)) out.unshift(v % 256)
+  return new Uint8Array(out.length ? out : [0])
+}
+const noffer = (offerId: string, priceSats: number) =>
+  encode({ 0: hexBytes(SERVICE_PUBKEY), 1: utf8(RELAY_URL), 2: utf8(offerId), 4: beBytes(priceSats) }, 'noffer')
+
+const offer = (label: string, id: string, priceSats: number, echoed = priceSats): OfferData => ({
+  id,
+  label,
+  price_sats: echoed,
+  payer_data: ['refund_pointer'],
+  noffer: noffer(id, priceSats),
+})
+
+test('a price edit does not mint a third offer', () => {
+  // The list after one edit: the superseded 6,000-sat offer is left on the node deliberately —
+  // deleting it would destroy the stored refund pointer of anything already paid under it
+  // (findings §13.17) — and the 7,000-sat one is the live one.
+  const existing = [offer('yardsale-2026-08-plants', 'offer-old', 6_000), offer('yardsale-2026-08-plants', 'offer-new', 7_000)]
+  const found = matchingOffer(existing, 'yardsale-2026-08-plants', 7_000, POINTER)
+  assert.equal(found?.offer.id, 'offer-new')
+  assert.equal(found?.decoded.priceSats, 7_000)
+  // And a retry at the OLD price still finds the old one rather than minting again.
+  assert.equal(matchingOffer(existing, 'yardsale-2026-08-plants', 6_000, POINTER)?.offer.id, 'offer-old')
+})
+
+test('a price nobody has minted yet has no match, so the caller mints one', () => {
+  const existing = [offer('yardsale-2026-08-plants', 'offer-old', 6_000)]
+  assert.equal(matchingOffer(existing, 'yardsale-2026-08-plants', 7_000, POINTER), undefined)
+  assert.equal(matchingOffer(existing, 'yardsale-2026-08-lamp', 6_000, POINTER), undefined)
+  assert.equal(matchingOffer([], 'yardsale-2026-08-plants', 6_000, POINTER), undefined)
+})
+
+test('the price comes from the pointer TLV 4, not from the node echo', () => {
+  // The storefront checks the noffer and not the echo, so this has to agree with what a buyer
+  // would actually be charged. An offer whose echoed price_sats says 7,000 while its pointer says
+  // 6,000 is one a buyer pays 6,000 for.
+  const lying = [offer('yardsale-2026-08-plants', 'offer-1', 6_000, 7_000)]
+  assert.equal(matchingOffer(lying, 'yardsale-2026-08-plants', 7_000, POINTER), undefined)
+  assert.equal(matchingOffer(lying, 'yardsale-2026-08-plants', 6_000, POINTER)?.offer.price_sats, 6_000)
+})
+
+test('the account default offer is never reused as an item offer', () => {
+  // Its offer_id IS the account pointer (/docs/spec.md §6.1), so publishing it on a listing hands
+  // every visitor a channel to push authorization prompts at the seller.
+  const asDefault = [offer('yardsale-2026-08-plants', POINTER, 6_000)]
+  assert.equal(matchingOffer(asDefault, 'yardsale-2026-08-plants', 6_000, POINTER), undefined)
+})
+
+test('an offer whose pointer does not decode is not reused', () => {
+  const corrupt: OfferData = { ...offer('yardsale-2026-08-plants', 'offer-1', 6_000), noffer: 'noffer1notreal' }
+  assert.equal(matchingOffer([corrupt], 'yardsale-2026-08-plants', 6_000, POINTER), undefined)
 })

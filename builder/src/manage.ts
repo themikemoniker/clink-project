@@ -167,17 +167,46 @@ export const mintOffer = async (
   priceSats: number,
 ): Promise<ManageOutcome> => {
   const existing = await listOffers(signer, node)
-  const match = existing?.find(o => o.label === label)
-  if (match) {
-    // Re-derive the price from the pointer's own TLV 4 rather than trusting `price_sats` off the
-    // same response — the storefront will check the noffer and not the echo, so this has to
-    // agree with what a buyer would actually be charged. Same rule as `reusableOffer`.
-    const decoded = decodeNoffer(match.noffer)
-    if (decoded && decoded.priceSats === priceSats && decoded.offer !== node.pointer) {
-      return { ok: true, decoded, offer: { ...match, price_sats: decoded.priceSats } }
-    }
+  return (existing && matchingOffer(existing, label, priceSats, node.pointer)) ?? createOffer(signer, node, label, priceSats)
+}
+
+/**
+ * The offer already on this account that is exactly this item at exactly this price.
+ *
+ * DEDUPE ON THE PAIR, NOT THE LABEL, and that is the 2026-08-24 fix. This used to be
+ * `existing.find(o => o.label === label)` — the FIRST offer sharing the label — and then it
+ * price-checked only that one. A price edit deliberately leaves the superseded offer on the node
+ * (see the header above), so from the first edit onward the list holds two offers under one
+ * label: the old-price A and the new-price B. `find` returned A, the price disagreed, and it fell
+ * through and minted C. Then D. Every retry after any post-mint failure minted another, which is
+ * the exact non-idempotent retry slice 7's Phase 0 was supposed to have closed.
+ *
+ * The price comes from the pointer's own TLV 4 rather than the `price_sats` the node echoes back,
+ * because the storefront checks the noffer and not the echo — so this has to agree with what a
+ * buyer would actually be charged. Same rule as `reusableOffer` in ./admin.ts.
+ *
+ * `decoded.offer !== pointer` keeps the account's DEFAULT offer out of it: its offer_id IS the
+ * account pointer, and reusing that as an item's offer would publish the seller's account pointer
+ * on a public relay (/docs/spec.md §6.1).
+ *
+ * Pure, so the dedupe rule is testable without a node. Note that testing it against the FIXTURE
+ * account proves nothing either way: those five offers were minted natively, and Manage `list`
+ * cannot see natively-minted offers at all (findings §13.20). An empty list there is correct
+ * behaviour, not a broken fix.
+ */
+export const matchingOffer = (
+  existing: OfferData[],
+  label: string,
+  priceSats: number,
+  pointer: string,
+): { ok: true; offer: OfferData; decoded: Offer } | undefined => {
+  for (const candidate of existing) {
+    if (candidate.label !== label) continue
+    const decoded = decodeNoffer(candidate.noffer)
+    if (!decoded || decoded.priceSats !== priceSats || decoded.offer === pointer) continue
+    return { ok: true, offer: { ...candidate, price_sats: priceSats }, decoded }
   }
-  return createOffer(signer, node, label, priceSats)
+  return undefined
 }
 
 /**

@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { parseListings } from '../../storefront/src/listing.ts'
 import { DEFAULT_SALE, listingD as saleListingD, type SaleDraft } from './sale.ts'
-import { blobFrom, draftFrom, imetaValues, reusableOffer, soldCount } from './admin.ts'
+import { blobFrom, draftFrom, imetaValues, noPublishSaleReason, reusableOffer, soldCount } from './admin.ts'
 import { approvalCount, eventsToSign, listingTags, type Blob, type Draft } from './listing.ts'
 import { parseNotes, MAX_NOTE } from './notes.ts'
 
@@ -234,4 +234,48 @@ test('the note map is bounded on the way in, because "our own data" is only true
   assert.equal(parseNotes(JSON.stringify({ a: 'x'.repeat(9_000) })).a!.length, MAX_NOTE)
   assert.equal(Object.keys(parseNotes(JSON.stringify(Object.fromEntries(Array.from({ length: 900 }, (_, i) => [`k${i}`, 'n'])))))
     .length, 500)
+})
+
+// --- item 3 + item 13 (2026-08-24): the same button, two ways to lose a sale -------------------
+//
+// A kind 30405 is a replacement, so the member list handed to `publishSale` IS the sale from that
+// moment on. Item 3's defect made it EMPTY (the button was live before `loadPanel`'s four-relay
+// read resolved); item 13's makes it SHORT (one slow relay). Fix one and the button can still drop
+// items, which is why the 2026-08-23 review moved item 13's quorum and show-the-count bullets into
+// milestone A — findings §13. Its refuse-to-shrink bullet stays in D.
+
+const ready = { signedIn: true, panelLoaded: true, items: 9, answered: 4, relays: 4 }
+
+test('the sale cannot be published before the panel has read the relays', () => {
+  // The exact window: showSigner() enabled the button synchronously and then fired
+  // `void loadPanel()`. `owned` is [] until that resolves, and a click in between signed a
+  // kind 30405 with zero member tags — a SECOND sale, empty, un-listing everything.
+  assert.match(noPublishSaleReason({ ...ready, panelLoaded: false, items: 0 })!, /Still reading/)
+  assert.match(noPublishSaleReason({ ...ready, signedIn: false })!, /Connect a signer/)
+  // And after the read, an empty result is still not a reason to replace a live sale with nothing.
+  assert.match(noPublishSaleReason({ ...ready, items: 0, answered: 0 })!, /empty one/)
+})
+
+test('a member list short of quorum does not publish', () => {
+  // Under a majority, the union may be missing whatever only a silent relay held.
+  assert.match(noPublishSaleReason({ ...ready, answered: 1 })!, /Only 1 of 4 relays/)
+  assert.match(noPublishSaleReason({ ...ready, answered: 2 })!, /Only 2 of 4 relays/)
+  assert.equal(noPublishSaleReason({ ...ready, answered: 3 }), undefined)
+  assert.equal(noPublishSaleReason(ready), undefined)
+  // A majority, not unanimity: one permanently unreachable relay must not block a seller forever.
+  assert.equal(noPublishSaleReason({ ...ready, answered: 2, relays: 3 }), undefined)
+  assert.match(noPublishSaleReason({ ...ready, answered: 1, relays: 3 })!, /Only 1 of 3 relays/)
+})
+
+test('the reason is a sentence, because a disabled button that says nothing is its own defect', () => {
+  for (const state of [
+    { ...ready, signedIn: false },
+    { ...ready, panelLoaded: false },
+    { ...ready, items: 0 },
+    { ...ready, answered: 0 },
+  ]) {
+    const reason = noPublishSaleReason(state)!
+    assert.equal(typeof reason, 'string')
+    assert.equal(reason.endsWith('.') || reason.endsWith('”.'), true, reason)
+  }
 })

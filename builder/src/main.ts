@@ -16,7 +16,7 @@
 // and it should not look AI-generated either — warm paper neutrals, one accent, high contrast.
 import './style.css'
 import { SimplePool } from 'nostr-tools/pool'
-import { draftFrom, loadItems, reusableOffer, soldCount, type Owned } from './admin.ts'
+import { draftFrom, loadItems, noPublishSaleReason, reusableOffer, soldCount, type Owned } from './admin.ts'
 import {
   draftFromSale,
   geohashOf,
@@ -70,6 +70,12 @@ let editing: { d: string; noffer?: string } | null = null
 // blobs that are already on Blossom and re-uploads nothing. Only this number costs signatures.
 let uploads = 0
 let owned: Owned[] = []
+// Has `loadPanel` finished at least once, and which relays contributed when it did. Both gate
+// "Publish my sale", which replaces the seller's whole collection with `owned` — so publishing
+// from a read that has not happened, or from one only a minority of relays answered, un-lists
+// real items. admin.ts `noPublishSaleReason` is the decision; these two are its inputs.
+let panelLoaded = false
+let answered: string[] = []
 let notes: Notes = {}
 // SLICE 9. The sale this browser authors under. It used to be `SALE`, imported from the spike
 // fixture, which meant every seller published our neighbourhood, our geohash and an `a` tag
@@ -113,7 +119,7 @@ const showSigner = () => {
   $('#signed-in').hidden = !signer
   $('#connect').hidden = !!signer
   $('#publish').toggleAttribute('disabled', !signer)
-  $('#publish-sale').toggleAttribute('disabled', !signer)
+  refreshSaleCost() // #publish-sale is gated on more than a signer — see admin.ts noPublishSaleReason
   $('#deploy').toggleAttribute('disabled', !signer)
   $('#refresh-items').toggleAttribute('disabled', !signer)
   $('#save-notes').toggleAttribute('disabled', !signer)
@@ -330,16 +336,43 @@ const showSale = () => {
 // and no new approval on the phone. `sign_event:30405` has been in PERMS since slice 4 and both
 // Amber and nsec.app remember a grant per (app, type, kind) — findings §8 — so a seller who
 // connected before this feature existed can publish a sale without touching their signer.
+//
+// IT ALSO OWNS THE BUTTON NOW. `#publish-sale` used to be enabled synchronously from
+// `showSigner()`, before `void loadPanel()`'s four-relay read resolved — and a click in that
+// window published a kind 30405 with an empty member list. The button's state and the sentence
+// explaining it come from one answer, so a disabled button always says why it is disabled.
 const refreshSaleCost = () => {
   const n = owned.length
-  $('#sale-cost').textContent =
-    `1 signature. It lists ${n} item${n === 1 ? '' : 's'} in the order shown below, and it is a ` +
-    `replacement — nostr has no edit — so publishing it again replaces what is there now.`
+  const reason = noPublishSaleReason({
+    signedIn: !!signer,
+    panelLoaded,
+    items: n,
+    answered: answered.length,
+    relays: RELAYS.length,
+  })
+  $('#publish-sale').toggleAttribute('disabled', !!reason)
+  // SHOW THE COUNT — item 13's second bullet. The seller is about to replace their whole
+  // collection with these N items, and until now the number was only inferable from the list.
+  $('#sale-cost').textContent = reason
+    ? `Cannot publish yet: ${reason}`
+    : `1 signature. It replaces your whole collection with these ${n} item${n === 1 ? '' : 's'}, in the order ` +
+      `shown below — nostr has no edit, only replacement. Read from ${answered.length}/${RELAYS.length} relays.`
 }
 
 const doPublishSale = async (event: SubmitEvent) => {
   event.preventDefault()
   if (!signer) return
+  // THE GUARD IS HERE, not only at the enable site. The button being disabled protects the one
+  // path; this protects every caller, including the next entry point somebody adds. The ledger
+  // named both fixes and preferred the smaller one; this is the one that survives.
+  const blocked = noPublishSaleReason({
+    signedIn: true,
+    panelLoaded,
+    items: owned.length,
+    answered: answered.length,
+    relays: RELAYS.length,
+  })
+  if (blocked) return say(blocked, 'bad')
   const draft = readSale()
   if (!draft.title) return say('Give the sale a name — it is the masthead.', 'bad')
   // A geohash the seller typed that is not one. Silently dropping it would publish a sale with no
@@ -362,7 +395,7 @@ const doPublishSale = async (event: SubmitEvent) => {
   } catch (err) {
     say(err instanceof Error ? err.message : String(err), 'bad')
   } finally {
-    $('#publish-sale').toggleAttribute('disabled', !signer)
+    refreshSaleCost()
   }
 }
 
@@ -499,6 +532,10 @@ const loadPanel = async (withNotes = true) => {
     $('#items-state').textContent = 'reading the relays…'
     const loaded = await loadItems(pool, RELAYS, await signer.getPublicKey())
     owned = loaded.items
+    // Both of these gate `#publish-sale`. `answered` is which relays actually contributed an
+    // event, not which were asked — see admin.ts `loadItems`.
+    answered = loaded.answered
+    panelLoaded = true
     // SLICE 9. The sale comes off the relays rather than off the spike fixture, and its `d` is
     // what every item's `d` is prefixed with — so this has to land before the panel renders, or
     // `draftFrom` measures each item against the wrong prefix and every Edit button disappears.
@@ -510,7 +547,7 @@ const loadPanel = async (withNotes = true) => {
     if (withNotes) notes = await loadNotes(signer, pool, RELAYS)
     renderItems()
     $('#items-state').textContent =
-      `${owned.length} item(s) on ${RELAYS.length} relays` +
+      `${owned.length} item(s), read from ${answered.length}/${RELAYS.length} relays` +
       (loaded.sale ? ` · sale “${loaded.sale.title}”` : ' · no sale published yet — section 3')
     $('#notes-wrap').hidden = owned.length === 0
     $('#stickers-wrap').hidden = owned.length === 0
@@ -520,6 +557,11 @@ const loadPanel = async (withNotes = true) => {
     $('#notes-cost').textContent =
       '1 signature, however many notes you changed — they are one encrypted event, not one each.'
   } catch (err) {
+    // The read failed, so nothing below is safe to publish a replacement from. Both flags go back
+    // rather than being left at whatever the last successful load said.
+    panelLoaded = false
+    answered = []
+    refreshSaleCost()
     $('#items-state').textContent = ''
     say(err instanceof Error ? err.message : String(err), 'bad')
   } finally {
