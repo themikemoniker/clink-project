@@ -246,7 +246,7 @@ made, not duration.
 | **B** | Nothing on the critical path is unexecuted | 6, 7, 8 | ⚑ — **6 is now unblocked** |
 | **C** | A sale you can change from your phone | M1, 11, M2, M3 | |
 | **D** | Runs unattended for a weekend | 12, **13 (refuse-to-shrink only)**, 14 | |
-| **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26 | ⚑ |
+| **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26, **27** | ⚑ — 27's first bullet is liftable earlier |
 | **F** | The seller can see their own business | M4, M5 | liftable earlier |
 | **G** | A shop rather than one weekend | M6, M7, M8 | |
 | **∥** | Upstream — runs alongside, gates nothing | 20, 21, 22 | ⚑ |
@@ -468,8 +468,15 @@ private address or feed it an unbounded body. Two things to know before the run:
   without anybody deciding it should. `node authorize-refunds.ts --cap <n>` re-caps in one call.
 
 Every debit driven so far is one the node **refused**. That proves the cap and proves nothing
-about the happy path. `payDebit`'s `{"res":"ok"}` branch and `resolvePointer`'s LNURL branch
-have never executed on the wire.
+about the happy path. `payDebit`'s `{"res":"ok"}` branch has never executed on the wire.
+`resolvePointer`'s LNURL branch is now **half** proven: on 2026-08-24 its first hop reached a real
+host — `walletofsatoshi.com`, 200 and a clean parse in 246 ms, so DNS, the address vetting, TLS
+against the hostname and the bounded read all work. Hop 2 has still never run: no real
+`payRequest` has been parsed and no callback has returned a `pr`.
+- **The pointer must be an LNURL-pay address, and Phoenix is not one.** A BIP-353 address
+  (`…@phoenixwallet.me`) is the same `user@domain` shape and resolves to nothing this path can
+  use — item 27, measured 2026-08-24. Wallet of Satoshi, Alby, Coinos, Blink or an `noffer` all
+  work. Getting this wrong burns the oversell on a refund that cannot complete.
 - `mugs` is already **sold out 3/3**, and a depleted offer stays payable (findings §13.17) — so
   a single `node check-buy.ts yardsale-2026-08-mugs --pay --pointer <a wallet you control>` **is**
   the oversell. No restocking, no second payment. 1,000 sats.
@@ -701,6 +708,8 @@ rather than a bug. Right now the page presents stale stock as current.
 closed it in milestone A on 2026-08-24. What is left is the half that was always separate:
 - Distinguish "this item has no offer" from "this item's offer disagrees with its price tag" —
   `noBuyReason` currently collapses both into one unhelpful sentence.
+- **Item 27 is the same class and is worse**, because that dead end is only reached *after* the
+  buyer has paid: a BIP-353 refund pointer is accepted at buy time and is useless at refund time.
 
 **18. Make redeploying safe**
 The nsite gateway sends `max-age=3600` and serves the previous build until it lapses. The current
@@ -731,6 +740,35 @@ question in `docs/prompts/browser-verify-and-deploy.md` since then and nothing h
   (which makes item 10's "gone forever if lost" protection meaningful rather than incidental), or
   move now, before anything else prints or publishes that URL.
 - Either answer is fine. Leaving it unanswered while the URL spreads is the one that is not.
+
+**27. A Phoenix buyer cannot be refunded, and nothing says so until after the sale**
+`LN_ADDRESS.test()` cannot tell a BIP-353 address from an LNURL-pay one — they are the same
+`user@domain` shape — so `resolvePointer` builds a `/.well-known/lnurlp/…` URL for a host that
+serves no HTTPS at all. **Measured 2026-08-24**: `phoenixwallet.me` has NS records on Route 53 and
+no A or AAAA record, no `www`/`api`/`app` either. What it has is a TXT record at
+`<name>.user._bitcoin-payment.<domain>` carrying a `bitcoin:?lno=…` BOLT12 offer. Phoenix is a
+mainstream wallet, so this is the common case for one popular wallet rather than an edge one.
+
+Found by running `resolvePointer` against a real address for the first time — the thing
+`docs/known-defects.md` had recorded as never done since slice 7. It cost one free call, and no
+offline test could have found it: every address a test server can bind is one `isPrivateAddress`
+correctly refuses.
+
+- **Say the true reason.** When the LNURL hop fails to resolve, look up the BIP-353 TXT record; if
+  it answers, the `queued` row should read *"that is a BIP-353 address and this refund path speaks
+  LNURL-pay"* rather than naming DNS. Cheap, and it is the difference between a seller who hands
+  the money over at the table and one who files a bug. **Liftable earlier than the rest of E.**
+- **Then decide the buy side, which is the larger half and is a decision rather than a fix.**
+  Should `isPointer` refuse a pointer the refund path cannot use? It would move the failure from
+  *after* the sale to *before* it — a settled invoice stores the pointer forever and the node
+  cannot fix it afterwards (`docs/spike-findings.md` §13.17). But refusing means turning away
+  Phoenix buyers outright, and a manual refund at the table may well be the better trade for a
+  yard sale. **Name the answer; do not let it be decided by whichever code path someone edits
+  first.** Related to item 17: this is a dead end the buyer only meets once the money is gone.
+- **Paying a BOLT12 offer is a feature, not a fix, and it is not this item.** `payDebit` sends a
+  BOLT11, and whether this Lightning.Pub can pay an offer at all is **UNVERIFIED**. That is a
+  spike, and it lands after item 6 has proved the ordinary path.
+- Ledger row with the full reasoning is in `docs/known-defects.md`, "Added by milestone A".
 
 ### Milestone F — The seller can see their own business
 
