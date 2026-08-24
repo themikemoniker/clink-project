@@ -241,7 +241,24 @@ export const loadItems = async (
   // one of this seller's events", which is the honest measurement available. It is NOT "sent
   // EOSE" — a relay that connects and times out its EOSE looks the same as an empty one, and
   // nostr-tools reports EOSE only in aggregate (`oneose` fires once, for all of them).
+  //
+  // CLEAR IT FIRST, and this line is the whole of the 2026-08-24 fix. `seenOn` is a Map on the POOL
+  // (abstract-pool.js:698) that is only ever added to — never cleared, never expired — and main.ts
+  // holds ONE pool for the session. `loadItems` runs on connect, after every item publish, and on
+  // every "Reload my items"; an unchanged item keeps its event id across all of them. So a relay
+  // that answered once was still counted as answering forever, and the gate turned into a ratchet
+  // in the direction that protects nobody:
+  //
+  //   t0  damus + nos.lol answer, two relays time out  -> answered 2, blocked. Correct.
+  //   t1  seller presses "Reload my items", as the message tells them to. band answers, damus is
+  //       now down, so `items` is short by whatever only damus held — but damus is still in seenOn
+  //       from t0, so answered is 3, the quorum PASSES, and publishing un-lists a real item.
+  //
+  // That is the kind 30405 replacement dropping members, which is the loss item 13's quorum bullet
+  // was moved into milestone A to close. `items` comes from THIS query; `answered` has to as well.
+  // `loadItems` is the only reader of `seenOn` in this codebase, so clearing it costs nothing.
   pool.trackRelays = true
+  pool.seenOn.clear()
   const events = await pool.querySync(relays, { kinds: [LISTING_KIND, SALE_KIND], authors: [pubkey] })
   const answered = new Set<string>()
   for (const ev of events) for (const relay of pool.seenOn.get(ev.id) ?? []) answered.add(relay.url)

@@ -365,19 +365,19 @@ confirmed and deliberately not fixed, none left in limbo.
 - ~~`refund.ts:257`~~ and ~~`refund.ts:221`~~ **— both reproduced, both fixed. See item 4.**
 - ~~`builder/index.html:206`~~ **Fixed (`63eb718`).** The copy now says what `sales-report.ts`
   actually prints: a refundable **count**, never a pointer.
-- ~~`spike/watch-sales.ts:327`~~ **— CONFIRMED at `:335`, and this roadmap's reading of it was
+- ~~`spike/watch-sales.ts:327`~~ **— CONFIRMED at `:369`, and this roadmap's reading of it was
   wrong.** The bullet said the MUST binds only when TLV 3 is present, "so a `k1` sent without one
   is not obviously forbidden". `docs/clink-notes.md` §3.3, quoting `clink-debits.md:163-172`, has
   two bullets, and the second is *"Absent ⇒ the wallet MUST NOT invent one."* Our `.ndebit` carries
   no TLV 3 and we invent one. Not fixed — removing it loses the crash-loop guard and buys nothing
   back, and doing it properly is a session ndebit per refund, which is a design change. Ledger row,
   and a candidate for the upstream track beside 21 and 22.
-- ~~`builder/src/admin.ts:82`~~ **— CONFIRMED, and this repo already held the citation.**
+- ~~`builder/src/admin.ts:86`~~ **— CONFIRMED, and this repo already held the citation.**
   `storefront/src/listing.ts:111-113` reads `58.md:31`, `58.md:34` and Gamma `spec.md:135` and says
   the dimension is optional; `blobFrom` requires it. The parser and the re-publisher disagree, in
   writing, in this repo. Not fixed: it is unreachable from anything this project writes (both
   writers always emit `WxH`), and the fix changes what gets signed on the edit path. Ledger row.
-- ~~`builder/src/main.ts:507`~~ **— CONFIRMED from the code path.** `loadPanel` calls `showSale()`
+- ~~`builder/src/main.ts:544`~~ **— CONFIRMED from the code path.** `loadPanel` calls `showSale()`
   unconditionally and `loadPanel(false)` runs after every item publish. The file already guards the
   same hazard for notes one line below. **The user-visible half is UNVERIFIED** — `loadPanel`
   returns early without a signer, and a signer needs the phone, so it belongs to item 7. Ledger row.
@@ -420,7 +420,7 @@ command and one restore procedure.
 
 **~~24. The only tool that reports money is hardcoded to one seller~~ — CLOSED 2026-08-23
 (`ac87512`), before this milestone's PR.** `spike/sales-report.ts:56` is `arg('key', '.dev-key')`,
-matching `watch-sales.ts:80`, and the ladder and offers paths beside it got the same `suffixed()`
+matching `watch-sales.ts:83`, and the ladder and offers paths beside it got the same `suffixed()`
 treatment. Exercised again by item 10's restore drill, which reads both accounts from a restore.
 
 **~~25. An empty string satisfies a required `payer_data` key~~ — CLOSED 2026-08-24 (`35b6621`),
@@ -536,7 +536,7 @@ and today costs a file copy and a daemon restart every single time. M1 also resh
 12, so building D first means building parts of it twice.
 
 **M1. The ladder has to travel over a relay, not a USB stick**
-Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:293`: *"Save it as
+Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:298`: *"Save it as
 `.ladder.json` next to `watch-sales.ts`, then restart the watcher."* The seller downloads a file
 from their browser, copies it onto the machine running the daemon, and restarts a process. Miss
 the step and either `isStale` refuses to watch the item, or the watcher publishes rungs the relay
@@ -549,7 +549,7 @@ watcher to every item that device never published.
   30078 — but **encrypt to the watcher's pubkey, not to the seller's own key.** `notes.ts` is
   encrypt-to-self because only the seller's browser ever reads it; here the *watcher* has to
   decrypt, and only a holder of the seller's private key can open a self-encrypted payload. It
-  holds one today (`watch-sales.ts:112` reads `.dev-key`) purely because the fixture seller and
+  holds one today (`watch-sales.ts:115` reads `.dev-key`) purely because the fixture seller and
   the node account are one identity — a coincidence spec §12 says should be a separate key "where
   possible". Encrypting to self would turn that coincidence into a requirement. The shape is
   `notes.ts`'s; the recipient is not.
@@ -599,7 +599,7 @@ pasted per browser and stored in `localStorage`, so a seller on a new device is 
 
 **M3. Retire an item, and edit a fiat one**
 Two holes in the edit form that have nothing to do with each other except that both are refusals.
-- **Fiat items cannot be edited at all.** `builder/src/admin.ts:112` returns `null` for any
+- **Fiat items cannot be edited at all.** `builder/src/admin.ts:116` returns `null` for any
   currency that is not sats, so `records` at 80 MXN can never be changed — the guard exists
   because a sats-only form would republish it as 80 sats, which is right, but "refuse forever" is
   not the only way to be right. Carry currency and amount through the form as a display price
@@ -749,7 +749,7 @@ that can call `GetUserOfferInvoices`, and the watcher can publish.
   publishes it as a kind 30078 under **a third key** — not `.dev-key` and not `.refund-key`. The
   browser subscribes and decrypts.
 - **The "watcher holds no signing key" line is already false, and knowing that is what makes this
-  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:112`) and signs kind
+  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:115`) and signs kind
   21000 with it (`pub-rpc.ts:97-99`). So the ledger's stated reason for keeping the refund journal
   off a relay — "the watcher holds no signing key by design, so it cannot publish a record of what
   it did" — is wrong on the facts. What slice 3 actually guarantees is narrower: the watcher signs

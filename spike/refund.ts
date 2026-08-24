@@ -373,7 +373,11 @@ const payRequestCallback = (body: unknown, msat: number): string | null => {
 // identifies a person. See the header of this file.
 const FETCH_TIMEOUT_MS = 10_000
 const MAX_BODY_BYTES = 64 * 1024
-const MAX_REDIRECTS = 3
+// Eight, not three. Three was measured against a lab host and is under what a real wallet provider
+// costs: an apex-to-www redirect, a `/.well-known` rewrite and a CDN region hop is already three
+// before anything unusual happens, and exceeding the cap is a PERMANENT failure here — a `queued`
+// row that is never retried. A cap exists to stop a loop, and eight stops a loop just as well.
+const MAX_REDIRECTS = 8
 
 // A 4xx is the host saying "this address does not exist here", which no amount of retrying fixes;
 // a 5xx or a socket error is the host having a bad minute. They need opposite handling — one is a
@@ -414,11 +418,25 @@ export const isPrivateAddress = (ip: string): boolean => {
     return a >= 224 // multicast, reserved, broadcast
   }
 
-  const s = ip.toLowerCase()
-  // ::ffff:127.0.0.1 must not launder loopback past the rules above.
-  const mapped = /^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/.exec(s)
-  if (mapped) return isPrivateAddress(mapped[1]!)
-  if (s.startsWith('::')) return true // ::, ::1 and the rest of the reserved ::/96 block
+  // NORMALISE BEFORE TESTING ANYTHING, because this function used to fail OPEN on the one class it
+  // exists to catch. `0::1` and `0:0:0:0:0:0:0:1` are loopback, neither starts with `::`, and
+  // `parseInt('0', 16)` is 0, which matches none of the masks below — so both were ALLOWED
+  // (measured 2026-08-24, along with `0:0:0:0:0:ffff:10.0.0.1`). The docstring above promised the
+  // opposite, which is the worse half: a guard that reads as a guarantee and is not one.
+  //
+  // WHATWG URL is the platform's own IPv6 canonicaliser and it is already a dependency of nothing —
+  // `new URL` is a global. It answers `::1` for every spelling of loopback, and it rewrites the
+  // dotted IPv4-mapped forms to hex (`::ffff:127.0.0.1` -> `::ffff:7f00:1`), so the `::` prefix
+  // rule below now catches every mapped address including the public ones. That is stricter than
+  // before and deliberately so: an IPv4-mapped address in a DNS answer for a wallet host is not a
+  // thing that happens legitimately, and this is the direction to be wrong in.
+  let s: string
+  try {
+    s = new URL(`http://[${ip.toLowerCase()}]`).hostname.slice(1, -1)
+  } catch {
+    return true // it parsed as IPv6 above and will not normalise here: refuse rather than guess
+  }
+  if (s.startsWith('::')) return true // ::, ::1, every IPv4-mapped form, and the reserved ::/96
   if (s.startsWith('64:ff9b:')) return true // NAT64, which carries an embedded IPv4 address
   const head = Number.parseInt(s.split(':')[0] || 'zz', 16)
   if (!Number.isFinite(head)) return true
@@ -483,6 +501,28 @@ const fetchHop = async (url: string, deadline: number): Promise<Hop> => {
   if (remaining <= 0) throw new Error('out of time before the request was sent')
 
   return new Promise<Hop>((resolve, reject) => {
+    // A WALL-CLOCK DEADLINE. `req.setTimeout` was here and it is an IDLE timeout — `socket.setTimeout`
+    // fires after N ms of INACTIVITY, not N ms of elapsed time. Measured 2026-08-24: a host sending
+    // one byte every 600 ms held a request whose "deadline" was 1,000 ms open for 24.6 seconds, and
+    // the timeout never fired. At one byte per 9.9 s a host stays under both this and MAX_BODY_BYTES
+    // for a week.
+    //
+    // The cost of that is not the refund, it is the watcher. `refundOversells` is awaited inside
+    // `tick`, `tick` is wrapped in `inFlightGuard`, and that guard DROPS the polls queued behind it —
+    // so one slow host chosen by one buyer stops stock republishing, ladder rungs and sold-out
+    // marking for as long as it cares to trickle. That is the oversell this slice exists to refund.
+    //
+    // `fetch` had this for free: `AbortSignal.timeout` aborts the body read too. Losing it was the
+    // real cost of the transport change and it was not visible in the diff.
+    let killer: ReturnType<typeof setTimeout> | undefined
+    const done = (hop: Hop) => {
+      clearTimeout(killer)
+      resolve(hop)
+    }
+    const fail = (err: Error) => {
+      clearTimeout(killer)
+      reject(err)
+    }
     const req = httpsRequest(
       {
         host: addresses[0],
@@ -491,24 +531,32 @@ const fetchHop = async (url: string, deadline: number): Promise<Hop> => {
         port: u.port || 443,
         path: u.pathname + u.search,
         method: 'GET',
-        headers: { host: u.host, accept: 'application/json' },
+        // `identity` because we do not decompress. RFC 7231 §5.3.4: a request with NO
+        // accept-encoding lets the server use ANY content-coding — absence is not a refusal. `fetch`
+        // sent `gzip, deflate` and decompressed transparently; `node:https` does neither, so a host
+        // that gzipped would hand JSON.parse a gzip stream. That throws a SyntaxError, which is not
+        // a PermanentHttpError, so the row journals `failed` and retries every six minutes forever
+        // — a permanent failure wearing a transient label, and no `queued` line to tell the seller.
+        headers: { host: u.host, accept: 'application/json', 'accept-encoding': 'identity' },
       },
       res => {
         const status = res.statusCode ?? 0
         const location = typeof res.headers.location === 'string' ? res.headers.location : undefined
         if (status >= 300 && status < 400 && location) {
           res.resume()
-          return resolve({ location, body: '' })
+          return done({ location, body: '' })
         }
         if (status < 200 || status >= 300) {
           res.resume()
-          return reject(status >= 400 && status < 500 ? new PermanentHttpError(`HTTP ${status}`) : new Error(`HTTP ${status}`))
+          return fail(status >= 400 && status < 500 ? new PermanentHttpError(`HTTP ${status}`) : new Error(`HTTP ${status}`))
         }
-        readBounded(res, MAX_BODY_BYTES).then(body => resolve({ body }), reject)
+        readBounded(res, MAX_BODY_BYTES).then(body => done({ body }), fail)
       },
     )
-    req.setTimeout(remaining, () => req.destroy(new Error('timed out')))
-    req.on('error', reject)
+    // Subsumes the idle timeout it replaced: this fires at `remaining` ms of elapsed time, which is
+    // always at or before the moment an idle timer of the same length could.
+    killer = setTimeout(() => req.destroy(new Error('deadline exceeded')), remaining)
+    req.on('error', fail)
     req.end()
   })
 }

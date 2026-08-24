@@ -1229,7 +1229,12 @@ which for the first time includes markup that only exists on paper. See below.
   itself, refuses any private or reserved address, and connects to that exact address with
   `servername` and `Host` set — `dns.resolve()` then `fetch()` cannot work, because `fetch`
   re-resolves and the address vetted is not the address connected to. Redirects are followed by us,
-  three at most, vetted per hop. Bodies are counted in bytes off the stream.
+  eight at most, vetted per hop. Bodies are counted in bytes off the stream, under a wall-clock
+  deadline, and the request asks for `accept-encoding: identity` because it does not decompress.
+  **The review that followed corrected three things in that transport — an idle timeout that read as
+  a deadline, the transparent gzip decoding that went out with `fetch`, and a redirect cap of three
+  that a real wallet host would exceed. `/docs/spec.md` §12 has the measurements.** If you touch
+  this path, that paragraph is the one to read: every one of the three was invisible in the diff.
 - **A required `payer_data` key is satisfied by ANY string, including the empty one.**
   `ValidateExpectedData` checks only `typeof payerData[key] !== 'string'`. The guarantee that a
   payment which could not be refunded is declined is **our page's** (`render.ts` gates on

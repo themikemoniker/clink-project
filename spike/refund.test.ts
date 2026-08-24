@@ -314,6 +314,16 @@ test('every address an SSRF actually aims at is refused', () => {
     '::', '::1', 'fd00::1', 'fc00::1', 'fe80::1', 'ff02::1',
     '::ffff:127.0.0.1', '::ffff:10.0.0.1', // an IPv4-mapped form must not launder loopback
     '64:ff9b::7f00:1', // NAT64 carries an embedded v4
+    // UNCOMPRESSED SPELLINGS, and every one of these was ALLOWED until 2026-08-24. None starts with
+    // `::`, so the prefix rule missed them, and `parseInt('0', 16)` matches none of the masks — the
+    // function failed OPEN on plain loopback while its docstring promised it failed closed. The fix
+    // is to canonicalise through `new URL` first; these are the cases that prove it stays fixed.
+    '0:0:0:0:0:0:0:1', '0::1', '0000:0000:0000:0000:0000:0000:0000:0001',
+    '0:0:0:0:0:ffff:127.0.0.1', '0:0:0:0:0:ffff:10.0.0.1',
+    // Canonicalising rewrites the dotted mapped forms to hex, so the `::` rule now catches the
+    // public ones too. Stricter than before and deliberately: an IPv4-mapped address in a DNS
+    // answer for a wallet host is not a thing that happens legitimately.
+    '::ffff:8.8.8.8',
   ]) {
     assert.equal(isPrivateAddress(ip), true, `${ip} should be refused`)
   }
@@ -378,9 +388,9 @@ test('the redirect chain is capped, and each hop is re-checked for https', async
         hops++
         return { location: 'https://wallet.example/lnurlp/x', body: '' }
       }),
-    /more than 3 redirects/,
+    /more than 8 redirects/,
   )
-  assert.equal(hops, 4, 'the first request plus three redirects, and then it stops')
+  assert.equal(hops, 9, 'the first request plus eight redirects, and then it stops')
 
   await assert.rejects(
     () => getJson('https://wallet.example/a', async () => ({ location: 'http://wallet.example/b', body: '' })),

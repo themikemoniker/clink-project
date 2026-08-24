@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { parseListings } from '../../storefront/src/listing.ts'
 import { DEFAULT_SALE, listingD as saleListingD, type SaleDraft } from './sale.ts'
-import { blobFrom, draftFrom, imetaValues, noPublishSaleReason, reusableOffer, soldCount } from './admin.ts'
+import { blobFrom, draftFrom, imetaValues, loadItems, noPublishSaleReason, reusableOffer, soldCount } from './admin.ts'
 import { approvalCount, eventsToSign, listingTags, type Blob, type Draft } from './listing.ts'
 import { parseNotes, MAX_NOTE } from './notes.ts'
 
@@ -265,6 +265,44 @@ test('a member list short of quorum does not publish', () => {
   // A majority, not unanimity: one permanently unreachable relay must not block a seller forever.
   assert.equal(noPublishSaleReason({ ...ready, answered: 2, relays: 3 }), undefined)
   assert.match(noPublishSaleReason({ ...ready, answered: 1, relays: 3 })!, /Only 1 of 3 relays/)
+})
+
+// The quorum is only worth having if the number it counts is THIS read. `pool.seenOn` is a Map on
+// the pool that is only ever added to, and main.ts holds one pool for the session — so before
+// 2026-08-24 a relay that answered once counted as answering forever, and the gate could be walked
+// past by pressing the "Reload my items" its own error message tells the seller to press.
+test('a relay that answered a previous load is not counted as answering this one', async () => {
+  const { event } = publishedAs(draft())
+  // A stub in the shape the library actually has: querySync returns the union, and seenOn
+  // accumulates across calls because nothing in nostr-tools ever clears it (abstract-pool.js:698).
+  const seenOn = new Map<string, Set<{ url: string }>>()
+  const pool = {
+    trackRelays: false,
+    seenOn,
+    querySync: async (_relays: string[], _filter: unknown) => {
+      for (const url of answering) {
+        const set = seenOn.get(event.id) ?? new Set<{ url: string }>()
+        set.add({ url })
+        seenOn.set(event.id, set)
+      }
+      return [event]
+    },
+  }
+  const relays = ['wss://a', 'wss://b', 'wss://c', 'wss://d']
+  let answering = ['wss://a', 'wss://b']
+
+  const first = await loadItems(pool as never, relays, pk)
+  assert.deepEqual(first.answered.sort(), ['wss://a', 'wss://b'])
+
+  // The seller presses reload. `a` is down now and `c` answers instead — still two of four, so the
+  // list is still short and publishing must still be refused.
+  answering = ['wss://b', 'wss://c']
+  const second = await loadItems(pool as never, relays, pk)
+  assert.deepEqual(second.answered.sort(), ['wss://b', 'wss://c'])
+  assert.match(
+    noPublishSaleReason({ ...ready, items: second.items.length, answered: second.answered.length })!,
+    /Only 2 of 4 relays/,
+  )
 })
 
 test('the reason is a sentence, because a disabled button that says nothing is its own defect', () => {
