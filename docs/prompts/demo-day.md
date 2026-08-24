@@ -47,10 +47,17 @@ waiting on chain sync. That is a worse demo and an honest one.
 
 ## 0.2 Rehearse the exact payment you intend to do on stage
 
-**The Mérida sub-account has never received money.** It has issued invoices — `check-buy.ts`
-proved the full CLINK round trip, typed decline on a missing `refund_pointer`, price-mismatch
-refusal, real BOLT11 — but no sats have ever landed in it. That is the single largest unproven
-thing in the demo.
+~~**The Mérida sub-account has never received money.**~~ **SUPERSEDED — it was paid on
+2026-08-21T22:13:28Z, hours after this paragraph was written, and nothing reported it until
+2026-08-23.** `node sales-report.ts --key .merida-key` now shows `artesanias-jabon`, 800 sats, one
+settled invoice, refundable. It arrived over the channel rather than internally — `lncli
+listchannels` reads 9,800 local against the two accounts' 9,000 + 800, and an internal transfer
+would have left channel local untouched. The reason it went unnoticed is that `sales-report.ts`
+hardcoded `.dev-key` and had no `--key` flag, so no command in this repo could see this account.
+Original text: **The Mérida sub-account has never received money.** It has issued invoices —
+`check-buy.ts` proved the full CLINK round trip, typed decline on a missing `refund_pointer`,
+price-mismatch refusal, real BOLT11 — but no sats have ever landed in it. That is the single
+largest unproven thing in the demo.
 
 ```bash
 cd spike

@@ -1,0 +1,809 @@
+# Lamppost
+
+Publish a yard-sale page and take Lightning payments on it, with no hosting account, no
+domain, no TLS certificate, no payment processor, and no server of ours.
+
+The sale page is a static site hosted on Nostr (NIP-5A manifest + Blossom blobs). The
+listings are Nostr events (NIP-99 kind 30402, grouped by a kind 30405 sale). Payments are
+negotiated over Nostr with **CLINK** and settle to the seller's own Lightning node.
+The seller's identity, storefront, listings, and money are all one pubkey.
+
+### The claim
+
+> An LNURL storefront cannot exist on a static host, because LNURL needs an HTTPS endpoint
+> to mint invoices. CLINK requests travel over relays to the seller's own node, so a purely
+> static, serverless site can take money.
+
+This is not a claim any more — 6,000 sats settled over it on 2026-08-21, from a page served
+out of a Blossom cache with nothing of ours in the path.
+
+### The honest caveats
+
+- The seller's node must be **online**. It needs no public IP, no DNS, no TLS, and no open
+  port — but it is a process running somewhere. A laptop that sleeps is a shop that closes.
+- "No hosting account" rests on public Blossom servers accepting anonymous uploads. We do
+  not run one and do not have an account; that is true and is the point. It is not "no
+  infrastructure exists."
+- **Receipts are private.** The CLINK receipt is NIP-44 encrypted to the payer and is a MAY,
+  not a MUST. Nobody but the buyer can read it — not even the seller. This costs real
+  features; see "What holding no key costs" below.
+- No escrow, no chargebacks. Default to in-person pickup.
+
+---
+
+## Repo layout
+
+| Path | What it is |
+|---|---|
+| `storefront/` | Buyer-facing sale page. Static, reads listings from public relays, sends CLINK requests. **32 KB gzip.** |
+| `builder/` | Seller-facing authoring app. Static, holds no key, deploys itself as an nsite. |
+| `spike/` | Throwaway scripts that touch a real node and a raw key: minting offers, the sale watcher, refunds, deploys. Not part of the product build. |
+| `shots/` | Playwright screenshot capture for the submission PDF. |
+| `docs/` | See the document map at the bottom. Read `docs/status.md` first. |
+
+Node 24+ — it runs the `.ts` files in `spike/` directly, no build step. Each directory is its
+own package; there is no monorepo tooling.
+
+```bash
+cd storefront && npm install && npm run dev     # http://localhost:5173
+cd builder    && npm install && npm run dev     # builds the storefront first, so install that too
+```
+
+The builder carries a pre-built copy of the storefront in `public/site` (that is what it
+deploys), so `npm run dev`/`build` in `builder/` shells out to a storefront build — install
+`storefront/`'s dependencies before either.
+
+Tests are `node --test`, no framework: `npm test` in `storefront/`, `builder/`, or `spike/`.
+In the two app directories, `npm run size` prints raw and gzip bytes per asset — the storefront
+has a **33 KB gzip budget**, enforced by review rather than by a tool.
+
+Live, both served from Blossom with no host of ours in the path:
+
+- Storefront — `https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.nsite.lol/`
+- Builder — `https://npub1qqm97k4eg432zydvkclnhhnkyd7dgjxmndmaapk48jzms9uyl5qqlerxa2.nsite.lol/`
+
+One build of the storefront serves every seller: it reads its own npub out of
+`location.hostname` (NIP-5A), so nothing is compiled per seller. `?seller=npub1…` is the dev
+fallback. Gateways cache for up to an hour, so a page you just deployed may serve the previous
+build for a while.
+
+---
+
+## Setup
+
+Two halves. The buyer half is genuinely trivial. The seller half is one bootstrap step and
+then a browser.
+
+### Buyer — ShockWallet, and nothing else
+
+[ShockWallet](https://shockwallet.app) is CLINK's reference wallet (named as such in
+`clink-offers.md:345-350`, alongside Lightning.Pub as the reference server). A buyer:
+
+1. Opens the storefront, taps **Buy**, pastes a refund pointer (a Lightning address or
+   `noffer` — the form refuses without one, deliberately: a settled invoice stores that value
+   forever and the node cannot fix it afterwards).
+2. Scans the BOLT11 the page got back over relays, or scans the item's sticker QR, which
+   encodes a storefront deep link rather than a raw `noffer`.
+
+That is the whole buyer setup. No account, no app-store detour if they already have a
+Lightning wallet, no extension.
+
+### Seller — do you need to run a node?
+
+**Yes, someone does.** ShockWallet is a wallet, not a node service; it does not host CLINK
+offers. What it *can* do is hold your account **on somebody else's Lightning.Pub** — which is
+the genuinely easy path, and the one to reach for first.
+
+**Option A — no node of your own (easiest).** A Lightning.Pub operator gives you their guest
+pairing string (`~/lightning_pub/app.nprofile` on their machine — this is *not*
+`admin.connect`, it carries no admin authority). Paste it into ShockWallet and you have an
+account on that node, created on your first authenticated call. Each account gets its own
+independently-addressable offers, so one community Pub can host a market of sellers
+(`docs/spike-findings.md` §11). Trade-offs, stated plainly: the node operator sees every
+request, one Pub down is every seller down, and your sats rest in their node — that is
+custody, and `docs/spec.md` §3.1 says so out loud.
+
+**Option B — your own Lightning.Pub.** `docs/runbook.md` has the install gotchas measured on
+a real macOS box, including the LND log-path bug that puts the node in a crash-restart loop,
+and the liquidity finding that actually matters: you **cannot** bootstrap an empty node by
+depositing on-chain — Pub pays the LSP out of a liquidity balance that is 0 on a fresh
+install. Rent inbound instead. 7,157 sat bought 100,000 inbound for 90 days on 2026-08-21.
+
+Either way, pair ShockWallet to the node. Scan with **Add Source**.
+
+### The one step ShockWallet does not do for you yet
+
+The builder signs through NIP-07 or a NIP-46 bunker and never touches a key. That is
+non-negotiable (rule 2), and it has one hard consequence:
+
+> A bunker exposes `sign_event` and `nip44_*`, but **not raw ECDH**. Lightning.Pub's native
+> kind 21000 RPC is encrypted with a key derived from the private key itself, so **a bunker
+> cannot speak kind 21000 at all.** Every node call the builder makes is CLINK kind 21003, or
+> it does not happen. (`docs/spike-findings.md` §13.18)
+
+CLINK Manage cannot bootstrap its own grant — `validateGrantAccess` needs a grant row for
+every requestor, the owner included, and the only RPC that creates one is `AuthorizeManage`,
+which is kind 21000. So exactly one call in the whole seller path needs the raw key, once, at
+the desk:
+
+```bash
+cd spike
+node authorize-manage.ts                          # your own node, default key
+node authorize-manage.ts --key .my-key --nprofile nprofile1…   # a guest account on someone else's Pub
+```
+
+It prints an `nmanage1…` pointer. Paste that into the builder and nothing in the authoring
+path ever needs a raw key again.
+
+**Could ShockWallet replace even that step? Structurally yes, and this is worth checking.**
+The node already has the wallet-side approval loop: an *ungranted* requestor sending a 21003
+makes `handleAuthRequired` push a `GetLiveManageRequests` message to the account owner's key
+"for ShockWallet to display", and the owner answers with `AuthorizeManage` — both kind 21000,
+`auth_type = "User"`, i.e. exactly what a paired wallet can speak and a browser behind NIP-46
+cannot (`docs/spike-findings.md` §13.19, `methods.proto:672-727`). Same three-step dance as
+the refund debit grant, which we *have* driven end to end (§13.27).
+
+**Whether ShockWallet's shipped UI surfaces that prompt is `UNVERIFIED`** — we granted
+ourselves first, which skips it entirely, so we have never seen the prompt render. The check
+is cheap: pair ShockWallet, point the builder at an account with no grant, send one 21003,
+and see whether the wallet asks. If it does, Option A becomes zero scripts and the seller
+never leaves their phone. The same `UNVERIFIED` applies to setting the refund debit's daily
+cap from the wallet UI rather than over the raw RPC.
+
+The portable fix for all of this is **CLINK Enroll (kind 21004)**, which provisions an account
+and hands back `noffer`/`ndebit`/`nmanage` in one flow. The client SDK ships it;
+Lightning.Pub 0.0.37 does not implement it (`actionKinds = [21000, 21001, 21002, 21003]`).
+The account-provisioning step is written as one swappable function for the day it lands.
+
+### Then, in the browser
+
+1. Open the builder, connect a signer (NIP-46 bunker recommended — Amber or nsec.app).
+   Grant the `perms` string on connect; it is the difference between **1 approval and 5** for
+   a 10-item publish.
+2. Paste the `nmanage1…` pointer. Author items — the builder mints each item's offer on your
+   node over CLINK Manage, with `refund_pointer` marked required.
+3. Publish, then deploy. The builder hashes the storefront's files, mirrors them to four
+   Blossom servers, and publishes the kind 15128 manifest. Your sale is a website.
+4. Run the watcher next to your node, one process per seller:
+
+```bash
+cd spike
+node watch-sales.ts              # observe settlement, republish stock. Holds NO signing key.
+node watch-sales.ts --refunds    # arm auto-refunds. Off without the flag.
+node authorize-refunds.ts        # ONCE, before --refunds. Mints a separate key, grants a capped debit.
+node authorize-refunds.ts --revoke   # THE KILL SWITCH. One call.
+```
+
+The watcher holds no signing key: an item's stock can only count down, so the seller
+pre-signs every future stock state at publish time and the watcher just picks the right one
+off the shelf. Refunds go out over a CLINK Debit from a key that holds no funds and no
+identity, capped **by your node** rather than by our code — a bug in our watcher costs at most
+one day's cap, and you can revoke without touching this repo. The cap and the `BanDebit` kill
+switch have both been watched firing.
+
+---
+
+## What holding no key costs
+
+One thing, and it is the most interesting finding in the project: **the seller's own browser
+cannot see the seller's own sales.** Manage's only resource is the offer — there is no invoice
+or settlement resource anywhere in CLINK — and the node's `GetUserOfferInvoices` rides kind
+21000, which is keyed on the raw ECDH secret a bunker will not expose. So "view settled sales"
+has no CLINK path at all.
+
+The honest answer is two answers: the admin panel derives units-sold from the public relays
+for free, and `node spike/sales-report.ts` gives you the money, on the machine where the key
+already lives. (`docs/spike-findings.md` §13.25)
+
+---
+
+## Rules this codebase enforces
+
+Not preferences. Violating any of these destroys the pitch.
+
+1. **No backend.** No server, no database, no accounts, no API of ours.
+2. **No key handling outside the Signer.** No nsec anywhere else — not in memory, not in
+   config, not in logs.
+3. **No node credentials leave the browser.** `admin.connect` is `nprofile:token` with full
+   node authority. It is never in this repo, in config, in logs, or on a screen.
+4. **No secrets in the repo.** CI signing is NIP-46.
+5. **The builder itself deploys as an nsite.** If our own app needed a server, the thesis
+   would be false. It doesn't; it's live.
+
+And one working rule that matters more than it sounds: **never guess a protocol detail.**
+No CLINK kind, field, tag, or error code goes into this codebase from memory. It comes from a
+spec file, source, or captured event JSON, and it is citable — or it is marked `UNVERIFIED`
+and someone asks. Where training data and a spec file disagree, the spec file wins.
+
+---
+
+## Roadmap
+
+What stands between "it worked on demo day" and "a stranger can run their own sale on it."
+
+Everything below comes from `docs/known-defects.md`, `docs/status.md`, `docs/prompts/`, or a
+source read cited in place — these are verified behaviours of the code on this branch, not
+speculation. Items 23–26 and the corrections to M1, M3, M4, M5 and 20 came out of the 2026-08-23
+review in `docs/roadmap-review-findings.md`, which is where the measurements behind them live.
+
+**How to read this.** The lettered **milestones** are the order of work, and each one is a claim
+you can make when it is done. The numbered **task IDs are stable** — item 9 is always the journal
+reconcile, M1 is always the ladder-over-a-relay — so they keep their identity when a milestone is
+re-cut. Within a milestone, tasks are ordered by dependency; where two are independent they are
+ordered by what a failure actually costs.
+
+**⚑** = blocked on something outside a terminal — a phone, a funded wallet, a second person, or
+somebody else's repo. There are deliberately **no time estimates here.** Nine slices shipped in
+about two days; nothing in that record supports sizing this work, and a size column that is
+uniformly wrong makes a milestone look schedulable when it is not. Sequence is the claim being
+made, not duration.
+
+### The milestones at a glance
+
+| | When it is done you can say | Tasks | |
+|---|---|---|---|
+| **A** | Safe to point at a real node | 1, 2, 3, 4, 5, 9, 10, 24, 25 | unblocked |
+| **B** | Nothing on the critical path is unexecuted | 6, 7, 8 | ⚑ |
+| **C** | A sale you can change from your phone | M1, 11, M2, M3 | |
+| **D** | Runs unattended for a weekend | 12, 13, 14 | |
+| **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26 | ⚑ |
+| **F** | The seller can see their own business | M4, M5 | liftable earlier |
+| **G** | A shop rather than one weekend | M6, M7, M8 | |
+| **∥** | Upstream — runs alongside, gates nothing | 20, 21, 22 | ⚑ |
+
+### Milestone A — Safe to point at a real node
+
+> **Nothing known-broken can lose money or destroy a seller's work.**
+> Nothing here is blocked; this starts immediately.
+
+`docs/known-defects.md` is explicit that the watcher should not be pointed at a real node until
+1 and 2 land, and the watcher is the thing that spends. Everything here is pure code with no
+hardware dependency, so this starts immediately.
+
+**Item 7 runs in parallel with this milestone and gates nothing.** It is the largest source of
+*unknown* defects in the project — five slices of markup that has never rendered — so it should
+begin the moment a phone is free, and whatever it finds gets triaged into this list rather than
+discovered after A is declared done. It is listed under B because that is where its *claim*
+lands, not because the work waits.
+
+**1. The refund watcher can pay the same buyer twice**
+`setInterval(tick, 5_000)` has no in-flight guard, and a refunding tick routinely outlives its
+own timer by design: `resolvePointer` alone is two sequential LNURL fetches at a 10s timeout
+each. So tick B re-reads the journal mid-flight, sees nothing, and resolves a second invoice for
+the same sale. The node's debouncer refuses the loser — and the loser's `record()` then writes
+`failed` over the winner's `paid`, which `settledByUs` treats as retryable. `RETRY_AFTER_S` is
+6 minutes, chosen to outlast the node's 5-minute `k1` TTL, so the retry gets a fresh `k1` the
+debouncer has already swept **and pays for real.** The journal is the only durable double-refund
+guard, and this both bypasses and corrupts it.
+- `let ticking = false` around the interval callback — closes the race.
+- `if (journal[row.invoice]?.state === 'paid') return` at the top of `record` — makes the journal
+  monotonic so a late refusal can never downgrade a settled row.
+- Land **both** even though either alone breaks the chain. The second is the one that survives
+  somebody later adding a concurrent caller.
+- One `node --test` case with two overlapping ticks against a stub, asserting one payment.
+
+**2. The kill switch can report success while the grant stays live**
+`spike/authorize-refunds.ts` mints a fresh refund key at module top level, *above* the `--revoke`
+branch. On any machine where `spike/.refund-key` is absent — a fresh clone, a restored backup, a
+deleted file — `--revoke` invents a new random key, derives a pubkey from it, and bans that. It
+prints `BANNED`. The real grant is untouched.
+- Move key generation below **both** downstream branches. `--revoke` is not the only one:
+  `--reset` calls `ResetDebit` on the same improvised `refundPub`, so a fix that guards one leaves
+  a second switch reporting success on a key that was never granted anything.
+- Make both **refuse to run** when the key file is missing, rather than improvising.
+- Read the granted pubkey back from `GetDebitAuthorizations` and ban *that*, so the file is a
+  convenience rather than the source of truth. The helper already exists — `grants()`, which
+  `--revoke` calls one line after it prints `BANNED`. This is a reordering, not new machinery.
+- Assert in `check-refund.ts` that after `--revoke` the grant list no longer contains the key.
+
+**3. Two confirmed authoring defects that silently destroy a seller's sale**
+Neither touches money; both lose work, which for a seller is the same feeling.
+- `mintOffer` dedupes on `label` alone, so after a price edit the list holds two same-label
+  offers and every retry mints another. Match on label **and** the price in the pointer's TLV 4.
+- `#publish-sale` is enabled synchronously before `loadPanel()`'s four-relay read resolves. A
+  click in that window publishes a kind 30405 with an empty member list and un-lists the whole
+  sale. Keep the button disabled until the load settles, and say why in the label.
+
+**4. Hostile input on the refund path**
+The buyer chooses the `refund_pointer`, and the seller's watcher then fetches it. That is a
+trust boundary and it is currently open. Both are panel claims (`spike/refund.ts:221`, `:257`)
+that have not been reproduced — reproduce first, then fix.
+- `getJson` buffers the whole response before checking `MAX_BODY_BYTES`, so the 64 KB bound
+  bounds nothing. Count bytes as they arrive and abort the stream.
+- Neither LNURL hop has a host allowlist or a private-address check, so a pointer can aim the
+  watcher at `127.0.0.1` or a link-local address. Require https, resolve the host, reject
+  private and loopback ranges, and re-check after each redirect.
+- Cap the redirect chain.
+
+**5. Triage the five remaining unverified panel claims**
+They are claims, not entries — never reproduced, and some contradict decisions recorded
+elsewhere. Reproduce or refute each, and move it into the ledger either way.
+- `storefront/src/render.ts:521` — the Buy form awaits `requestInvoice` with no `catch`, so a
+  rejection leaves the buyer on a permanently disabled form. **Most likely to be real, and it is
+  buyer-facing.** Fix on sight.
+- `builder/src/admin.ts:82` — treats a photo's dimension element as mandatory where NIP-58 and
+  Gamma make it optional; editing such a listing republishes it with no image at all.
+- `builder/src/main.ts:507` — `loadPanel` overwrites sale-form inputs the seller has typed.
+- ~~`spike/watch-sales.ts:327`~~ — the `k1`/TLV-3 claim. **The citation was wrong and checking it
+  was the right instinct:** `:327` is a comment; the `k1` is sent at `:335`. Judge the claim
+  against `spike/ndebit.ts:82-86`, which already reads `clink-debits.md:167-171` as a MUST that
+  binds *when TLV 3 is present* — so a `k1` sent without one is not obviously forbidden.
+- `builder/index.html:206` — shipped copy promises refund pointers that `sales-report.ts`
+  deliberately never emits. One-line copy fix.
+
+**9. Reconcile the refund journal against the node at startup** *(build here, prove it in B)*
+`spike/.refunds.json` is the **only** durable record that a refund happened — the node has no
+such field, and CLINK's `k1` is in-memory with a 5-minute TTL, so it cannot carry idempotency.
+Lose the file, restore an old one, or run the watcher on a second machine, and every oversell it
+already paid is recomputed and paid again. The reporting half is built (`matchingPayments`,
+`sales-report.ts --outgoing`); the deciding half is not. **This is the same failure class as item 1,
+not a durability nicety** — which is why it sits here rather than with the bad-day work. It can
+only be properly exercised once a refund has actually been paid, so build it now and prove it in
+milestone B.
+- At watcher startup, read the node's outgoing payments and match them against journal rows.
+- A `pending` row with a matching payment produces a **prompt, never a transition** — *"the node
+  has one 1,000-sat payment 40 seconds after this row was written — mark it paid? [y/N]"*. The
+  ledger is explicit that a match on **amount and time alone** is evidence for a human and a
+  different thing as an input to whether money moves, and the reporting half deliberately
+  branches on nothing. Marking a row `paid` on the heuristic strands a buyer whose refund never
+  went — which is a new way for this milestone to lose money, not a guard against one.
+- An oversell with no journal row but a matching outgoing payment **blocks the refund** and says
+  why, rather than paying again.
+- Refuse to start with `--refunds` when the journal is missing but the node shows outgoing
+  payments — that is the "restored an old file" case and it must be loud.
+
+**10. Make the un-regenerable files survivable**
+Several gitignored files are load-bearing, and they fail in different ways. Sort them, then treat
+them accordingly.
+- **Gone forever if lost:** `.builder-key` and `.deploy-test-key`. A kind 15128 root site is one
+  per pubkey, so losing `.builder-key` loses the builder's nsite URL permanently. Neither holds
+  funds, which is the only reason this is survivable at all.
+- **Regenerable, but only by redoing work:** `.refund-key` (a new one needs the whole
+  authorisation dance again) and `.ladder.json` (`seed-listings.ts` re-cuts it, and the watcher
+  must then be restarted).
+- **Regenerable by nothing:** `.refunds.json`. See item 9 — this is why the reconcile matters.
+- The seller key backup currently exists **on one machine only**. Get a copy off it.
+- Write one backup procedure, and run one restore drill so it is known to work rather than
+  believed to.
+
+**24. The only tool that reports money is hardcoded to one seller**
+`spike/sales-report.ts:49` is `const KEY_FILE = join(HERE, '.dev-key')` and there is no `--key`
+flag, so `node sales-report.ts --key .merida-key` silently reports the *default* seller's sales.
+`spike/watch-sales.ts:80` is already `arg('key', '.dev-key')` and `.merida-key.offers.json` and
+`.merida-key.ladder.json` both exist — so the watcher is multi-seller and the reporting half is
+not. It sits here rather than with the onboarding work because it is one line and two things
+downstream rest on it: M4 says "carry exactly what `sales-report.ts` prints", and item 19 hands a
+stranger a system in which they cannot see what they earned.
+- `arg('key', '.dev-key')`, matching `watch-sales.ts`. The ladder and offers paths beside it need
+  the same `suffixed()` treatment the watcher already has.
+
+**25. An empty string satisfies a required `payer_data` key, and three documents say it cannot**
+`ValidateExpectedData` checks only `typeof payerData[key] !== 'string'`, so `{"refund_pointer": ""}`
+passes and the node issues the invoice. The node's own decline names the key it wants, so a client
+that retries with any string value gets served. Our page is safe — it gates on `isPointer` before
+requesting — which is why nobody has hit it.
+- What it costs is a **claim**, in three places: spec §7.3's "a payment that would be unrefundable
+  is therefore declined rather than accepted", design.md §4's "unpayable by anything that cannot
+  supply `refund_pointer`", and slice 8's re-decision, which argues the alternative would produce a
+  `queued` row no human can act on. An empty pointer produces exactly that row.
+- Drive it once against the live node — free, no `--pay` — then either narrow the three claims or
+  file it upstream beside items 21 and 22. Do not weaken the form.
+- M5 inherits this hole for its pickup code, so settle it first.
+
+### Milestone B — Nothing on the critical path is unexecuted
+
+> **Every branch of the money loop has run once, on real hardware, with real sats.**
+> ⚑ Blocked on a person with a phone and a funded wallet.
+
+Code that has never executed is not a feature. Two of these have been carried across five
+slices. Item 6 genuinely must wait for A; item 7 should already be underway.
+
+**6. Pay one real refund, end to end ⚑** *(needs 1, 2 and 4)*
+Every debit driven so far is one the node **refused**. That proves the cap and proves nothing
+about the happy path. `payDebit`'s `{"res":"ok"}` branch and `resolvePointer`'s LNURL branch
+have never executed on the wire.
+- `mugs` is already **sold out 3/3**, and a depleted offer stays payable (findings §13.17) — so
+  a single `node check-buy.ts yardsale-2026-08-mugs --pay --pointer <a wallet you control>` **is**
+  the oversell. No restocking, no second payment. 1,000 sats.
+- `node watch-sales.ts --refunds`, and watch the money come back.
+- Use the default seller, not the second one: `.merida-key` has **no refund grant armed**, so an
+  oversell there is logged and not paid.
+- Net cost is routing fees. Record the transcript in `docs/spike-findings.md` and close the two
+  ledger rows that name these branches.
+
+**7. The browser verification run ⚑**
+Slices 4 through 9 shipped markup that has **never been rendered**: the sticker sheet has never
+been printed, the `@media print` block has never run, `noBuyReason` and `missingItemNote` have
+never painted, the `geo:` link has never been tapped. `docs/prompts/browser-verify-and-deploy.md`
+is the script for one sitting that covers all of it.
+- **First: resolve the contradiction in `docs/status.md`** — one paragraph says the Amber import
+  has happened, another says it is unrun. Nothing here works if the bunker is not set up.
+- Import the key into Amber, connect the builder, confirm `perms` is honoured (the residual risk
+  is Amber's "Approve basic actions" policy silently discarding it with no error).
+- Publish one item, press Deploy, print a sticker sheet, tap a `geo:` link on a phone.
+- Count the actual signature prompts and compare against the predicted 1.
+
+**8. A smoke test so unrendered markup cannot accumulate again** *(needs 7)*
+There are 58 + 58 unit tests and none of them touch the DOM, which is exactly how five slices of
+markup reached a demo unrendered. Playwright is already installed in `shots/` — reuse it.
+- One headless run per app: load the page, assert the Buy form renders and its required field is
+  present, assert the print stylesheet hides `<main>`.
+- Wire it into `npm test` so it is not a thing anyone remembers to do.
+- Resist building a page-object framework. Two files, a handful of assertions.
+
+**~~23. One real payment into the second seller's sub-account~~ — ALREADY DONE, and nothing knew.**
+This was written on 2026-08-23 as an open item, on the strength of
+`docs/prompts/demo-day.md` §0.2 (*"The Mérida sub-account has never received money… the single
+largest unproven thing in the demo"*) and `docs/status.md`'s `manage_id 2, balance 0`. **Both were
+stale.** `node sales-report.ts --key .merida-key` reports `artesanias-jabon 800 1/12 800 sats in,
+refundable 1/1, settled 2026-08-21T22:13:28Z` — hours after those two lines were written.
+- **It arrived over the channel, not internally**, which is the distinction `demo-day.md` §0.2
+  warns about: `lncli listchannels` reads 9,800 local against the two accounts' 9,000 + 800. A
+  `PayInternalInvoice` between two accounts on this Pub is a database move that leaves channel
+  local balance untouched, so the sum matching is the proof it was real Lightning.
+- **So milestone B's claim survives**, and findings §11 — one Pub, a market of sellers, each with
+  their own sub-account — is proven with money rather than argued.
+- **Why nobody knew, and it is item 24:** the only tool that reports money could not see this
+  account. The payment sat in the node for two days, invisible to every document, and adding one
+  `--key` flag surfaced it in a single command. That is the item's real lesson and it is the
+  reason 24 is not a nicety.
+- Residual, and it is small: `.merida-key` still has no refund grant, so the oversell path has
+  never run for this seller. That stays item 6's job on the default seller and does not need
+  repeating here.
+
+### Milestone C — A sale you can change from your phone
+
+> **Editing stops requiring a file copy and a daemon restart.**
+
+**Editing a live sale already works** — slice 6 shipped it: edit any item, restock, mark sold,
+private notes, photos preserved without re-uploading a byte, and the offer reused rather than
+re-minted so a save does not strand a payable pointer on the node. Items 3 and 13 harden that
+path. What none of them fix is M1, which is the reason editing *feels* broken even though it
+works.
+
+**Why this comes before the unattended work.** Milestone A already fixes the known money-loss
+defects, so D protects against *unknown* bad days — a process dying, a relay lagging. Those are
+rarer than "the seller needs to restock the mugs", which happens continuously during a live sale
+and today costs a file copy and a daemon restart every single time. M1 also reshapes items 11 and
+12, so building D first means building parts of it twice.
+
+**M1. The ladder has to travel over a relay, not a USB stick**
+Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:293`: *"Save it as
+`.ladder.json` next to `watch-sales.ts`, then restart the watcher."* The seller downloads a file
+from their browser, copies it onto the machine running the daemon, and restarts a process. Miss
+the step and either `isStale` refuses to watch the item, or the watcher publishes rungs the relay
+silently drops and the item stays on sale after it sells. The ladder also lives in `localStorage`
+keyed by pubkey, so a seller who edits from a second device produces a file that blinds the
+watcher to every item that device never published.
+- The rungs are signed public kind 30402s — **publishing them raw would immediately advertise the
+  lowest stock on every item.** They must be wrapped, not published.
+- Wrap them the way `builder/src/notes.ts` already wraps private notes — NIP-44 inside a kind
+  30078 — but **encrypt to the watcher's pubkey, not to the seller's own key.** `notes.ts` is
+  encrypt-to-self because only the seller's browser ever reads it; here the *watcher* has to
+  decrypt, and only a holder of the seller's private key can open a self-encrypted payload. It
+  holds one today (`watch-sales.ts:112` reads `.dev-key`) purely because the fixture seller and
+  the node account are one identity — a coincidence spec §12 says should be a separate key "where
+  possible". Encrypting to self would turn that coincidence into a requirement. The shape is
+  `notes.ts`'s; the recipient is not.
+- `sign_event:30078`, `nip44_encrypt` and `nip44_decrypt` have been in `PERMS` since slice 4, so
+  this costs **no new signer permission, no new dependency, and no second bunker approval**.
+- One event per item (`d: lamppost-ladder-<slug>`), not one for the whole shop. **The binding cap
+  is NIP-44's 65,535-byte plaintext ceiling, not a relay's event size** — measured 2026-08-23:
+  `nos.lol` allows 131,072 and damus and primal a million, while the Mérida sale's whole-shop
+  ladder is already **40,381 bytes at six items**, 62% of the NIP-44 ceiling, and hits it at nine
+  — the same number of items the flyer holds (design.md §3). Per item the ceiling is ~46 units of
+  a photo-carrying item, which no yard-sale item reaches. Measure a candidate shape against
+  `spike/.merida-key.ladder.json`; do not go asking the relays.
+- The `d` prefix is clear: CLINK Beacon reserves `clink-*` on this kind and `notes.ts` already
+  takes `lamppost-shop`, so `lamppost-ladder-<slug>` collides with neither.
+- The watcher subscribes instead of reading a file, and re-checks on every update rather than
+  only at startup. Keep the file as the offline fallback; do not delete it.
+- This removes the copy, the restart, and the single-browser dependence in one change. It does
+  not remove item 11 — it changes what item 11 is for. See the note there.
+
+**11. Close the ladder-staleness hole on the write side** *(needs M1, and shrinks because of it)*
+The availability ladder is cut from one version of the listings. Edit a price, a title or a photo
+without re-cutting it, and the watcher republishes the old text over the new with a newer
+`created_at` — and a relay answers `OK` to a replaceable event it does not store, so this fails
+silently, successfully, and forever. `isStale` catches it at watcher *startup*; nothing catches
+an edit made while the watcher is running.
+- Have the builder stamp the listing version the ladder was cut from into the ladder file.
+- Have the watcher re-check staleness per tick, not only at startup, and stop publishing rungs
+  for an item whose live listing has moved ahead of them.
+- Fail loudly to the operator instead of continuing quietly.
+- **M1 makes the remedy automatic but not the detection.** Once the ladder arrives over a relay,
+  a stale one heals itself on the next edit instead of stranding the seller — but the watcher
+  still needs to notice, for the cases M1 does not cover: the relay did not deliver, or the
+  seller edited from a device whose publish failed. Build the check; it is just no longer the
+  only thing standing between an edit and a silent oversell.
+
+**M2. Make the seller's state recoverable** *(needs M1)*
+After M1 the ladder survives losing a laptop. The manage pointer still does not: `.nmanage` is
+pasted per browser and stored in `localStorage`, so a seller on a new device is back at a terminal.
+- **This needs a decision before it needs code.** `docs/status.md`'s traps say the account pointer
+  is "seller's browser only, never a relay, never a log" — an event NIP-44 encrypted to the
+  seller's own key is arguably not "a relay" in the sense that rule means, but it is a relay in
+  the sense that a rule can be read literally. Settle it explicitly and write the reasoning down.
+- If yes: it rides in the same encrypted 30078 as the notes, and a new device is a bunker
+  connection and nothing else.
+- If no: say so in the UI, and make re-pasting the pointer a first-class step rather than an
+  error state.
+
+**M3. Retire an item, and edit a fiat one**
+Two holes in the edit form that have nothing to do with each other except that both are refusals.
+- **Fiat items cannot be edited at all.** `builder/src/admin.ts:112` returns `null` for any
+  currency that is not sats, so `records` at 80 MXN can never be changed — the guard exists
+  because a sats-only form would republish it as 80 sats, which is right, but "refuse forever" is
+  not the only way to be right. Carry currency and amount through the form as a display price
+  that stays unpayable.
+- **There is no delete.** "Mark sold" is the only retirement and the item stays on the storefront
+  at stock 0 permanently. **Removing it from the kind 30405 member list hides nothing** — the
+  storefront queries `{kinds: [30402, 30405], authors: [pubkey]}` and `orderBySale` only *sorts*,
+  so a non-member falls to the foot of the page in `d` order and keeps rendering. That is the
+  same demotion the ledger already records for a short read. So retirement is a re-publish at
+  stock 0 with `status: sold` (which `ladder.ts` `atStock` already produces) plus an optional
+  NIP-09 kind 5 request — and the NIP-09 half, the one relays honour at their discretion, is the
+  only half that can stop a page drawing it.
+- **This has to land after item 13, not before.** M3's delete works *by* shrinking the member
+  list, which is indistinguishable on the wire from item 13's slow-relay short read. Build the
+  "refuse to shrink without confirmation" guard first or M3 trips it on every legitimate delete —
+  the ledger names this collision outright.
+- Do **not** delete the offer on the node when retiring an item. It takes the buyer's stored
+  refund pointer with it (findings §13.17).
+
+### Milestone D — Runs unattended for a weekend
+
+> **A dead process, a slow relay or an expiring lease is visible rather than silent.**
+
+The storefront's correctness depends on a Node process on somebody's machine. Right now nothing
+anywhere says when it stops.
+
+**12. Supervise the watcher**
+The storefront's correctness depends on a Node process on the seller's machine, one per seller.
+If it dies, stock goes stale and oversells stop being refunded, and nothing anywhere says so.
+- A launchd plist (macOS) and a systemd unit (Linux) with restart-on-failure, in `docs/`.
+- A heartbeat line on every tick so `lpub-log`-style tailing shows liveness.
+- Exit non-zero and loudly on the conditions that must not be papered over: a stale ladder, a
+  missing journal, a revoked grant.
+- Do not build a monitoring service. A supervisor and a log line is the whole of it.
+
+**13. Make publishing robust against a slow relay**
+A kind 30405 is a replacement, so `publishSale` must send every member every time — and the
+member list it is handed is whatever four relays returned on the last "Load my items". One slow
+relay and pressing "Publish my sale" quietly un-lists real items.
+- Require a quorum of relays to answer before treating a member list as complete.
+- Show the seller the member count they are about to publish, and refuse to shrink a sale
+  without an explicit confirmation.
+- Surface which relays answered, so a partial read is visible rather than inferred.
+
+**14. Node liveness and the channel lease**
+- The inbound channel is a **lease and it expires 2026-11-19.** Nothing watches it. Add the check
+  to the runbook's day-to-day block and put the date somewhere that alarms.
+- A laptop that sleeps is a shop that closes. `caffeinate -s` is the demo-day answer; an
+  always-on host is the real one.
+- Note that a successful invoice request proves nothing about *receiving* — only a settled
+  payment does.
+
+### Milestone E — A stranger can set it up
+
+> **Onboarding is a phone and a browser, and someone we did not brief has run a sale.**
+> ⚑ Ends blocked on a person who is not us.
+
+This is where the thesis gets tested rather than asserted. Item 19 is the capstone and it cannot
+happen before C — you cannot hand someone a workflow that requires copying a file onto your
+laptop.
+
+**15. Take the terminal out of seller onboarding** *(needs 7)*
+Today a seller must run `spike/authorize-manage.ts` from a shell next to a raw key, because
+`AuthorizeManage` is kind 21000 and a bunker cannot speak kind 21000. But the node already has
+the wallet-side approval loop — an ungranted 21003 pushes `GetLiveManageRequests` to the account
+owner's key "for ShockWallet to display", answered with `AuthorizeManage`, both kind 21000 and
+both things a paired wallet *can* speak.
+- **Verify first, it is five minutes:** pair ShockWallet, point the builder at an account with no
+  grant, send one 21003, and see whether the wallet renders a prompt.
+- If it does: make the builder's grant step "send a 21003 and wait", and delete the script from
+  the happy path. A seller then never leaves their phone.
+- Same session, settle the other open `UNVERIFIED`: whether the refund debit's daily cap can be
+  set from the wallet UI rather than over the raw RPC.
+- If it does not: file it upstream and keep the script, documented as the one terminal step.
+
+**16. Show staleness instead of hiding it**
+Availability is only as fresh as the watcher, and that is inherent to a serverless storefront
+rather than a bug. Right now the page presents stale stock as current.
+- Render "availability as of <listing `created_at`>" on the item.
+- Say it out loud in the demo too. Disclosed staleness is a design property; undisclosed
+  staleness is a lie the page tells.
+
+**17. Remove the buyer's dead ends** *(the fix half of item 5)*
+- Wrap the Buy form's `requestInvoice` so a rejection re-enables the form and explains itself.
+- Distinguish "this item has no offer" from "this item's offer disagrees with its price tag" —
+  `noBuyReason` currently collapses both into one unhelpful sentence.
+
+**18. Make redeploying safe**
+The nsite gateway sends `max-age=3600` and serves the previous build until it lapses. The current
+mitigation is a note reading "do not redeploy on demo day", which is not a mitigation.
+- Have `check-deploy.ts` report the gateway's cache age alongside the relay and Blossom state, so
+  "did my deploy land" has one answer instead of three.
+- Document the cache-busting query-string escape hatch, if one exists on the gateway.
+- Build stickers **after** deploying — they encode the site URL, so a sheet printed first points
+  at nothing.
+
+**19. A second seller who is not us ⚑**
+`docs/spec.md` §3.1 draws the line: two keys that are both ours is model 1; somebody else's sats
+resting in our Pub is model 2, and model 2 means custody. Everything above is worth little until
+one person we did not brief has run a sale.
+- Write the guest-onboarding path down as a page a stranger can follow, not a set of commands
+  we know by heart.
+- Watch one person do it without helping. Every place they stop is a roadmap item.
+- Be explicit with them about custody, correlation, and shared liveness before they take money.
+- Needs item 24, or they cannot see what they earned.
+
+**26. Decide whether the builder keeps the key it is running on** *(one-way, so decide it early)*
+The builder — rule 5's own artifact, the thing that proves this project needs no server of ours —
+is live on `npub1qqm97k4…`, a **throwaway key generated during slice 5**. It has been an open
+question in `docs/prompts/browser-verify-and-deploy.md` since then and nothing has answered it.
+- A kind 15128 root site is **one per pubkey**, so a real identity later means a **new URL**, and
+  every link, slide, QR and printed reference to the old one breaks. There is no migration.
+- So this is not a polish item, it is a fork: commit to the slice-5 key and treat it as permanent
+  (which makes item 10's "gone forever if lost" protection meaningful rather than incidental), or
+  move now, before anything else prints or publishes that URL.
+- Either answer is fine. Leaving it unanswered while the URL spreads is the one that is not.
+
+### Milestone F — The seller can see their own business
+
+> **Settled sales and pickup verification, without a terminal and without holding a key.**
+> Liftable earlier — see below.
+
+**This can run parallel to E.** It is sequenced after only because E puts one real outside seller
+in front of the app, and what that person struggles with should shape what this milestone
+builds. If the "reads as a product" jump matters more than that feedback, pull it forward.
+
+**M4. Let the seller see their sales in the browser after all**
+`docs/spike-findings.md` §13.25 says the seller's browser cannot read the seller's sales, and
+that is true — *directly*. It is not true transitively. The watcher already holds the credential
+that can call `GetUserOfferInvoices`, and the watcher can publish.
+- The watcher reads settled sales, NIP-44 encrypts a summary to the seller's pubkey, and
+  publishes it as a kind 30078 under **a third key** — not `.dev-key` and not `.refund-key`. The
+  browser subscribes and decrypts.
+- **The "watcher holds no signing key" line is already false, and knowing that is what makes this
+  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:112`) and signs kind
+  21000 with it (`pub-rpc.ts:97-99`). So the ledger's stated reason for keeping the refund journal
+  off a relay — "the watcher holds no signing key by design, so it cannot publish a record of what
+  it did" — is wrong on the facts. What slice 3 actually guarantees is narrower: the watcher signs
+  no *listing*.
+- **So one rule does move, and it should be written down rather than waved past.** Publishing
+  under `.dev-key` would mean a daemon signing events as the seller, which is precisely the
+  authority the pre-signed ladder exists to withhold. A third dedicated key keeps that guarantee —
+  at the cost of being a **new credential and new pairing state**, which is what the one-time
+  pairing below actually is. No server, no key custody change, and the seller's browser still
+  holds no key; but this is not free of shape.
+- Carry exactly what `spike/sales-report.ts` prints — amounts, timestamps, counts, refundability
+  as a boolean — and **never a refund pointer or a preimage.** `/CLAUDE.md` forbids logging them
+  and an event on a relay is worse than a log.
+- The browser must verify the signature and the publishing pubkey before trusting a byte; a
+  summary from an unknown key is an attacker telling the seller they got paid.
+- One-time pairing so the browser knows which pubkey to trust.
+- This is the single biggest "this reads as a product" change on either list.
+
+**M5. Pickup verification** *(better after M4)*
+The seller cannot decrypt the CLINK receipt, so when a buyer arrives at the table there is no way
+to check that this person is the one who paid. **`docs/spec.md` §7.6 already designed this and
+this item has to answer it before proposing anything else.** §7.6's mechanism is the buyer's
+ephemeral request pubkey (`clink_requester_pub`, stored on the invoice): the seller's device shows
+a QR challenge, the buyer's page signs it with that key, and the seller checks the signature
+against the pubkey the watcher already synced. It is unbuilt for a named reason, not for want of a
+design — the buyer's page drops that key on navigation, and persisting it is a rule-2 decision.
+§7.6 also insists that if the key is ever kept it is kept for **both** pickup proof and buyer
+messaging, and a `payer_data` code silently drops that pairing. It also proves less: a challenge
+proves the person at the table holds the key that paid; a code proves they remember what they
+typed.
+- The mechanism already exists and is already in use: the offer's `payer_data` **required-key
+  list**, which today carries `refund_pointer`. Declare a second key — a short pickup code the
+  buyer types into the buy form.
+- The seller looks it up in `sales-report.ts`, or in M4's panel at the table.
+- Name the cost honestly: every required key is one more wallet that cannot pay without our form.
+  Slice 8 already chose that trade deliberately, so this is consistent rather than new.
+- **It does not force a re-mint, which is the expensive thing it looks like.** CLINK Manage
+  `update` writes `payer_data` in place against the existing offer id, so the `noffer` is
+  unchanged: no new pointer, no listing re-publish, no ladder re-cut, no `1 + units` signatures.
+  One `update` per offer the builder minted. The exception is the five fixture offers, which were
+  minted natively and which Manage cannot touch — and findings §13.20 already accepted that they
+  get re-minted whenever they are first edited, so M5 inherits that cost rather than creating it.
+- **`ValidateExpectedData` only checks `typeof … === 'string'`, so an empty string satisfies a
+  required key.** The node will not enforce a pickup code any more than it enforces a refund
+  pointer; the page has to, the way `render.ts` already gates on `isPointer`. See item 25 — that
+  hole exists today and this item inherits it.
+
+### Milestone G — A shop rather than one weekend
+
+> **Lifecycle, blob durability, and being findable.**
+> The loosest grouping here.
+
+The loosest grouping here, and honestly three unrelated things. M7 is independent — pull it forward anywhere. M8 may be a *decision* rather than a task: "this is a share-a-link
+product" is a legitimate answer that closes it.
+
+**M6. A second sale, next month** *(needs M3)*
+There is no answer today to "I want to run another sale." The sale's `d` is every item's `d`
+prefix, so changing it orphans every item the seller has published — the `a` tags point at a
+collection that no longer exists and `admin.ts` stops recognising the items. That is a lifecycle
+hole rather than a bug, and it will be the first thing a returning seller hits.
+- Decide the model: a new `d` per sale with an explicit migration, or one long-lived sale that
+  items join and leave.
+- Decide what archiving means for the listings, the offers on the node, and the nsite. An offer
+  left payable forever is a liability; deleting it destroys refund pointers. Neither is chosen.
+- Whatever is chosen, the storefront needs to render "this sale has ended" rather than an empty
+  page or a stale one.
+
+**M7. Blob durability** *(independent, pull it forward any time)*
+The storefront's images and files live on public Blossom servers that owe nobody anything.
+`blossom.band` has already dropped the site's JS and HTML on content-type sniffing, and the
+fixture's 21 photos are still on that one server alone.
+- A command that reports per-blob mirror count across the kind 10063 list and re-uploads anything
+  below a threshold. `check-deploy.ts` already does the walk; this is the repair half.
+- Run it on a schedule. Not on demo day — the gateway caches for an hour.
+
+**M8. Discovery** *(independent)*
+Nobody can find a sale they were not linked to. Nostr tag filters match **exactly**, with no
+prefix matching, so a single `g` geohash tag is unfindable by proximity by construction.
+- The multi-precision geohash convention is what makes exact-match filters usable for proximity —
+  publish the geohash at several precisions rather than one. **The convention is NIP-CC
+  (geocaching), not NIP-99; re-fetch and cite `CC.md` before building, the NIPs repo is not on
+  this machine.**
+- That is the cheap half. The expensive half is a buyer-facing search with no index of ours —
+  which may mean this stays a "share a link" product, and that is a legitimate answer.
+
+### Parallel track — Upstream, which fixes this for everyone
+
+These gate nothing of ours and run alongside every milestone above. Each is small, each is
+somebody else's repo, and item 22 is the single biggest ceiling on E.
+
+**20. `LND_LOG_DIR` should default per-platform ⚑**
+`settings.ts:116` hardcodes the Linux log path —
+`chooseEnv('LND_LOG_DIR', dbEnv, resolveHome("/.lnd/logs/bitcoin/mainnet/lnd.log"), addToDb)`,
+read by `unlocker.ts:104`. (Both this line and `docs/runbook.md` used to say `unlocker.ts:116`:
+right line number, wrong file, which is an hour lost by whoever opens the PR.) So on macOS
+`waitForLndSync` polls a file that
+does not exist, times out at 300s, throws, and launchd restarts the node — every five minutes,
+forever, while LND itself is perfectly healthy. A small PR to Lightning.Pub, and the kind of
+ecosystem contribution judges notice.
+
+**21. Report the BUD-11 base64url conflict ⚑**
+The spec requires the auth token be base64url; three of the four Blossom servers that will store
+an nsite's HTML reject base64url and accept standard base64. Somebody is wrong and it locked this
+project to a single server for four slices. Report it with the transcript.
+
+**22. CLINK Enroll (kind 21004) ⚑ — not ours to land**
+The portable way to provision an account and receive `noffer`/`ndebit`/`nmanage` in one flow. The
+client SDK ships it; Lightning.Pub 0.0.37 does not implement it. Until it lands, onboarding a
+seller onto a shared Pub is a manual pairing string handed over out of band — which is the single
+biggest ceiling on item 19. The account-provisioning step is already written as one swappable
+function so that the day this lands, it is a small change here.
+
+### Deliberately not on this roadmap
+
+- **A sales screen that asks the node directly.** CLINK has no settlement resource and
+  `GetUserOfferInvoices` rides kind 21000, which a bunker cannot speak. If you find yourself
+  putting `pub-rpc.ts` in the builder, stop — that is the wrong shape, and no amount of wanting
+  it changes the transport. M4 is the shape that works: the watcher asks, and tells the browser
+  over a relay.
+- **A map on the storefront.** A basemap is a third-party hostname on every page load. The sale's
+  geohash as a `geo:` link is the whole feature.
+- **A BOLT12 fallback.** BOLT12 is nowhere in this stack — not Lightning.Pub, not this LND
+  build's `lncli` — and CLINK's "Offer" is an unrelated thing that shares a word.
+- **Anything that needs a server of ours.** If a feature seems to need one, the answer is a
+  signed event on a relay, or the feature does not ship.
+
+---
+
+## Documents
+
+Read in this order:
+
+| File | What it is |
+|---|---|
+| `docs/status.md` | **Start here.** Where the project is today, what is live, the exact commands that reproduce it, and what is blocked. Goes stale fastest. |
+| `docs/spec.md` | Architecture and build plan. |
+| `docs/spike-findings.md` | Verified facts, measured or read from source. **Where this disagrees with the spec, this wins.** |
+| `docs/clink-notes.md` | CLINK field names, kinds, and error codes, as read from the spec repo. |
+| `docs/runbook.md` | Operating the node: install gotchas, pairing, liquidity, demo-day checklist. |
+| `docs/known-defects.md` | The defect ledger. |

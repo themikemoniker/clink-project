@@ -34,7 +34,14 @@
 // (/docs/known-defects.md). The watcher prints the same matches next to a pending row; this is
 // where you look when the watcher is not running.
 //
-// Usage: node sales-report.ts [--nprofile <path|nprofile1…>] [--json] [--outgoing]
+// `--key` MIRRORS watch-sales.ts, and it is not a convenience. Until 2026-08-23 this file
+// hardcoded `.dev-key` with no flag at all, so `--key .merida-key` was accepted silently and
+// reported the FIRST seller's sales — the watcher was multi-seller and the only tool that reports
+// money was not. A second seller could watch their stock move and never see what they earned.
+// Same rule as there: the key and the files beside it derive from one flag, because a mismatch
+// means reading one npub's account through another's ladder.
+//
+// Usage: node sales-report.ts [--key <file>] [--nprofile <path|nprofile1…>] [--json] [--outgoing]
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -46,15 +53,17 @@ import type { Outgoing } from './refund.ts'
 import { arg, connectPub } from './pub-rpc.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const KEY_FILE = join(HERE, '.dev-key')
-const LADDER_FILE = join(HERE, '.ladder.json')
+const KEY = arg('key', '.dev-key')
+const suffixed = (name: string) => join(HERE, KEY === '.dev-key' ? name : `${KEY}${name}`)
+const KEY_FILE = join(HERE, KEY)
+const LADDER_FILE = suffixed('.ladder.json')
 const JSON_OUT = process.argv.includes('--json')
 const OUTGOING = process.argv.includes('--outgoing')
 
 // The node is not trusted input. A yard sale does not have this many settled invoices.
 const MAX_INVOICES = 5_000
 
-if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — run seed-listings.ts first`)
+if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — pass --key <file>, or run seed-listings.ts first`)
 const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 
 const ladder: Record<string, { units: number }> = existsSync(LADDER_FILE)

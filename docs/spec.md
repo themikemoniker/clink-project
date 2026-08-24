@@ -149,7 +149,7 @@ a separate axis, and the shared-Pub design hands us the second without ever touc
 That is why it needed its own rule.
 
 **What the single Pub instance in this repo is.** It is the *seller's* node, and the seller is us:
-the throwaway identity in `/spike/.dev-key` owns the account, and the 8,000 sats sitting in it are
+the throwaway identity in `/spike/.dev-key` owns the account, and the 9,000 sats sitting in it are
 our own. That is model 1 and it stays model 1. It becomes model 2 the moment a second person's sats
 live in it — not when we add a feature, but when someone else's balance appears in that table.
 Anyone we knowingly hand the guest `app.nprofile` to is someone we have agreed to hold money for;
@@ -1055,7 +1055,7 @@ What it actually covers:
 What it deliberately does not do:
 
 - **Payment proven 2026-08-21.** 6,000 sats — 8,000 in total across three settled invoices by the
-  end of that day — moved over Lightning into the seller's node and the
+  end of that day, 9,000 across four as of 2026-08-23 — moved over Lightning into the seller's node and the
   page's confirmation path fired, with no backend on either side. Two remaining honesty notes:
   `bike` (180k) and `couch` (210k) are priced above the node's inbound and will hand a buyer an
   invoice that cannot settle — a fixed-price offer is not range-checked
@@ -1529,9 +1529,11 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 - No secrets in the repo. No `.env` with keys committed. Use NIP-46 bunker for any CI signing.
 - Treat every inbound event as hostile input: validate before parsing, bound sizes, verify signatures before acting.
 - Relays can withhold, delay, reorder, and replay — **confirmed, not theoretical**: `wss://relay.lightning.pub` replayed minutes-old kind `21001` events to a fresh subscriber before EOSE, and CLINK Offers defines no request-freshness rule and no single-use construct. Any retry path on the money side must be idempotent, **keyed on the settled invoice / payment hash, never the request event id**.
-- The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. Note the node's outbound is currently **8,000 sats**, all of it created by test sales — three
-  settled invoices, measured by `node spike/sales-report.ts` on 2026-08-21 and confirmed against
-  `lncli listchannels` — refunds cannot precede sales, so set the frequency cap against what has actually been sold rather than against a round number. **Let the node enforce both**: a CLINK Debit grant carries a frequency rule (`[number, unit, max]`) checked inside the payment transaction, and `BanDebit` revokes it in one tap. Our code should not be the only thing standing between a bug and the balance.
+- The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. Note the node's account balance is currently **9,000 sats**, all of it created by test sales — four
+  settled invoices (`plants` 6,000, `mugs` 3×1,000), measured by `node spike/sales-report.ts` on
+  2026-08-23; the channel reads 9,800 local against 88,978 remote by `lncli listchannels`, the
+  difference being the second seller's sub-account. (This said 8,000 across three until
+  2026-08-23 — correct on 2026-08-21, and `mugs`' third unit settled that evening.) Refunds cannot precede sales, so set the frequency cap against what has actually been sold rather than against a round number. **Let the node enforce both**: a CLINK Debit grant carries a frequency rule (`[number, unit, max]`) checked inside the payment transaction, and `BanDebit` revokes it in one tap. Our code should not be the only thing standing between a bug and the balance.
 
   **SATISFIED IN SLICE 7, and both were watched firing rather than asserted.** The grant is live at
   **8,000 sats/day** on `spike/.refund-key`, with an expiry rule alongside it, set by
@@ -1542,8 +1544,12 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
   (findings §13.29). The kill switch is `node spike/authorize-refunds.ts --revoke`.
 
   **Two honest caveats, because a cap that has never been crossed is not a cap.** First, 8,000/day
-  equals the node's whole outbound balance, so in normal operation the *balance* binds before the
-  rule does — which is why the proof moves the cap rather than spending the balance. Second, our
+  used to equal the node's whole outbound balance, so the *balance* bound before the rule did —
+  which is why the proof moves the cap rather than spending the balance. **That stopped being true
+  on 2026-08-23**: the account holds 9,000 (8,946 payable after the Pub's fee) against an
+  8,000/day cap, so the cap now binds first and is doing real work for the first time. It was
+  never re-sized deliberately; the balance walked past it. Re-decide the number rather than
+  inheriting it. Second, our
   own code adds one guard the node cannot: a journal keyed on the settled invoice, because the node
   has no "already refunded" field and CLINK's `k1` turned out to be in-memory with a 5-minute TTL
   (findings §13.28). That guard is a file, and losing the file could double-pay a refund.

@@ -8,7 +8,7 @@ Operational notes for the seller's Lightning.Pub node. Captured from a real macO
 
 ### macOS: LND log path (causes an infinite crash-restart loop)
 
-`unlocker.ts:116` hardcodes the header-sync log at `~/.lnd/logs/bitcoin/mainnet/lnd.log`, which is the Linux default. On macOS LND lives at `~/Library/Application Support/Lnd`, so the file never exists, `waitForLndSync` polls a missing path, times out at 300s, throws, and launchd restarts it. Symptom: repeated 300s timeouts in `pub.log` roughly every 5 minutes, while LND itself is perfectly healthy and synced.
+`settings.ts:116` hardcodes the header-sync log at `~/.lnd/logs/bitcoin/mainnet/lnd.log`, which is the Linux default — `chooseEnv('LND_LOG_DIR', dbEnv, resolveHome("/.lnd/logs/bitcoin/mainnet/lnd.log"), addToDb)`, read by `unlocker.ts:104`. (This line said `unlocker.ts:116` until 2026-08-23: right line number, wrong file. `unlocker.ts:116-123` is the polling loop, not the default.) On macOS LND lives at `~/Library/Application Support/Lnd`, so the file never exists, `waitForLndSync` polls a missing path, times out at 300s, throws, and launchd restarts it. Symptom: repeated 300s timeouts in `pub.log` roughly every 5 minutes, while LND itself is perfectly healthy and synced.
 
 Workaround (either):
 
