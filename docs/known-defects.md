@@ -174,3 +174,13 @@ drift you actually walk through, do not open a documentation project inside a bu
   `spec.md` sites now say 8,000, including §12 where it is the number slice 7's refund frequency
   cap gets set against — so that cap is now sized against a measured balance rather than a
   remembered one.
+
+  **RE-MEASURED 2026-08-23, and this row is the pattern rather than the exception.** It is now
+  **four settled invoices totalling 9,000 sats** (`plants` 6,000, `mugs` 3×1,000); the third
+  `mugs` unit settled on the evening of 2026-08-21, hours after the figures above were written.
+  All three `spec.md` sites and `docs/status.md`'s two rows updated. The consequence worth
+  keeping: §12's caveat that "8,000/day equals the node's whole outbound balance, so the balance
+  binds before the rule does" **is no longer true** — the account is at 9,000 against an 8,000/day
+  cap, so the cap binds first and has become load-bearing without anybody deciding it should.
+  A number measured once is a number that goes stale; this one is worth re-reading before any
+  run that spends.
