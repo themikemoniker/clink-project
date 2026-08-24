@@ -594,6 +594,8 @@ That is fine, and it is better than depending on wallet behaviour:
   minted into every offer and is expensive to change — see `/spike/mint-offers.ts`.
 - Our page asks the buyer for a Lightning address or `noffer` **before** requesting the invoice, and puts it in `payer_data`. A form field, not a protocol hope.
 - A payment that would be unrefundable is therefore declined rather than accepted. That is the correct default for oversell risk.
+
+  **NARROWED 2026-08-24 by roadmap item 25, and this line was too strong.** Driven at the live node, free, by `node spike/check-empty-pointer.ts`: a request with the key **absent** is declined `code 1` as this section says, and `{"refund_pointer": ""}`, `{"refund_pointer": " "}` and `{"refund_pointer": "not-a-pointer"}` were each issued a BOLT11. `ValidateExpectedData` checks only `typeof payerData[key] !== 'string'` (`offerManager.ts:148-152`), so what the node enforces is that the key is **present and is a string** and nothing about the value. What is true, and what the rest of this section actually rests on: **the declining is ours, not the node's.** `storefront/src/render.ts` gates the Buy form on `isPointer` before it will request an invoice, so no payment routed through our page can be unrefundable. A client that is not ours can get an invoice with a junk pointer, and the settlement it produces is a `queued` journal row no human can act on — which is precisely the outcome the slice-8 block at the end of this section rejects "make the key optional" for. That block's reasoning is unchanged; only this bullet's attribution was wrong.
 - Someone who scans the raw QR with a generic wallet cannot pay at all. Deliberate trade-off, **re-affirmed in slice 8 after the refund path existed to test it** — see the block at the end of this section.
 
 The refund itself is a kind `21002` debit from the watcher's key against the seller's `ndebit` pointer, capped by a node-enforced frequency rule — see §11 q10 and §12.
@@ -1528,6 +1530,12 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
 - No nsec, node credential, or Lightning.Pub pairing ever transmitted to or stored by us.
 - No secrets in the repo. No `.env` with keys committed. Use NIP-46 bunker for any CI signing.
 - Treat every inbound event as hostile input: validate before parsing, bound sizes, verify signatures before acting.
+
+  **EXTENDED 2026-08-24 by milestone A's item 4, because "every inbound event" was not the whole trust boundary.** The buyer chooses the `refund_pointer`, the node stores it on the settled invoice, and the seller's watcher then *fetches whatever host it names* and asks that host for an invoice it is about to pay. That is an outbound request driven by hostile input, and the rule above did not reach it. Two panel claims were reproduced against a self-signed listener on 127.0.0.1 before anything was changed: the 64 KB body bound was checked one line **after** the whole body was buffered (10 MB in 34 ms), and neither LNURL hop had any address check at all, so a `callback` of `https://127.0.0.1:8443/cb` — a field the buyer's own host chooses — was fetched and parsed. `redirect: 'follow'` was measured following a self-redirect 21 times.
+
+  The fix is a transport change, and the reason is worth keeping: **`dns.resolve()` followed by `fetch(url)` cannot work.** `fetch` re-resolves the name, so the address that was vetted is not the address that is connected to, and a hostile pointer's DNS can answer differently the second time. `fetch` also follows redirects internally and hands back only the final response, so "re-check each hop" is not expressible. `spike/refund.ts` now uses `node:https` (stdlib, no new dependency): the name is resolved once, refused if **any** answer is a private or reserved address, and connected to at that exact address with `servername` and `Host` set so TLS still validates against the hostname. Each redirect is a separate vetted request, capped at three and re-checked for https, under one deadline for the whole chain. The body is counted in bytes off the stream and the socket destroyed at the bound.
+
+  `isPrivateAddress` is a pure exported function that fails closed, and it is **a named range list rather than a proof** — 6to4 and Teredo are not enumerated. That gap is a row in `/docs/known-defects.md` rather than a silence, because a check that reads as a guarantee and is not one is worse than no check.
 - Relays can withhold, delay, reorder, and replay — **confirmed, not theoretical**: `wss://relay.lightning.pub` replayed minutes-old kind `21001` events to a fresh subscriber before EOSE, and CLINK Offers defines no request-freshness rule and no single-use construct. Any retry path on the money side must be idempotent, **keyed on the settled invoice / payment hash, never the request event id**.
 - The watcher's refund path must have a hard cap and a kill switch. A bug there sends money out. Note the node's account balance is currently **9,000 sats**, all of it created by test sales — four
   settled invoices (`plants` 6,000, `mugs` 3×1,000), measured by `node spike/sales-report.ts` on
@@ -1549,10 +1557,31 @@ Both Boltz and lnp2pbot were shut down in August 2026 after AI-assisted attacker
   on 2026-08-23**: the account holds 9,000 (8,946 payable after the Pub's fee) against an
   8,000/day cap, so the cap now binds first and is doing real work for the first time. It was
   never re-sized deliberately; the balance walked past it. Re-decide the number rather than
-  inheriting it. Second, our
+  inheriting it — **still open as of 2026-08-24, and it is now the first thing item 6 should do**,
+  because item 6 is the run that actually crosses it. `node authorize-refunds.ts --cap <n>` re-caps
+  an existing grant in one call and needs no dance. Second, our
   own code adds one guard the node cannot: a journal keyed on the settled invoice, because the node
   has no "already refunded" field and CLINK's `k1` turned out to be in-memory with a 5-minute TTL
   (findings §13.28). That guard is a file, and losing the file could double-pay a refund.
+
+  **THIRD, ADDED 2026-08-24 BY MILESTONE A, and it is the one that was actually broken.** Two of
+  the three guards above were real; the file was not, twice over. `setInterval(tick, POLL_MS)` had
+  no in-flight guard and a refunding tick outlives its own 5s timer by design, so a second tick
+  re-read the journal mid-flight and resolved a second BOLT11 for the same sale — and the loser's
+  unconditional write then landed `failed` over the winner's `paid`, which `settledByUs` treats as
+  retryable six minutes later, by which time the node's k1 debouncer has swept the k1. Both halves
+  are closed: an in-flight guard that DROPS rather than queues, and a monotonic write that makes
+  `paid` terminal, on the journal itself so every future writer inherits it.
+
+  **And the file is now reconciled against the node at startup** (item 9). The rule that decides
+  what that reconcile may do is the important part: **a match on amount and time alone is evidence
+  for a human, never an input to whether money moves.** The node stores no link between a debit and
+  the settled invoice that caused it, so a `pending` row with a matching outgoing payment produces a
+  **prompt**, never a transition. Only the refusals act without a human — an oversell with no
+  journal row but a matching payment is blocked, and `--refunds` refuses to start when the journal
+  file is absent and the node reports outgoing payments. A non-TTY start runs, transitions nothing,
+  and says so loudly: refusing to start would stop the availability watcher too, which is a new
+  oversell rather than a guard against one.
 - The watcher holds **no signing key at all** — it publishes kind 30402 events the seller pre-signed (§7.2). It does hold a node credential to read settlements, and that one is a **separate key** from the seller's identity and Pub account where possible: "User" scope on Lightning.Pub is not read-only, and the same credential that reads settlements can call `PayInvoice`. Slice 3's watcher currently reuses the fixture seller's throwaway `.dev-key`, because on this fixture the seller identity and the node account are one key; slice 7's refund path must not reuse it.
 - Never publish the account's default offer: its id is the account pointer, and an unauthorised debit/manage request against a known pointer pushes an approval prompt to the seller's wallet (§6.1).
 - The seller's node is the only thing holding funds, and it is theirs.

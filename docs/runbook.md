@@ -211,6 +211,43 @@ the first. The two republishes are relay no-ops: the rungs were already the live
 
 ---
 
+## 5a. The kill switch, and what changed on 2026-08-24
+
+This is the block somebody reads at 3am, so the short version first:
+
+```bash
+cd spike
+node authorize-refunds.ts --show      # what the node actually has. Needs no key file
+node authorize-refunds.ts --revoke    # BanDebit. THE KILL SWITCH
+node authorize-refunds.ts --revoke --npub <64 hex>   # from a machine without spike/.refund-key
+```
+
+**It used to be able to lie, and that is why the behaviour changed.** The refund key was minted at
+module top level, *above* the `--revoke` and `--reset` branches, so on any machine where
+`spike/.refund-key` was absent — a fresh clone, a restored `.dev-key`, a deleted file — the switch
+wrote a brand-new random key, derived a pubkey from it, and banned **that**. The node creates a
+banned row happily. It printed `# BANNED the refund key` and exited 0 while the real grant stayed
+live and a watcher elsewhere kept spending. Three things are different now:
+
+- **It refuses rather than improvises.** No key file and no `--npub` means it exits non-zero and
+  says so. It never creates a key.
+- **The verdict comes from the node.** It re-reads `GetDebitAuthorizations` after the call and
+  prints its success line from the after-state. If the node still reports the key AUTHORIZED it
+  throws and tells you to ban it from ShockWallet by hand and stop the watcher yourself.
+- **"Nothing to stop" is not success.** If the node reports no grant for this key it prints no
+  success line, lists any **other** grants on the account — a live grant you do not hold the key
+  for is exactly what you need to see at that moment — and exits 1.
+
+`--show` needs no key file, so on a fresh clone it lists what the node has rather than inventing a
+key to compare against. If refunds are going out and you do not know from where, that is the first
+command.
+
+**`node check-refund.ts` proves the cap and the switch and costs nothing** — every debit it sends
+is one the node refuses. It ends with the grant **removed** on purpose; re-arm with
+`node authorize-refunds.ts`.
+
+---
+
 ## 6. Day-to-day
 
 ```
@@ -218,6 +255,20 @@ lpub-status    lpub-log    lnd-log    lpub-restart
 lncli state              # expect SERVER_ACTIVE
 lncli getinfo            # expect synced_to_chain: true
 ```
+
+**The watcher reconciles at startup now (2026-08-24), and that changes what starting it looks
+like.** Under `--refunds` it reads the node's outgoing payments before the first tick and:
+
+- **refuses to start** if `spike/.refunds.json` is missing and the node has sent money. That is the
+  restored-an-old-file case, and starting would recompute every oversell already refunded and pay
+  it again. The error names the escape hatch: check `node sales-report.ts --outgoing`, then
+  `echo '{}' > spike/.refunds.json` deliberately.
+- **refuses to start** if the node's outgoing payments cannot be read at all, because not knowing
+  what has already been sent *is* the double-pay condition. Drop `--refunds` to keep publishing
+  availability.
+- **prompts** on any `pending` row it can match — and a prompt needs a terminal. Started under
+  launchd there is no stdin, so it runs, transitions nothing, and prints the evidence with a line
+  saying nobody could answer. **Start it from a terminal after any run that left a `pending` row.**
 
 ---
 
