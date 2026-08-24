@@ -147,6 +147,59 @@ export const settledByUs = (journal: Journal, invoice: string): RefundRecord | u
   return row && row.state !== 'failed' ? row : undefined
 }
 
+/**
+ * Write one journal row and persist it. **`paid` is terminal.**
+ *
+ * The write used to be an unconditional `journal[invoice] = {…}` in watch-sales.ts, and that is
+ * the second half of the double-refund the 2026-08-21 panel found. Two overlapping ticks both
+ * resolve a BOLT11 for the same oversell and both send it; the node's k1 debouncer refuses the
+ * loser; the loser's write then lands `failed` on top of the winner's `paid`. `settledByUs`
+ * treats `failed` as retryable and `RETRY_AFTER_S` is six minutes — long enough for the
+ * debouncer's five-minute TTL to have swept the k1 — so the retry gets a fresh one and pays for
+ * real. The journal is the ONLY durable double-refund guard and a late refusal could downgrade it.
+ *
+ * It lives here rather than at the call site on purpose: the invariant belongs to the journal, so
+ * every future writer gets it, including the startup reconcile. Grepped before landing it — the
+ * only writer in the tree is watch-sales.ts's `record`, and the only readers of a row's `state`
+ * are `settledByUs` and the watcher's own printing (`summarise`, the pending line). **Nothing in
+ * this codebase legitimately moves a row OUT of `paid`**, so a blanket return costs nothing; if a
+ * flow ever needs to, it needs a new verb rather than this one.
+ */
+export const recordRefund = (journal: Journal, path: string, row: RefundRecord): void => {
+  if (journal[row.invoice]?.state === 'paid') return
+  journal[row.invoice] = row
+  writeJournal(path, journal)
+}
+
+/**
+ * Run at most one of these at a time; a call that arrives while one is running is DROPPED.
+ *
+ * `setInterval(tick, 5_000)` had no guard, and a refunding tick routinely outlives its own timer
+ * by design — `resolvePointer` alone is two sequential LNURL fetches at a 10s timeout each. So
+ * tick B re-read the journal mid-flight, saw nothing at `settledByUs` because the `pending` row
+ * is not written until after that network call, and resolved a second invoice for the same sale.
+ *
+ * DROPPED RATHER THAN QUEUED. Queueing a skipped poll would build a backlog behind exactly the
+ * slow refund that caused the overlap, and the poll is not a job — it recomputes everything from
+ * the node each time, so the next one in five seconds sees whatever this one would have.
+ *
+ * It is here, next to the journal, because the money half is the only half that a double run
+ * costs anything: republishing a signed rung twice is a no-op at the relay by construction
+ * (./ladder.ts), and `lastSold` already collapses a repeated count.
+ */
+export const inFlightGuard = <T>(fn: () => Promise<T>): (() => Promise<T | undefined>) => {
+  let running = false
+  return async () => {
+    if (running) return undefined
+    running = true
+    try {
+      return await fn()
+    } finally {
+      running = false
+    }
+  }
+}
+
 // --- reconciling a `pending` row against the node -------------------------------------------
 //
 // A `pending` row means we sent a debit and never heard back, so whether money moved is unknown.

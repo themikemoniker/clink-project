@@ -57,12 +57,13 @@ import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
 import { isStale, nofferOf, targetStock } from './ladder.ts'
 import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
 import {
+  inFlightGuard,
   matchingPayments,
   oversold,
   readJournal,
+  recordRefund,
   resolvePointer,
   settledByUs,
-  writeJournal,
   type Journal,
   type Outgoing,
   type RefundState,
@@ -367,7 +368,10 @@ const record = (
   note: string,
   preimage?: boolean,
 ) => {
-  journal[row.invoice] = {
+  // MONOTONIC — ./refund.ts `recordRefund` drops this write if the row is already `paid`. The
+  // invariant is the journal's rather than this call site's, so the startup reconcile and anything
+  // added later cannot downgrade a settled row either.
+  recordRefund(journal, JOURNAL_FILE, {
     invoice: row.invoice,
     d,
     sats,
@@ -376,8 +380,7 @@ const record = (
     pointer, // the KIND of pointer, never the pointer
     note,
     ...(preimage === undefined ? {} : { preimage }),
-  }
-  writeJournal(JOURNAL_FILE, journal)
+  })
 }
 
 // The node's recent outgoing payments, for reconciling a `pending` row against reality.
@@ -517,7 +520,19 @@ if (ONCE) {
   process.exit(0)
 }
 console.log(`# polling every ${POLL_MS / 1000}s — ctrl-c to stop`)
-setInterval(() => void tick().catch(err => console.log(`# tick failed: ${String(err).slice(0, 160)}`)), POLL_MS)
+// GUARDED. A refunding tick outlives POLL_MS by design and the second one used to pay the same
+// buyer again — ./refund.ts `inFlightGuard` for the whole chain. A skipped poll costs nothing:
+// the next one recomputes availability and the oversell set from the node from scratch.
+const guardedTick = inFlightGuard(tick)
+setInterval(() => void guardedTick().catch(err => console.log(`# tick failed: ${String(err).slice(0, 160)}`)), POLL_MS)
 // Anything owed and unpaid, reprinted on a slow loop. A `queued` refund is money the seller still
 // owes a buyer, and a line that scrolled past forty minutes ago does not tell them that.
+//
+// DELIBERATELY NOT GUARDED, and this was decided rather than overlooked. `summarise` is a pure
+// reader: it takes a synchronous snapshot of the in-memory journal, makes one `GetUserOperations`
+// read, and prints. It writes no row, signs nothing and pays nothing, so overlapping a refunding
+// tick — or a previous slow summarise — costs interleaved log lines and a row printed as
+// `pending` while its payment is genuinely in flight, which the line it prints already says is
+// not proof. Guarding it would instead swallow the five-minute reminder of money still owed on
+// exactly the run where the node is answering slowly, and that reminder is the point of it.
 if (REFUNDS) setInterval(() => void summarise().catch(() => {}), 5 * 60_000)

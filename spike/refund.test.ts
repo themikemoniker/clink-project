@@ -5,10 +5,22 @@
 // cannot cover is the payment itself; that is spike/check-refund.ts, which proves the node's cap
 // and kill switch against the real node before any refund runs unattended.
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { bech32 } from '@scure/base'
 import { decodeNdebit, k1For } from './ndebit.ts'
-import { lnurlpUrl, matchingPayments, oversold, settledByUs, type Journal, type Settled } from './refund.ts'
+import {
+  inFlightGuard,
+  lnurlpUrl,
+  matchingPayments,
+  oversold,
+  recordRefund,
+  settledByUs,
+  type Journal,
+  type Settled,
+} from './refund.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const bytes = (n: number, fill = 7) => new Uint8Array(n).fill(fill)
@@ -163,6 +175,87 @@ test('anything but a failure stops the watcher acting on that invoice again', ()
   // Only an outright decline is retried, because nothing was paid.
   assert.equal(settledByUs(journal, 'inv-failed'), undefined)
   assert.equal(settledByUs(journal, 'never-seen'), undefined)
+})
+
+// --- item 1 (2026-08-24): the double refund, both halves -------------------------------------
+//
+// THIS IS THE TEST THE FIRST 27 DID NOT HAVE, and its absence is the whole reason the bug
+// survived them. `watch-sales.ts --once` runs one `await tick()` and exits without installing a
+// timer, so nothing in a test can drive the interval that raced. What can be driven is the shape
+// underneath it: read the journal, do something slow, write, pay. That is `fakeTick` below, and
+// the second test asserts it really does double-pay when the guard is taken away — otherwise the
+// first test would be asserting nothing at all.
+
+const tmpJournal = () => join(mkdtempSync(join(tmpdir(), 'clink-refund-')), '.refunds.json')
+
+const row = (state: Journal[string]['state'], note?: string): Journal[string] => ({
+  invoice: 'inv-oversold',
+  d: 'yardsale-2026-08-mugs',
+  sats: 1_000,
+  state,
+  at: 1_787_000_000,
+  pointer: 'address',
+  ...(note === undefined ? {} : { note }),
+})
+
+/**
+ * The refund loop's real ordering, with the network replaced by a timer.
+ *
+ * The gap that matters is between `settledByUs` and the first `recordRefund`: in the watcher that
+ * gap is `resolvePointer`, two sequential LNURL fetches at a 10s timeout each, against a 5s poll.
+ * Nothing marks the invoice as in-flight until after it.
+ */
+const fakeTick = (journal: Journal, path: string, paid: string[]) => async () => {
+  if (settledByUs(journal, 'inv-oversold')) return
+  await new Promise(resolve => setTimeout(resolve, 5)) // resolvePointer
+  recordRefund(journal, path, row('pending', 'sent, awaiting the node'))
+  paid.push('inv-oversold') // payDebit
+  recordRefund(journal, path, row('paid', 'the node acknowledged'))
+}
+
+test('two overlapping ticks refund an oversell once, not twice', async () => {
+  const journal: Journal = {}
+  const paid: string[] = []
+  const tick = inFlightGuard(fakeTick(journal, tmpJournal(), paid))
+  await Promise.all([tick(), tick()])
+  assert.deepEqual(paid, ['inv-oversold'])
+  assert.equal(journal['inv-oversold']!.state, 'paid')
+})
+
+test('and the same two ticks without the guard pay twice, so the race is real', async () => {
+  const journal: Journal = {}
+  const paid: string[] = []
+  const tick = fakeTick(journal, tmpJournal(), paid)
+  await Promise.all([tick(), tick()])
+  assert.deepEqual(paid, ['inv-oversold', 'inv-oversold'])
+})
+
+test('a late refusal cannot downgrade a paid row', () => {
+  // The second half of the same bug. Both ticks send the identical derived k1, the node's
+  // debouncer refuses the loser, and the loser's write used to land `failed` on top of `paid` —
+  // which `settledByUs` treats as retryable, six minutes later, with a k1 the debouncer has swept.
+  const journal: Journal = {}
+  const path = tmpJournal()
+  recordRefund(journal, path, row('paid', 'the node acknowledged'))
+  recordRefund(journal, path, row('failed', 'GFY 1: K1 already processed'))
+  assert.equal(journal['inv-oversold']!.state, 'paid')
+  assert.equal(journal['inv-oversold']!.note, 'the node acknowledged')
+  // On disk too, because the disk is the copy that survives the restart this guards against.
+  assert.equal(JSON.parse(readFileSync(path, 'utf8'))['inv-oversold'].state, 'paid')
+  assert.equal(settledByUs(journal, 'inv-oversold')?.state, 'paid')
+})
+
+test('every other transition still lands, because only paid is terminal', () => {
+  // The guard has to be exactly one state wide. `pending` -> `paid` is what item 9's startup
+  // reconcile does after a human confirms, and `failed` -> `pending` is an ordinary retry; a
+  // wider guard would silently break both, which is the same class of bug as the one being fixed.
+  const journal: Journal = {}
+  const path = tmpJournal()
+  recordRefund(journal, path, row('failed', 'the host was down'))
+  recordRefund(journal, path, row('pending', 'sent, awaiting the node'))
+  assert.equal(journal['inv-oversold']!.state, 'pending')
+  recordRefund(journal, path, row('paid', 'confirmed against the node'))
+  assert.equal(journal['inv-oversold']!.state, 'paid')
 })
 
 // --- lnurlpUrl ------------------------------------------------------------------------------
