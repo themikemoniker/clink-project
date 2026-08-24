@@ -47,6 +47,7 @@
 //                            [--refunds]
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { createInterface } from 'node:readline/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SimplePool, getPublicKey, type Event } from 'nostr-tools'
@@ -61,6 +62,7 @@ import {
   matchingPayments,
   oversold,
   readJournal,
+  reconcile,
   recordRefund,
   resolvePointer,
   settledByUs,
@@ -118,6 +120,9 @@ const SELLER = getPublicKey(sk)
 // process exists for; finding out then that the grant was never made is finding out too late.
 let refundSk = new Uint8Array()
 let debitNode: DebitPointer = { pubkey: '', relay: '' }
+// Whether the FILE was there, which `readJournal` cannot tell you afterwards — it answers `{}` for
+// both "absent" and "empty". Item 9's loudest refusal turns on exactly that distinction.
+const JOURNAL_EXISTED = existsSync(JOURNAL_FILE)
 const journal: Journal = REFUNDS ? readJournal(JOURNAL_FILE) : {}
 if (REFUNDS) {
   if (!existsSync(REFUND_KEY_FILE)) throw new Error(`--refunds needs ${REFUND_KEY_FILE} — run authorize-refunds.ts first`)
@@ -278,6 +283,12 @@ const lastSold = new Map<string, number>()
 // And one more, which is not a guard so much as an admission: `--refunds`. Without it this
 // process is exactly what slice 3 shipped and cannot spend. A watcher that starts paying because
 // somebody restarted it is not a thing to build by accident.
+//
+// ITEM 9's snapshot: what the node had already sent when this process started. Read once, at
+// startup, because the question it answers is "did a PREVIOUS run already pay this?" — anything
+// this run pays is in the journal. See the reconcile block below `summarise`.
+let outgoingAtStart: Outgoing[] = []
+
 const refundOversells = async (d: string, rows: Settled[], units: number) => {
   for (const row of oversold(rows, units)) {
     const done = settledByUs(journal, row.invoice)
@@ -308,6 +319,28 @@ const refundOversells = async (d: string, rows: Settled[], units: number) => {
     const kind = !pointer ? 'none' : decodeNoffer(pointer) ? 'noffer' : 'address'
     const sats = Number(row.amount)
     if (!(sats > 0)) continue
+
+    // ITEM 9: no journal row at all, and the node has already sent something that looks like this
+    // refund. That is the lost-journal case — a deleted file, a restored backup, a second machine
+    // — and paying again is the exact loss the journal exists to prevent. So it BLOCKS and says
+    // why, rather than paying. This is a refusal, so it acts with no human, which is the asymmetry
+    // the reconcile is built on: refusing costs a delay, deciding costs a payment.
+    //
+    // Matched against the SETTLEMENT's own time rather than a journal row's `at`, because there is
+    // no row — a refund is sent after the sale it refunds, so the settled invoice is the only
+    // anchor available. Amount and time only; the node stores no link back to the sale.
+    if (!journal[row.invoice]) {
+      const already = matchingPayments(outgoingAtStart, sats, Number(row.paid_at_unix))
+      if (already.length > 0) {
+        record(row, d, sats, kind, 'queued', `the node already has ${already.length} outgoing payment(s) of ${sats} sats near this sale, and there is no journal row — NOT paying again`)
+        console.log(`# ${d}: REFUND BLOCKED — ${already.length} outgoing payment(s) of ${sats} sats near this sale and no journal row.`)
+        for (const o of already) {
+          console.log(`#     ${new Date(Number(o.paidAtUnix) * 1000).toISOString()}  ${o.operationId}${o.internal ? '  (internal)' : ''}`)
+        }
+        console.log(`#   This is the lost-journal case. Confirm against the node before doing anything: if it was NOT refunded, pay it by hand.`)
+        continue
+      }
+    }
 
     // NEVER LOG THE POINTER — /CLAUDE.md. The kind is what a seller needs to see.
     const said = kind === 'noffer' ? 'an noffer' : kind === 'address' ? 'a Lightning address' : 'no pointer at all'
@@ -510,6 +543,89 @@ const tick = async () => {
     lastSold.set(d, sold)
     console.log(`# ${new Date().toISOString()} ${d}: ${sold} sold -> stock ${target}${target === 0 ? ' (SOLD)' : ''}, ${ok}/${RELAYS.length} relays`)
   }
+}
+
+// --- item 9: reconcile the journal against the node, before anything can spend ---------------
+//
+// THE NON-TTY DECISION, made deliberately and written here because it is the first thing the next
+// reader will ask. A daemon under launchd has no stdin, so the prompt below cannot be answered,
+// and a prompt that silently defaults is worse than either answer.
+//
+// **A non-TTY start RUNS, transitions nothing, and says so loudly on every pending row.**
+//
+// Refusing to start was the other defensible option and it is the wrong one here, because of what
+// this process does when it is NOT refunding. The watcher is also slice 3's watcher: it observes
+// settlement and republishes availability. Stop it and items stay advertised as available after
+// they sell, which is an oversell — a NEW loss, and the exact one this whole slice exists to
+// refund. Weighed against that, what the prompt actually buys is nothing that money turns on: a
+// `pending` row is ALREADY never retried automatically and never dropped, by design. It is
+// reprinted every tick and every five minutes until a human looks at the node. So the prompt is an
+// upgrade available when a person is present, and its absence returns the row to precisely the
+// state the watcher has always kept it in. Nothing is lost by not asking; something is lost by
+// refusing to run.
+//
+// The two REFUSALS below are different and act with no human in either mode, because refusing
+// costs a delay and deciding costs a payment.
+if (REFUNDS) {
+  // If the node cannot be read, we cannot know what it has already sent — and that is exactly the
+  // double-pay condition. `tick()` tolerates a node error per item; this does not, because the
+  // thing it guards is money leaving.
+  try {
+    outgoingAtStart = await outgoingPayments()
+  } catch (err) {
+    throw new Error(
+      `--refunds needs the node's outgoing payments at startup and could not read them: ${String(err).slice(0, 160)}. ` +
+        `Refusing to arm refunds without knowing what has already been sent — that is the double-pay condition. ` +
+        `Run without --refunds to keep publishing availability.`,
+    )
+  }
+
+  const { refuseToStart, pending } = reconcile(journal, JOURNAL_EXISTED, outgoingAtStart)
+
+  // THE "RESTORED AN OLD FILE" CASE, and it must be loud. No journal at all, and the node has sent
+  // money: every oversell this account ever refunded is about to be recomputed as still owed.
+  if (refuseToStart) {
+    throw new Error(
+      `${JOURNAL_FILE} does not exist, but the node reports ${outgoingAtStart.length} outgoing payment(s). ` +
+        `That is either a lost journal or a second machine, and starting with --refunds would recompute every ` +
+        `oversell this account has already refunded and pay it again. REFUSING.\n` +
+        `  Restore the journal, or — after checking the node's outgoing payments against your sales — create an ` +
+        `empty one deliberately:  echo '{}' > ${JOURNAL_FILE}\n` +
+        `  node sales-report.ts --outgoing${KEY === '.dev-key' ? '' : ` --key ${KEY}`}  lists what the node has sent.`,
+    )
+  }
+
+  if (pending.length > 0) {
+    console.log(`\n# RECONCILE — ${pending.length} refund(s) were SENT and never acknowledged.`)
+  }
+  for (const { row, hits } of pending) {
+    console.log(`#   ${row.d} — ${row.sats} sats, attempted ${new Date(row.at * 1000).toISOString()}`)
+    for (const o of hits) {
+      console.log(`#     ${new Date(Number(o.paidAtUnix) * 1000).toISOString()}  ${o.operationId}${o.internal ? '  (internal)' : ''}`)
+    }
+    if (hits.length === 0) {
+      console.log(`#     nothing on the node matches it, which SUGGESTS the debit never left. It is not proof.`)
+      console.log(`#     Leaving it 'pending'. It is never retried automatically and never dropped.`)
+      continue
+    }
+    console.log(`#     MATCHED ON AMOUNT AND TIME ONLY — the node stores no link back to the sale, so two`)
+    console.log(`#     refunds of this amount in the window are indistinguishable. This is evidence, not an answer.`)
+    if (!process.stdin.isTTY) {
+      console.log(`#     NO TTY, so nobody can answer. Leaving it 'pending' and UNTOUCHED — see the note in this`)
+      console.log(`#     file. Run this watcher from a terminal once to settle it, or edit the journal by hand.`)
+      continue
+    }
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    const answer = await rl.question(`#     mark it paid? [y/N] `)
+    rl.close()
+    if (!/^y(es)?$/i.test(answer.trim())) {
+      console.log(`#     left as 'pending'.`)
+      continue
+    }
+    recordRefund(journal, JOURNAL_FILE, { ...row, state: 'paid', note: 'confirmed against the node by a human at startup' })
+    console.log(`#     marked PAID.`)
+  }
+  if (pending.length > 0) console.log('')
 }
 
 await tick()

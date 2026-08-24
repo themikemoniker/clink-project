@@ -235,6 +235,41 @@ export const matchingPayments = (ops: unknown, sats: number, at: number): Outgoi
     .sort((a: Outgoing, b: Outgoing) => a.paidAtUnix - b.paidAtUnix)
 }
 
+// --- item 9 (2026-08-24): the startup reconcile ----------------------------------------------
+//
+// `.refunds.json` is the ONLY durable record that a refund happened. The node has no
+// "already refunded" field, and CLINK's `k1` is in memory with a five-minute TTL (findings
+// §13.28), so it cannot carry idempotency. Lose the file, restore an old one, or start the watcher
+// on a second machine, and every oversell it already paid is recomputed from the node and paid
+// again. This is the same failure class as the tick race, not a durability nicety.
+//
+// THE ONE DECISION THIS FUNCTION ENCODES: **a match is evidence for a human, never an input to
+// whether money moves.** The roadmap originally said a `pending` row with a matching payment
+// becomes `paid` without human intervention; the 2026-08-23 review reversed that (findings §1) and
+// the reversal is load-bearing. The node stores no link between a debit and the settled invoice
+// that caused it, so two refunds of the same amount inside the window are indistinguishable.
+// Marking a row `paid` on that heuristic records a refund that may never have been sent, and the
+// buyer is then stranded with no row reprinting to say so — a NEW way for milestone A to lose
+// money rather than a guard against one.
+//
+// So this returns findings, not transitions. Only the two REFUSALS act without a human, because
+// refusing costs a delay and deciding costs a payment.
+export type PendingMatch = { row: RefundRecord; hits: Outgoing[] }
+export type Reconciliation = {
+  /** The journal file was absent and the node has sent money. That is the "restored an old file"
+   *  case, and it is the one shape where starting up is itself the dangerous act. */
+  refuseToStart: boolean
+  /** Every `pending` row, with whatever the node has that looks like it. Possibly nothing. */
+  pending: PendingMatch[]
+}
+
+export const reconcile = (journal: Journal, journalExisted: boolean, ops: Outgoing[]): Reconciliation => ({
+  refuseToStart: !journalExisted && ops.length > 0,
+  pending: Object.values(journal)
+    .filter(row => row.state === 'pending')
+    .map(row => ({ row, hits: matchingPayments(ops, row.sats, row.at) })),
+})
+
 // --- turning a pointer into a BOLT11 --------------------------------------------------------
 
 export type Resolved = { ok: true; bolt11: string } | { ok: false; error: string; queue: boolean }

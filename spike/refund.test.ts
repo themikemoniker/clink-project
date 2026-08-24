@@ -6,7 +6,7 @@
 // and kill switch against the real node before any refund runs unattended.
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync } from 'node:fs'
-import { createServer, get as httpGet, type Server } from 'node:http'
+import { createServer, get as httpGet, type IncomingMessage, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -20,6 +20,7 @@ import {
   matchingPayments,
   oversold,
   readBounded,
+  reconcile,
   recordRefund,
   settledByUs,
   type Journal,
@@ -351,9 +352,7 @@ test('a body larger than the bound aborts mid-stream instead of being buffered w
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
   const { port } = server.address() as { port: number }
 
-  const res = await new Promise<Parameters<Parameters<typeof httpGet>[1]>[0]>(resolve =>
-    httpGet({ host: '127.0.0.1', port, path: '/' }, resolve),
-  )
+  const res = await new Promise<IncomingMessage>(resolve => httpGet(`http://127.0.0.1:${port}/`, resolve))
   await assert.rejects(() => readBounded(res, MAX), /larger than 4096 bytes/)
   assert.equal(res.destroyed, true, 'the socket is closed rather than left draining')
   server.close()
@@ -363,9 +362,7 @@ test('a body inside the bound still reads back whole', async () => {
   const server: Server = createServer((_req, res) => res.end('{"tag":"payRequest"}'))
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
   const { port } = server.address() as { port: number }
-  const res = await new Promise<Parameters<Parameters<typeof httpGet>[1]>[0]>(resolve =>
-    httpGet({ host: '127.0.0.1', port, path: '/' }, resolve),
-  )
+  const res = await new Promise<IncomingMessage>(resolve => httpGet(`http://127.0.0.1:${port}/`, resolve))
   assert.equal(await readBounded(res, 64 * 1024), '{"tag":"payRequest"}')
   server.close()
 })
@@ -472,4 +469,77 @@ test('a node answer of the wrong shape reconciles to nothing rather than throwin
   assert.deepEqual(matchingPayments({ operations: [] }, 1000, 1), [])
   assert.deepEqual(matchingPayments([null, 'nonsense', {}], 1000, 1), [])
   assert.deepEqual(matchingPayments([op({ paidAtUnix: NaN })], 1000, 1), [])
+})
+
+// --- item 9 (2026-08-24): the startup reconcile ----------------------------------------------
+//
+// All four cases the brief names, all against a stub, none of them touching the node. The one
+// property every assertion is protecting: **this function returns findings, never transitions.**
+// The roadmap originally had a matched `pending` row become `paid` with no human, and the
+// 2026-08-23 review reversed it — a match on amount and time alone records a refund that may never
+// have been sent, and strands the buyer with no row left reprinting to say so.
+
+const pendingRow = (over: Partial<Journal[string]> = {}): Journal[string] => ({
+  invoice: 'inv-pending',
+  d: 'yardsale-2026-08-mugs',
+  sats: 1_000,
+  state: 'pending',
+  at: 1_787_000_000,
+  pointer: 'address',
+  ...over,
+})
+
+test('a pending row with a matching payment is reported, and NOT transitioned', () => {
+  const journal: Journal = { 'inv-pending': pendingRow() }
+  const out = reconcile(journal, true, [op({ paidAtUnix: 1_787_000_040 })])
+  assert.equal(out.refuseToStart, false)
+  assert.equal(out.pending.length, 1)
+  assert.equal(out.pending[0]!.hits.length, 1)
+  assert.equal(out.pending[0]!.hits[0]!.operationId, 'op-1')
+  // The whole point. Reconciling is a read; the row is exactly as it was.
+  assert.equal(journal['inv-pending']!.state, 'pending')
+})
+
+test('a pending row with no matching payment is reported with no evidence at all', () => {
+  const out = reconcile({ 'inv-pending': pendingRow() }, true, [op({ amount: 6_000 }), op({ paidAtUnix: 1_787_099_999 })])
+  assert.equal(out.pending.length, 1)
+  assert.equal(out.pending[0]!.hits.length, 0)
+  assert.equal(out.refuseToStart, false)
+})
+
+test('only pending rows are reconciled — paid, failed and queued are somebody else', () => {
+  // `paid` is done, `failed` is retried by the ordinary loop, and `queued` is already waiting for
+  // a human for a reason the node cannot speak to. Widening this would ask the seller to
+  // re-confirm settled history on every restart, which is how a prompt stops being read.
+  const journal: Journal = {
+    a: pendingRow({ invoice: 'a', state: 'paid' }),
+    b: pendingRow({ invoice: 'b', state: 'failed' }),
+    c: pendingRow({ invoice: 'c', state: 'queued' }),
+    d: pendingRow({ invoice: 'd' }),
+  }
+  const out = reconcile(journal, true, [op()])
+  assert.deepEqual(out.pending.map(p => p.row.invoice), ['d'])
+})
+
+test('a missing journal plus outgoing payments refuses to start', () => {
+  // The "restored an old file" case. Every oversell this account has already refunded is about to
+  // be recomputed from the node as still owed, and paid again.
+  assert.equal(reconcile({}, false, [op()]).refuseToStart, true)
+  // A missing journal on a node that has never sent anything is a first run, which is fine.
+  assert.equal(reconcile({}, false, []).refuseToStart, false)
+  // And a journal that exists and happens to be empty is NOT the same thing — readJournal cannot
+  // tell those apart, which is why the caller passes existsSync separately.
+  assert.equal(reconcile({}, true, [op()]).refuseToStart, false)
+})
+
+test('an oversell with no journal row but a matching payment has evidence to block on', () => {
+  // The per-oversell half of item 9, which watch-sales.ts drives with the SETTLEMENT's own time
+  // rather than a journal row's `at` — there is no row, and a refund is sent after the sale it
+  // refunds, so the settled invoice is the only anchor there is.
+  const settledAt = 1_787_000_000
+  assert.equal(matchingPayments([op({ paidAtUnix: settledAt + 90 })], 1_000, settledAt).length, 1)
+  // A refund of a different size near the same sale is a different payment and must not block.
+  assert.equal(matchingPayments([op({ amount: 800, paidAtUnix: settledAt + 90 })], 1_000, settledAt).length, 0)
+  // Nothing to block on is the ordinary case, and it must not read as evidence.
+  assert.equal(matchingPayments([], 1_000, settledAt).length, 0)
 })
