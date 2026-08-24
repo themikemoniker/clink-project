@@ -490,7 +490,27 @@ const fetchHop = async (url: string, deadline: number): Promise<Hop> => {
   const hostname = u.hostname.replace(/^\[|\]$/g, '') // a URL keeps an IPv6 literal's brackets
 
   const literal = isIP(hostname) !== 0
-  const addresses = literal ? [hostname] : (await lookup(hostname, { all: true })).map(a => a.address)
+  // A NAME WITH NO ADDRESS IS A PERSON'S PROBLEM, NOT THE NEXT TICK'S. This was a plain throw, so
+  // `resolvePointer`'s catch read it as transient and the row journalled `failed` — retried every
+  // six minutes, forever, never reaching a human. Measured 2026-08-24 against a real buyer's
+  // address: `phoenixwallet.me` has NS records and no A or AAAA at all, so every refund to a
+  // Phoenix address would have retried until the sale was over with no `queued` line to say so.
+  //
+  // BUT ONLY THE PERMANENT CODES. `EAI_AGAIN` is OUR resolver having a bad minute — making that
+  // permanent would strand every pending refund on the seller's machine the moment their network
+  // hiccupped, which is a far worse failure than the one being fixed.
+  let addresses: string[]
+  if (literal) {
+    addresses = [hostname]
+  } else {
+    try {
+      addresses = (await lookup(hostname, { all: true })).map(a => a.address)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code !== 'ENOTFOUND' && code !== 'ENODATA') throw err
+      throw new PermanentHttpError(`${u.host} has no address record (${code}) — it may not be an LNURL host at all`)
+    }
+  }
   if (addresses.length === 0) throw new PermanentHttpError(`${u.host} does not resolve to anything`)
   // ANY private answer refuses the whole name. A host that resolves to both a public and a private
   // address is a DNS-rebinding attempt, not a host with an unusual DNS setup.
