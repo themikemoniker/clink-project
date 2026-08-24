@@ -518,12 +518,12 @@ export const renderBuy = (item: Item): HTMLElement | false => {
     field.disabled = true
     say(h('p', { class: 'waiting' }, 'Asking the seller’s node for an invoice…'))
 
-    const outcome = await requestInvoice(
-      offer,
-      { [REFUND_POINTER]: pointer },
-      price.amount,
-      item.title,
-      showPaid,
+    // The belt to buy.ts's braces. `requestInvoice` resolves on every path it knows about, and
+    // as of 2026-08-24 that includes the synchronous throws it used to leak — but the cost of that
+    // contract being broken again is a buyer left on a permanently disabled form reading "Asking
+    // the seller's node for an invoice…", with the page's only dead end. Cheaper to catch.
+    const outcome = await requestInvoice(offer, { [REFUND_POINTER]: pointer }, price.amount, item.title, showPaid).catch(
+      () => ({ ok: false, code: 0, error: 'Something went wrong before the request was sent. Nothing was paid.' }) as const,
     )
     if (outcome.ok) {
       // Hidden, not removed: the pointer is already baked into this invoice's payer_data, so
