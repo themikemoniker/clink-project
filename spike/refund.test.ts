@@ -6,16 +6,20 @@
 // and kill switch against the real node before any refund runs unattended.
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync } from 'node:fs'
+import { createServer, get as httpGet, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { bech32 } from '@scure/base'
 import { decodeNdebit, k1For } from './ndebit.ts'
 import {
+  getJson,
   inFlightGuard,
+  isPrivateAddress,
   lnurlpUrl,
   matchingPayments,
   oversold,
+  readBounded,
   recordRefund,
   settledByUs,
   type Journal,
@@ -289,6 +293,125 @@ test('the name half cannot escape the well-known path', () => {
   // A query string cannot be smuggled in either — it would otherwise reach the host as real
   // parameters rather than as part of the name.
   assert.equal(lnurlpUrl('bob?amount=1@example.com'), 'https://example.com/.well-known/lnurlp/bob%3Famount%3D1')
+})
+
+// --- item 4 (2026-08-24): hostile input on the refund path -----------------------------------
+//
+// The buyer types the pointer, the node stores it, and the seller's watcher then fetches whatever
+// host it names and asks that host for an invoice it is about to pay. Both panel claims were
+// reproduced against the old code before any of this was written: a 10 MB body arrived whole
+// through a 64 KB "bound", and a callback of `https://127.0.0.1:8443/cb` was fetched and parsed.
+
+test('every address an SSRF actually aims at is refused', () => {
+  for (const ip of [
+    '127.0.0.1', '127.1.2.3', // loopback
+    '10.0.0.1', '172.16.0.1', '172.31.255.255', '192.168.1.1', // RFC1918
+    '169.254.169.254', // link-local, and the cloud metadata endpoint
+    '100.64.0.1', // CGNAT
+    '0.0.0.0', '192.0.0.1', '192.0.2.1', '198.18.0.1', '198.51.100.1', '203.0.113.1',
+    '224.0.0.1', '239.255.255.255', '255.255.255.255',
+    '::', '::1', 'fd00::1', 'fc00::1', 'fe80::1', 'ff02::1',
+    '::ffff:127.0.0.1', '::ffff:10.0.0.1', // an IPv4-mapped form must not launder loopback
+    '64:ff9b::7f00:1', // NAT64 carries an embedded v4
+  ]) {
+    assert.equal(isPrivateAddress(ip), true, `${ip} should be refused`)
+  }
+})
+
+test('a real wallet host is still reachable, and a non-address fails closed', () => {
+  for (const ip of ['8.8.8.8', '1.1.1.1', '172.32.0.1', '172.15.0.1', '100.128.0.1', '2606:4700::1111', '2001:4860:4860::8888']) {
+    assert.equal(isPrivateAddress(ip), false, `${ip} should be allowed`)
+  }
+  // Fails closed on anything that is not an address at all, because guessing here is the whole risk.
+  for (const junk of ['', 'localhost', 'not-an-ip', '999.1.1.1', '10.0.0']) {
+    assert.equal(isPrivateAddress(junk), true, `${junk} should be refused`)
+  }
+})
+
+test('a body larger than the bound aborts mid-stream instead of being buffered whole', async () => {
+  // The reader is exported precisely because this is the only half of the fetch a test can reach:
+  // every address a local listener can bind is one isPrivateAddress correctly refuses, which is
+  // the vetting working and also why there is no way to drive a whole oversized fetch end to end.
+  const MAX = 4 * 1024
+  const MB = Buffer.alloc(1024 * 1024, 0x61)
+  let written = 0
+  const server: Server = createServer((_req, res) => {
+    res.on('error', () => {}) // the client hangs up on us on purpose
+    res.writeHead(200)
+    const pump = () => {
+      // Keep offering megabytes until the socket goes away. If the bound were checked after the
+      // body, this would run to 32 MB before anything complained.
+      if (written >= 32 * 1024 * 1024 || res.destroyed || res.writableEnded) return
+      written += MB.length
+      if (res.write(MB)) setImmediate(pump)
+      else res.once('drain', pump)
+    }
+    pump()
+  })
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
+  const { port } = server.address() as { port: number }
+
+  const res = await new Promise<Parameters<Parameters<typeof httpGet>[1]>[0]>(resolve =>
+    httpGet({ host: '127.0.0.1', port, path: '/' }, resolve),
+  )
+  await assert.rejects(() => readBounded(res, MAX), /larger than 4096 bytes/)
+  assert.equal(res.destroyed, true, 'the socket is closed rather than left draining')
+  server.close()
+})
+
+test('a body inside the bound still reads back whole', async () => {
+  const server: Server = createServer((_req, res) => res.end('{"tag":"payRequest"}'))
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
+  const { port } = server.address() as { port: number }
+  const res = await new Promise<Parameters<Parameters<typeof httpGet>[1]>[0]>(resolve =>
+    httpGet({ host: '127.0.0.1', port, path: '/' }, resolve),
+  )
+  assert.equal(await readBounded(res, 64 * 1024), '{"tag":"payRequest"}')
+  server.close()
+})
+
+test('the redirect chain is capped, and each hop is re-checked for https', async () => {
+  // `hop` is injected only here. redirect: 'follow' used to inherit undici's default of 20 —
+  // measured at 21 fetches of a self-redirecting host on 2026-08-24 — and, worse, handed back the
+  // FINAL response, so a per-hop address check was not expressible at all.
+  let hops = 0
+  await assert.rejects(
+    () =>
+      getJson('https://wallet.example/lnurlp/x', async () => {
+        hops++
+        return { location: 'https://wallet.example/lnurlp/x', body: '' }
+      }),
+    /more than 3 redirects/,
+  )
+  assert.equal(hops, 4, 'the first request plus three redirects, and then it stops')
+
+  await assert.rejects(
+    () => getJson('https://wallet.example/a', async () => ({ location: 'http://wallet.example/b', body: '' })),
+    /not https/,
+    'a 302 must not be able to downgrade the exchange after the first hop looked fine',
+  )
+
+  // A hop that answers with a body ends the chain rather than looping.
+  assert.deepEqual(await getJson('https://wallet.example/a', async () => ({ body: '{"tag":"payRequest"}' })), {
+    tag: 'payRequest',
+  })
+})
+
+test('a pointer at a private address is refused, and the refusal never names the person', async () => {
+  // Two properties in one assertion, both of them /CLAUDE.md's. The address check refuses before a
+  // socket is opened — verified against a live listener on 2026-08-24, which recorded zero
+  // connections where the old code recorded one. And a refund pointer identifies a person: the
+  // HOST is what makes a queued row actionable, the name half is what must never be written,
+  // printed or logged, and the name half is exactly what sits in this URL's path.
+  //
+  // An IP literal rather than a hostname, so this needs no DNS and cannot go slow or flaky.
+  await assert.rejects(
+    () => getJson('https://127.0.0.1/.well-known/lnurlp/alice-personal'),
+    (err: Error) =>
+      /private or reserved address/.test(err.message) &&
+      err.message.includes('127.0.0.1') &&
+      !err.message.includes('alice-personal'),
+  )
 })
 
 // --- reconciling a `pending` row (slice 8) ---------------------------------------------------

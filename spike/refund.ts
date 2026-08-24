@@ -19,7 +19,11 @@
 // problem from "you typed it wrong"); the name half is what identifies the person, and it is
 // never written, never printed, and never leaves this file. `new URL(url).host` is the only thing
 // that crosses that line, and it is the only thing that should.
+import { lookup } from 'node:dns/promises'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { request as httpsRequest } from 'node:https'
+import { isIP } from 'node:net'
+import type { Readable } from 'node:stream'
 import { closeBuy, requestInvoice } from '../storefront/src/buy.ts'
 import { decodeNoffer, invoiceSats, LN_ADDRESS } from '../storefront/src/offer.ts'
 
@@ -287,28 +291,213 @@ const payRequestCallback = (body: unknown, msat: number): string | null => {
   }
 }
 
+// --- item 4 (2026-08-24): this is a trust boundary and it was open ---------------------------
+//
+// THE BUYER CHOOSES THE HOST. `refund_pointer` is a string a stranger typed into our own Buy form
+// and the node stored on the settled invoice; the seller's watcher then fetches it, twice, and
+// asks it for an invoice it is about to pay. Everything from here to `resolvePointer` is written
+// against that fact rather than against a cooperative wallet host.
+//
+// TWO PANEL CLAIMS, BOTH REPRODUCED FIRST (2026-08-24, self-signed listener on 127.0.0.1):
+//   * `:257` — the 64 KB bound bounded nothing. `await res.text()` buffered a 10 MB body in 34 ms
+//     and the length check ran on the line after. The seller's machine ate every byte.
+//   * `:221` — no private-address check on either hop. Hop 2's URL is the `callback` field, which
+//     is chosen by the host the buyer named, so a raw `https://127.0.0.1:…` is fully in reach.
+//     The listener recorded the connection and the watcher parsed its answer.
+// And `redirect: 'follow'` was measured following a self-redirect **21 times** — undici's default
+// of 20, which is a cap in the sense that a wall is a cap.
+//
+// WHAT THE ROADMAP ASKED FOR AND WHY IT COULD NOT BE BUILT ON `fetch`. The bullet says "resolve
+// the host, reject private and loopback ranges, and re-check after each redirect". Neither half
+// works through `fetch`:
+//
+//   * `dns.resolve()` followed by `fetch(url)` RE-RESOLVES the name, so the address that was vetted
+//     is not the address that is connected to. A hostile pointer's DNS can answer differently the
+//     second time. That is security theatre, and shipping it would be worse than shipping nothing,
+//     because the ledger would then carry a guarantee that is not one.
+//   * `redirect: 'follow'` hands back the FINAL response. There is no per-hop anything.
+//
+// SO THE TRANSPORT CHANGED. `node:https` instead of `fetch`, which is stdlib and adds no
+// dependency, and which lets all three fixes fall out of one shape:
+//
+//   1. NO TOCTOU. We resolve the name ourselves, refuse if ANY returned address is private, and
+//      then connect to that exact IP with `servername` and the `Host` header set to the real
+//      hostname — so TLS is still validated against the name and the socket still goes where we
+//      looked. This is the second of the two shapes the brief named; the first (a custom undici
+//      `lookup` dispatcher) needs the `undici` package, and `node:https` is already here.
+//   2. THE REDIRECT CHAIN IS OURS. `https.request` follows nothing, so each hop is a separate,
+//      separately-vetted request, capped at MAX_REDIRECTS and re-checked for https every time.
+//   3. THE BODY IS COUNTED OFF THE STREAM and the request is destroyed the moment it crosses the
+//      bound, in bytes rather than in the UTF-16 code units `text.length` was measuring.
+//
+// ONE DEADLINE covers the whole chain, so a host cannot hold the watcher for MAX_REDIRECTS × the
+// timeout by redirecting slowly.
+//
+// NEVER PUT THE PATH IN AN ERROR. Every message built below names `u.host` and never `u.pathname`
+// — the path carries the name half of the buyer's Lightning address, which is the half that
+// identifies a person. See the header of this file.
 const FETCH_TIMEOUT_MS = 10_000
 const MAX_BODY_BYTES = 64 * 1024
+const MAX_REDIRECTS = 3
 
 // A 4xx is the host saying "this address does not exist here", which no amount of retrying fixes;
 // a 5xx or a socket error is the host having a bad minute. They need opposite handling — one is a
 // human's problem and one is the next tick's — so the distinction is carried out of here rather
-// than flattened into "the fetch failed".
+// than flattened into "the fetch failed". A pointer aimed at a private address is permanent too:
+// it will resolve there again in six minutes, and a person needs to see it.
 class PermanentHttpError extends Error {}
 
-const getJson = async (url: string): Promise<unknown> => {
-  const res = await fetch(url, {
-    redirect: 'follow',
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    headers: { accept: 'application/json' },
-  })
-  if (!res.ok) {
-    const err = res.status >= 400 && res.status < 500 ? new PermanentHttpError(`HTTP ${res.status}`) : new Error(`HTTP ${res.status}`)
-    throw err
+/**
+ * Is this address one the seller's watcher must not be pointed at?
+ *
+ * Fails CLOSED: anything that is not a parseable public address — including a string that is not
+ * an address at all — reads as private. This is the whole security decision of item 4 and it is a
+ * pure function precisely so it can be tested exhaustively without a network.
+ *
+ * ponytail: the ranges below are the ones an SSRF actually uses — loopback, RFC1918, link-local
+ * (169.254.169.254 is the cloud metadata endpoint), CGNAT, the documentation and benchmark blocks,
+ * multicast and reserved — plus IPv6's loopback, unique-local, link-local, multicast, the
+ * IPv4-mapped forms, and the well-known NAT64 prefix. Exotic v4-in-v6 tunnelling (6to4 2002::/16,
+ * Teredo 2001::/32) is not enumerated; if this ever needs to be airtight, the upgrade is a
+ * published CIDR table rather than more branches here.
+ */
+export const isPrivateAddress = (ip: string): boolean => {
+  const version = isIP(ip)
+  if (version === 0) return true
+
+  if (version === 4) {
+    const [a, b] = ip.split('.').map(Number) as [number, number, number, number]
+    if (a === 0 || a === 10 || a === 127) return true // this-network, RFC1918, loopback
+    if (a === 172 && b >= 16 && b <= 31) return true // RFC1918
+    if (a === 192 && b === 168) return true // RFC1918
+    if (a === 169 && b === 254) return true // link-local, and the cloud metadata endpoint with it
+    if (a === 100 && b >= 64 && b <= 127) return true // CGNAT, RFC6598
+    if (a === 192 && b === 0) return true // IETF protocol assignments and TEST-NET-1
+    if (a === 198 && (b === 18 || b === 19)) return true // benchmarking
+    if (a === 198 && b === 51) return true // TEST-NET-2
+    if (a === 203 && b === 0) return true // TEST-NET-3
+    return a >= 224 // multicast, reserved, broadcast
   }
-  const text = await res.text()
-  if (text.length > MAX_BODY_BYTES) throw new Error('response too large')
-  return JSON.parse(text)
+
+  const s = ip.toLowerCase()
+  // ::ffff:127.0.0.1 must not launder loopback past the rules above.
+  const mapped = /^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/.exec(s)
+  if (mapped) return isPrivateAddress(mapped[1]!)
+  if (s.startsWith('::')) return true // ::, ::1 and the rest of the reserved ::/96 block
+  if (s.startsWith('64:ff9b:')) return true // NAT64, which carries an embedded IPv4 address
+  const head = Number.parseInt(s.split(':')[0] || 'zz', 16)
+  if (!Number.isFinite(head)) return true
+  if ((head & 0xfe00) === 0xfc00) return true // fc00::/7 unique local
+  if ((head & 0xffc0) === 0xfe80) return true // fe80::/10 link local
+  return (head & 0xff00) === 0xff00 // ff00::/8 multicast
+}
+
+/**
+ * Read a response body, giving up MID-STREAM the moment it crosses `max` BYTES.
+ *
+ * This is the bug in one function. `await res.text()` buffered the whole thing and the bound was
+ * consulted on the next line, so a 64 KB limit let a 10 MB answer through — measured, 34 ms, on a
+ * host a stranger's payment pointer named. Counting off the stream and destroying the socket makes
+ * the limit cost what it says it costs, and it counts bytes rather than the UTF-16 code units
+ * `String.length` reports.
+ *
+ * Exported because it is the only half of `fetchHop` that a test can reach: every address a local
+ * listener can bind is one `isPrivateAddress` refuses, which is the vetting working correctly and
+ * also the reason there is no way to drive a real oversized body through the whole path.
+ */
+export const readBounded = (stream: Readable, max: number): Promise<string> =>
+  new Promise((resolve, reject) => {
+    let size = 0
+    const chunks: Buffer[] = []
+    stream.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > max) {
+        stream.destroy() // closes the socket, so the host stops sending rather than being ignored
+        reject(new Error(`response larger than ${max} bytes`))
+        return
+      }
+      chunks.push(chunk)
+    })
+    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    stream.on('error', reject)
+  })
+
+type Hop = { location?: string; body: string }
+
+/**
+ * One GET, to an address vetted a moment before the socket opens, following nothing.
+ *
+ * The order is the point: resolve, refuse, then connect to the address that was refused-or-not.
+ * `servername` keeps TLS validating against the hostname rather than the literal, and the `Host`
+ * header keeps virtual hosting working, so nothing about this is visible to a well-behaved host.
+ */
+const fetchHop = async (url: string, deadline: number): Promise<Hop> => {
+  const u = new URL(url)
+  if (u.protocol !== 'https:') throw new PermanentHttpError('not an https URL')
+  const hostname = u.hostname.replace(/^\[|\]$/g, '') // a URL keeps an IPv6 literal's brackets
+
+  const literal = isIP(hostname) !== 0
+  const addresses = literal ? [hostname] : (await lookup(hostname, { all: true })).map(a => a.address)
+  if (addresses.length === 0) throw new PermanentHttpError(`${u.host} does not resolve to anything`)
+  // ANY private answer refuses the whole name. A host that resolves to both a public and a private
+  // address is a DNS-rebinding attempt, not a host with an unusual DNS setup.
+  const bad = addresses.find(isPrivateAddress)
+  if (bad) throw new PermanentHttpError(`${u.host} resolves to ${bad}, a private or reserved address`)
+
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) throw new Error('out of time before the request was sent')
+
+  return new Promise<Hop>((resolve, reject) => {
+    const req = httpsRequest(
+      {
+        host: addresses[0],
+        // SNI cannot carry an IP, and a literal has to be matched by the certificate itself.
+        servername: literal ? undefined : hostname,
+        port: u.port || 443,
+        path: u.pathname + u.search,
+        method: 'GET',
+        headers: { host: u.host, accept: 'application/json' },
+      },
+      res => {
+        const status = res.statusCode ?? 0
+        const location = typeof res.headers.location === 'string' ? res.headers.location : undefined
+        if (status >= 300 && status < 400 && location) {
+          res.resume()
+          return resolve({ location, body: '' })
+        }
+        if (status < 200 || status >= 300) {
+          res.resume()
+          return reject(status >= 400 && status < 500 ? new PermanentHttpError(`HTTP ${status}`) : new Error(`HTTP ${status}`))
+        }
+        readBounded(res, MAX_BODY_BYTES).then(body => resolve({ body }), reject)
+      },
+    )
+    req.setTimeout(remaining, () => req.destroy(new Error('timed out')))
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+/**
+ * GET some JSON, vetting every hop of the redirect chain.
+ *
+ * ponytail: `hop` is injectable ONLY so the redirect cap can be tested. Every address a local test
+ * server can bind is one `isPrivateAddress` correctly refuses, so a loop bound that could run away
+ * is otherwise unprovable — and an unbounded loop here hangs the watcher.
+ */
+export const getJson = async (url: string, hop = fetchHop): Promise<unknown> => {
+  const deadline = Date.now() + FETCH_TIMEOUT_MS
+  let target = url
+  for (let n = 0; ; n++) {
+    const res = await hop(target, deadline)
+    if (res.location === undefined) return JSON.parse(res.body)
+    if (n >= MAX_REDIRECTS) throw new PermanentHttpError(`more than ${MAX_REDIRECTS} redirects`)
+    const next = new URL(res.location, target)
+    // Re-checked per hop, which is the thing `redirect: 'follow'` made impossible. A 302 to
+    // http:// would otherwise downgrade the whole exchange after the first hop looked fine.
+    if (next.protocol !== 'https:') throw new PermanentHttpError(`redirected to ${next.protocol}, which is not https`)
+    target = next.toString()
+  }
 }
 
 /**
