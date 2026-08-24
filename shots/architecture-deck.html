@@ -1,0 +1,153 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CLINK — a static site that takes Lightning</title>
+<style>
+  :root{
+    --ink:#14110f; --soft:#55504a; --rule:#c9c4bd; --paper:#fbfaf7; --stamp:#9c1f1f;
+    --display:Didot,'Bodoni MT','Big Caslon','Playfair Display',Georgia,serif;
+    --serif:Georgia,'Iowan Old Style',Charter,'Times New Roman',serif;
+    --sans:system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;
+    --mono:'SF Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);font-family:var(--serif);
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .slide{width:1280px;height:720px;padding:60px 72px;position:relative;
+    page-break-after:always;break-after:page;display:flex;flex-direction:column;
+    background:var(--paper);overflow:hidden}
+  .slide:last-child{page-break-after:auto;break-after:auto}
+  h1{font-family:var(--display);font-size:82px;line-height:1.03;letter-spacing:-.015em;font-weight:400}
+  h2{font-family:var(--display);font-size:52px;line-height:1.08;letter-spacing:-.01em;font-weight:400}
+  .rule{height:2px;background:var(--ink);margin:22px 0 auto;width:100%}
+  .foot{position:absolute;left:72px;right:72px;bottom:32px;display:flex;
+    justify-content:space-between;font-family:var(--mono);font-size:12px;color:var(--soft);
+    border-top:1px solid var(--rule);padding-top:10px}
+  .say{font-family:var(--display);font-size:30px;line-height:1.3;margin-top:auto;
+    padding-top:20px;border-top:2px solid var(--ink);max-width:80ch}
+  code{font-family:var(--mono)}
+
+  /* cover */
+  .cover{justify-content:center}
+  .cover .sub{font-size:26px;color:var(--soft);line-height:1.45;margin-top:28px;max-width:52ch}
+  .stamp{position:absolute;right:72px;top:70px;border:3px solid var(--stamp);color:var(--stamp);
+    font-family:var(--sans);font-weight:700;font-size:16px;letter-spacing:.12em;padding:14px 20px;
+    transform:rotate(-6deg);text-transform:uppercase;line-height:1.3;text-align:center}
+
+  /* the products table */
+  table{border-collapse:collapse;width:100%}
+  td{padding:15px 14px;border-bottom:1px solid var(--rule);vertical-align:middle;font-size:21px}
+  td.k{font-family:var(--mono);font-size:26px;color:var(--stamp);font-weight:700;width:112px}
+  td.n{font-family:var(--display);font-size:28px;width:170px}
+  td.p{font-family:var(--mono);font-size:17px;color:var(--soft);width:150px}
+  tr.off td{color:var(--soft)}
+  tr.off td.k{color:#a9a49d}
+  tr.off td.p{color:#a9a49d}
+
+  /* support list */
+  .sup{display:flex;flex-direction:column;gap:14px;margin-top:4px}
+  .row{display:flex;align-items:center;gap:22px;border-bottom:1px solid var(--rule);padding-bottom:14px}
+  .row .mark{font-family:var(--sans);font-size:30px;width:38px;text-align:center;font-weight:700}
+  .yes{color:var(--stamp)} .no{color:#a9a49d}
+  .row .kk{font-family:var(--mono);font-size:25px;font-weight:700;width:112px}
+  .row .tx{font-size:21px;line-height:1.35;flex:1}
+  .row .tx b{font-family:var(--display);font-weight:400;font-size:24px}
+</style>
+
+<!-- 1 ────────────────────────────── -->
+<section class="slide cover">
+  <div class="stamp">no server<br>no account<br>no custodian</div>
+  <h1>A static page<br>that takes<br>Lightning payments.</h1>
+  <p class="sub">No backend of ours. The page asks the seller's own node
+  for an invoice by sending a signed event over public relays.</p>
+  <div class="foot"><span>lamppost</span><span>2026-08-21</span></div>
+</section>
+
+<!-- 2 ────────────────────────────── -->
+<section class="slide">
+  <h2>Nothing in the middle is ours.</h2>
+  <div class="rule"></div>
+  <svg viewBox="0 0 1136 320" style="width:100%;height:auto;max-height:400px">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#14110f"/></marker>
+      <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#9c1f1f"/></marker>
+    </defs>
+
+    <rect x="2" y="70" width="286" height="152" fill="#fff" stroke="#14110f" stroke-width="2.5"/>
+    <text x="145" y="118" text-anchor="middle" font-family="Didot,Georgia,serif" font-size="29">The page</text>
+    <text x="145" y="152" text-anchor="middle" font-family="Georgia,serif" font-size="17" fill="#55504a">static files on Blossom</text>
+    <text x="145" y="182" text-anchor="middle" font-family="SF Mono,Menlo,monospace" font-size="15" fill="#55504a">holds no key</text>
+
+    <rect x="425" y="70" width="286" height="152" fill="#fff" stroke="#14110f" stroke-width="2.5"/>
+    <text x="568" y="118" text-anchor="middle" font-family="Didot,Georgia,serif" font-size="29">Public relays</text>
+    <text x="568" y="152" text-anchor="middle" font-family="Georgia,serif" font-size="17" fill="#55504a">four of them, nobody's</text>
+    <text x="568" y="184" text-anchor="middle" font-family="SF Mono,Menlo,monospace" font-size="17" fill="#9c1f1f" font-weight="bold">kind 21001</text>
+
+    <rect x="848" y="70" width="286" height="152" fill="#fff" stroke="#14110f" stroke-width="2.5"/>
+    <text x="991" y="114" text-anchor="middle" font-family="Didot,Georgia,serif" font-size="29">The seller's node</text>
+    <text x="991" y="148" text-anchor="middle" font-family="SF Mono,Menlo,monospace" font-size="18" fill="#9c1f1f" font-weight="bold">Lightning.Pub</text>
+    <text x="991" y="180" text-anchor="middle" font-family="Georgia,serif" font-size="17" fill="#55504a">their sats, their channels</text>
+
+    <line x1="290" y1="122" x2="421" y2="122" stroke="#14110f" stroke-width="2.5" marker-end="url(#a)"/>
+    <line x1="713" y1="122" x2="844" y2="122" stroke="#14110f" stroke-width="2.5" marker-end="url(#a)"/>
+    <text x="568" y="46" text-anchor="middle" font-family="Georgia,serif" font-size="18">ask for an invoice</text>
+
+    <line x1="844" y1="186" x2="713" y2="186" stroke="#9c1f1f" stroke-width="2.5" marker-end="url(#ar)"/>
+    <line x1="421" y1="186" x2="290" y2="186" stroke="#9c1f1f" stroke-width="2.5" marker-end="url(#ar)"/>
+    <text x="568" y="272" text-anchor="middle" font-family="SF Mono,Menlo,monospace" font-size="18" fill="#9c1f1f" font-weight="bold">BOLT11 comes back</text>
+  </svg>
+  <p class="say">The seller's money never leaves the seller's node. We never run one.</p>
+  <div class="foot"><span>spec §7.2</span><span>2</span></div>
+</section>
+
+<!-- 3 ────────────────────────────── -->
+<section class="slide">
+  <h2>CLINK is five specs.</h2>
+  <div class="rule"></div>
+  <table>
+    <tr>
+      <td class="k">21001</td><td class="n">Offers</td><td class="p">noffer</td>
+      <td>Ask a node for an invoice. <b>This is the payment.</b></td>
+    </tr>
+    <tr>
+      <td class="k">21002</td><td class="n">Debits</td><td class="p">ndebit</td>
+      <td>Spend <em>from</em> a node, under a cap the node sets. Our refunds.</td>
+    </tr>
+    <tr>
+      <td class="k">21003</td><td class="n">Manage</td><td class="p">nmanage</td>
+      <td>Create and edit offers — from a browser holding no key.</td>
+    </tr>
+    <tr class="off">
+      <td class="k">21004</td><td class="n">Enroll</td><td class="p">—</td>
+      <td>Provision an account on a node. Spec'd, not yet built.</td>
+    </tr>
+    <tr class="off">
+      <td class="k">30078</td><td class="n">Beacon</td><td class="p">—</td>
+      <td>How a node announces itself and its fees.</td>
+    </tr>
+  </table>
+  <p class="say">Three of them carry this demo. Every one is a signed event over a public relay.</p>
+  <div class="foot"><span>CLINK README:52-58</span><span>3</span></div>
+</section>
+
+<!-- 4 ────────────────────────────── -->
+<section class="slide">
+  <h2>The node is <em>Lightning.Pub</em>.</h2>
+  <div class="rule"></div>
+  <div class="sup">
+    <div class="row"><span class="mark yes">✓</span><span class="kk">21001</span>
+      <span class="tx"><b>Offers</b> — every payment in this demo</span></div>
+    <div class="row"><span class="mark yes">✓</span><span class="kk">21002</span>
+      <span class="tx"><b>Debits</b> — the refund, capped by the node itself</span></div>
+    <div class="row"><span class="mark yes">✓</span><span class="kk">21003</span>
+      <span class="tx"><b>Manage</b> — how every offer here was minted</span></div>
+    <div class="row"><span class="mark no">✗</span><span class="kk">21004</span>
+      <span class="tx" style="color:#55504a"><b>Enroll</b> — not implemented in v0.0.37</span></div>
+    <div class="row" style="border-bottom:none"><span class="mark no">✗</span><span class="kk">21000</span>
+      <span class="tx"><b>Not CLINK at all</b> — Lightning.Pub's own RPC, keyed on a secret
+      a remote signer never exposes. A browser cannot speak it.</span></div>
+  </div>
+  <p class="say">That last line is why Manage exists in the flow — not as a nicety, but because nothing else could reach the node.</p>
+  <div class="foot"><span>nostrPool.ts:51 · findings §13.18</span><span>4</span></div>
+</section>
