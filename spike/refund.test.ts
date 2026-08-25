@@ -5,10 +5,27 @@
 // cannot cover is the payment itself; that is spike/check-refund.ts, which proves the node's cap
 // and kill switch against the real node before any refund runs unattended.
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { createServer, get as httpGet, type IncomingMessage, type Server } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { bech32 } from '@scure/base'
 import { decodeNdebit, k1For } from './ndebit.ts'
-import { lnurlpUrl, matchingPayments, oversold, settledByUs, type Journal, type Settled } from './refund.ts'
+import {
+  getJson,
+  inFlightGuard,
+  isPrivateAddress,
+  lnurlpUrl,
+  matchingPayments,
+  oversold,
+  readBounded,
+  reconcile,
+  recordRefund,
+  settledByUs,
+  type Journal,
+  type Settled,
+} from './refund.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const bytes = (n: number, fill = 7) => new Uint8Array(n).fill(fill)
@@ -165,6 +182,87 @@ test('anything but a failure stops the watcher acting on that invoice again', ()
   assert.equal(settledByUs(journal, 'never-seen'), undefined)
 })
 
+// --- item 1 (2026-08-24): the double refund, both halves -------------------------------------
+//
+// THIS IS THE TEST THE FIRST 27 DID NOT HAVE, and its absence is the whole reason the bug
+// survived them. `watch-sales.ts --once` runs one `await tick()` and exits without installing a
+// timer, so nothing in a test can drive the interval that raced. What can be driven is the shape
+// underneath it: read the journal, do something slow, write, pay. That is `fakeTick` below, and
+// the second test asserts it really does double-pay when the guard is taken away — otherwise the
+// first test would be asserting nothing at all.
+
+const tmpJournal = () => join(mkdtempSync(join(tmpdir(), 'clink-refund-')), '.refunds.json')
+
+const row = (state: Journal[string]['state'], note?: string): Journal[string] => ({
+  invoice: 'inv-oversold',
+  d: 'yardsale-2026-08-mugs',
+  sats: 1_000,
+  state,
+  at: 1_787_000_000,
+  pointer: 'address',
+  ...(note === undefined ? {} : { note }),
+})
+
+/**
+ * The refund loop's real ordering, with the network replaced by a timer.
+ *
+ * The gap that matters is between `settledByUs` and the first `recordRefund`: in the watcher that
+ * gap is `resolvePointer`, two sequential LNURL fetches at a 10s timeout each, against a 5s poll.
+ * Nothing marks the invoice as in-flight until after it.
+ */
+const fakeTick = (journal: Journal, path: string, paid: string[]) => async () => {
+  if (settledByUs(journal, 'inv-oversold')) return
+  await new Promise(resolve => setTimeout(resolve, 5)) // resolvePointer
+  recordRefund(journal, path, row('pending', 'sent, awaiting the node'))
+  paid.push('inv-oversold') // payDebit
+  recordRefund(journal, path, row('paid', 'the node acknowledged'))
+}
+
+test('two overlapping ticks refund an oversell once, not twice', async () => {
+  const journal: Journal = {}
+  const paid: string[] = []
+  const tick = inFlightGuard(fakeTick(journal, tmpJournal(), paid))
+  await Promise.all([tick(), tick()])
+  assert.deepEqual(paid, ['inv-oversold'])
+  assert.equal(journal['inv-oversold']!.state, 'paid')
+})
+
+test('and the same two ticks without the guard pay twice, so the race is real', async () => {
+  const journal: Journal = {}
+  const paid: string[] = []
+  const tick = fakeTick(journal, tmpJournal(), paid)
+  await Promise.all([tick(), tick()])
+  assert.deepEqual(paid, ['inv-oversold', 'inv-oversold'])
+})
+
+test('a late refusal cannot downgrade a paid row', () => {
+  // The second half of the same bug. Both ticks send the identical derived k1, the node's
+  // debouncer refuses the loser, and the loser's write used to land `failed` on top of `paid` —
+  // which `settledByUs` treats as retryable, six minutes later, with a k1 the debouncer has swept.
+  const journal: Journal = {}
+  const path = tmpJournal()
+  recordRefund(journal, path, row('paid', 'the node acknowledged'))
+  recordRefund(journal, path, row('failed', 'GFY 1: K1 already processed'))
+  assert.equal(journal['inv-oversold']!.state, 'paid')
+  assert.equal(journal['inv-oversold']!.note, 'the node acknowledged')
+  // On disk too, because the disk is the copy that survives the restart this guards against.
+  assert.equal(JSON.parse(readFileSync(path, 'utf8'))['inv-oversold'].state, 'paid')
+  assert.equal(settledByUs(journal, 'inv-oversold')?.state, 'paid')
+})
+
+test('every other transition still lands, because only paid is terminal', () => {
+  // The guard has to be exactly one state wide. `pending` -> `paid` is what item 9's startup
+  // reconcile does after a human confirms, and `failed` -> `pending` is an ordinary retry; a
+  // wider guard would silently break both, which is the same class of bug as the one being fixed.
+  const journal: Journal = {}
+  const path = tmpJournal()
+  recordRefund(journal, path, row('failed', 'the host was down'))
+  recordRefund(journal, path, row('pending', 'sent, awaiting the node'))
+  assert.equal(journal['inv-oversold']!.state, 'pending')
+  recordRefund(journal, path, row('paid', 'confirmed against the node'))
+  assert.equal(journal['inv-oversold']!.state, 'paid')
+})
+
 // --- lnurlpUrl ------------------------------------------------------------------------------
 
 test('a Lightning address becomes an LNURL-pay URL, and only over https', () => {
@@ -196,6 +294,131 @@ test('the name half cannot escape the well-known path', () => {
   // A query string cannot be smuggled in either — it would otherwise reach the host as real
   // parameters rather than as part of the name.
   assert.equal(lnurlpUrl('bob?amount=1@example.com'), 'https://example.com/.well-known/lnurlp/bob%3Famount%3D1')
+})
+
+// --- item 4 (2026-08-24): hostile input on the refund path -----------------------------------
+//
+// The buyer types the pointer, the node stores it, and the seller's watcher then fetches whatever
+// host it names and asks that host for an invoice it is about to pay. Both panel claims were
+// reproduced against the old code before any of this was written: a 10 MB body arrived whole
+// through a 64 KB "bound", and a callback of `https://127.0.0.1:8443/cb` was fetched and parsed.
+
+test('every address an SSRF actually aims at is refused', () => {
+  for (const ip of [
+    '127.0.0.1', '127.1.2.3', // loopback
+    '10.0.0.1', '172.16.0.1', '172.31.255.255', '192.168.1.1', // RFC1918
+    '169.254.169.254', // link-local, and the cloud metadata endpoint
+    '100.64.0.1', // CGNAT
+    '0.0.0.0', '192.0.0.1', '192.0.2.1', '198.18.0.1', '198.51.100.1', '203.0.113.1',
+    '224.0.0.1', '239.255.255.255', '255.255.255.255',
+    '::', '::1', 'fd00::1', 'fc00::1', 'fe80::1', 'ff02::1',
+    '::ffff:127.0.0.1', '::ffff:10.0.0.1', // an IPv4-mapped form must not launder loopback
+    '64:ff9b::7f00:1', // NAT64 carries an embedded v4
+    // UNCOMPRESSED SPELLINGS, and every one of these was ALLOWED until 2026-08-24. None starts with
+    // `::`, so the prefix rule missed them, and `parseInt('0', 16)` matches none of the masks — the
+    // function failed OPEN on plain loopback while its docstring promised it failed closed. The fix
+    // is to canonicalise through `new URL` first; these are the cases that prove it stays fixed.
+    '0:0:0:0:0:0:0:1', '0::1', '0000:0000:0000:0000:0000:0000:0000:0001',
+    '0:0:0:0:0:ffff:127.0.0.1', '0:0:0:0:0:ffff:10.0.0.1',
+    // Canonicalising rewrites the dotted mapped forms to hex, so the `::` rule now catches the
+    // public ones too. Stricter than before and deliberately: an IPv4-mapped address in a DNS
+    // answer for a wallet host is not a thing that happens legitimately.
+    '::ffff:8.8.8.8',
+  ]) {
+    assert.equal(isPrivateAddress(ip), true, `${ip} should be refused`)
+  }
+})
+
+test('a real wallet host is still reachable, and a non-address fails closed', () => {
+  for (const ip of ['8.8.8.8', '1.1.1.1', '172.32.0.1', '172.15.0.1', '100.128.0.1', '2606:4700::1111', '2001:4860:4860::8888']) {
+    assert.equal(isPrivateAddress(ip), false, `${ip} should be allowed`)
+  }
+  // Fails closed on anything that is not an address at all, because guessing here is the whole risk.
+  for (const junk of ['', 'localhost', 'not-an-ip', '999.1.1.1', '10.0.0']) {
+    assert.equal(isPrivateAddress(junk), true, `${junk} should be refused`)
+  }
+})
+
+test('a body larger than the bound aborts mid-stream instead of being buffered whole', async () => {
+  // The reader is exported precisely because this is the only half of the fetch a test can reach:
+  // every address a local listener can bind is one isPrivateAddress correctly refuses, which is
+  // the vetting working and also why there is no way to drive a whole oversized fetch end to end.
+  const MAX = 4 * 1024
+  const MB = Buffer.alloc(1024 * 1024, 0x61)
+  let written = 0
+  const server: Server = createServer((_req, res) => {
+    res.on('error', () => {}) // the client hangs up on us on purpose
+    res.writeHead(200)
+    const pump = () => {
+      // Keep offering megabytes until the socket goes away. If the bound were checked after the
+      // body, this would run to 32 MB before anything complained.
+      if (written >= 32 * 1024 * 1024 || res.destroyed || res.writableEnded) return
+      written += MB.length
+      if (res.write(MB)) setImmediate(pump)
+      else res.once('drain', pump)
+    }
+    pump()
+  })
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
+  const { port } = server.address() as { port: number }
+
+  const res = await new Promise<IncomingMessage>(resolve => httpGet(`http://127.0.0.1:${port}/`, resolve))
+  await assert.rejects(() => readBounded(res, MAX), /larger than 4096 bytes/)
+  assert.equal(res.destroyed, true, 'the socket is closed rather than left draining')
+  server.close()
+})
+
+test('a body inside the bound still reads back whole', async () => {
+  const server: Server = createServer((_req, res) => res.end('{"tag":"payRequest"}'))
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
+  const { port } = server.address() as { port: number }
+  const res = await new Promise<IncomingMessage>(resolve => httpGet(`http://127.0.0.1:${port}/`, resolve))
+  assert.equal(await readBounded(res, 64 * 1024), '{"tag":"payRequest"}')
+  server.close()
+})
+
+test('the redirect chain is capped, and each hop is re-checked for https', async () => {
+  // `hop` is injected only here. redirect: 'follow' used to inherit undici's default of 20 —
+  // measured at 21 fetches of a self-redirecting host on 2026-08-24 — and, worse, handed back the
+  // FINAL response, so a per-hop address check was not expressible at all.
+  let hops = 0
+  await assert.rejects(
+    () =>
+      getJson('https://wallet.example/lnurlp/x', async () => {
+        hops++
+        return { location: 'https://wallet.example/lnurlp/x', body: '' }
+      }),
+    /more than 8 redirects/,
+  )
+  assert.equal(hops, 9, 'the first request plus eight redirects, and then it stops')
+
+  await assert.rejects(
+    () => getJson('https://wallet.example/a', async () => ({ location: 'http://wallet.example/b', body: '' })),
+    /not https/,
+    'a 302 must not be able to downgrade the exchange after the first hop looked fine',
+  )
+
+  // A hop that answers with a body ends the chain rather than looping.
+  assert.deepEqual(await getJson('https://wallet.example/a', async () => ({ body: '{"tag":"payRequest"}' })), {
+    tag: 'payRequest',
+  })
+})
+
+test('a pointer at a private address is refused, and the refusal never names the person', async () => {
+  // Two properties in one assertion, both of them /CLAUDE.md's. The address check refuses before a
+  // socket is opened — verified against a live listener on 2026-08-24, which recorded zero
+  // connections where the old code recorded one. And a refund pointer identifies a person: the
+  // HOST is what makes a queued row actionable, the name half is what must never be written,
+  // printed or logged, and the name half is exactly what sits in this URL's path.
+  //
+  // An IP literal rather than a hostname, so this needs no DNS and cannot go slow or flaky.
+  await assert.rejects(
+    () => getJson('https://127.0.0.1/.well-known/lnurlp/alice-personal'),
+    (err: Error) =>
+      /private or reserved address/.test(err.message) &&
+      err.message.includes('127.0.0.1') &&
+      !err.message.includes('alice-personal'),
+  )
 })
 
 // --- reconciling a `pending` row (slice 8) ---------------------------------------------------
@@ -256,4 +479,77 @@ test('a node answer of the wrong shape reconciles to nothing rather than throwin
   assert.deepEqual(matchingPayments({ operations: [] }, 1000, 1), [])
   assert.deepEqual(matchingPayments([null, 'nonsense', {}], 1000, 1), [])
   assert.deepEqual(matchingPayments([op({ paidAtUnix: NaN })], 1000, 1), [])
+})
+
+// --- item 9 (2026-08-24): the startup reconcile ----------------------------------------------
+//
+// All four cases the brief names, all against a stub, none of them touching the node. The one
+// property every assertion is protecting: **this function returns findings, never transitions.**
+// The roadmap originally had a matched `pending` row become `paid` with no human, and the
+// 2026-08-23 review reversed it — a match on amount and time alone records a refund that may never
+// have been sent, and strands the buyer with no row left reprinting to say so.
+
+const pendingRow = (over: Partial<Journal[string]> = {}): Journal[string] => ({
+  invoice: 'inv-pending',
+  d: 'yardsale-2026-08-mugs',
+  sats: 1_000,
+  state: 'pending',
+  at: 1_787_000_000,
+  pointer: 'address',
+  ...over,
+})
+
+test('a pending row with a matching payment is reported, and NOT transitioned', () => {
+  const journal: Journal = { 'inv-pending': pendingRow() }
+  const out = reconcile(journal, true, [op({ paidAtUnix: 1_787_000_040 })])
+  assert.equal(out.refuseToStart, false)
+  assert.equal(out.pending.length, 1)
+  assert.equal(out.pending[0]!.hits.length, 1)
+  assert.equal(out.pending[0]!.hits[0]!.operationId, 'op-1')
+  // The whole point. Reconciling is a read; the row is exactly as it was.
+  assert.equal(journal['inv-pending']!.state, 'pending')
+})
+
+test('a pending row with no matching payment is reported with no evidence at all', () => {
+  const out = reconcile({ 'inv-pending': pendingRow() }, true, [op({ amount: 6_000 }), op({ paidAtUnix: 1_787_099_999 })])
+  assert.equal(out.pending.length, 1)
+  assert.equal(out.pending[0]!.hits.length, 0)
+  assert.equal(out.refuseToStart, false)
+})
+
+test('only pending rows are reconciled — paid, failed and queued are somebody else', () => {
+  // `paid` is done, `failed` is retried by the ordinary loop, and `queued` is already waiting for
+  // a human for a reason the node cannot speak to. Widening this would ask the seller to
+  // re-confirm settled history on every restart, which is how a prompt stops being read.
+  const journal: Journal = {
+    a: pendingRow({ invoice: 'a', state: 'paid' }),
+    b: pendingRow({ invoice: 'b', state: 'failed' }),
+    c: pendingRow({ invoice: 'c', state: 'queued' }),
+    d: pendingRow({ invoice: 'd' }),
+  }
+  const out = reconcile(journal, true, [op()])
+  assert.deepEqual(out.pending.map(p => p.row.invoice), ['d'])
+})
+
+test('a missing journal plus outgoing payments refuses to start', () => {
+  // The "restored an old file" case. Every oversell this account has already refunded is about to
+  // be recomputed from the node as still owed, and paid again.
+  assert.equal(reconcile({}, false, [op()]).refuseToStart, true)
+  // A missing journal on a node that has never sent anything is a first run, which is fine.
+  assert.equal(reconcile({}, false, []).refuseToStart, false)
+  // And a journal that exists and happens to be empty is NOT the same thing — readJournal cannot
+  // tell those apart, which is why the caller passes existsSync separately.
+  assert.equal(reconcile({}, true, [op()]).refuseToStart, false)
+})
+
+test('an oversell with no journal row but a matching payment has evidence to block on', () => {
+  // The per-oversell half of item 9, which watch-sales.ts drives with the SETTLEMENT's own time
+  // rather than a journal row's `at` — there is no row, and a refund is sent after the sale it
+  // refunds, so the settled invoice is the only anchor there is.
+  const settledAt = 1_787_000_000
+  assert.equal(matchingPayments([op({ paidAtUnix: settledAt + 90 })], 1_000, settledAt).length, 1)
+  // A refund of a different size near the same sale is a different payment and must not block.
+  assert.equal(matchingPayments([op({ amount: 800, paidAtUnix: settledAt + 90 })], 1_000, settledAt).length, 0)
+  // Nothing to block on is the ordinary case, and it must not read as evidence.
+  assert.equal(matchingPayments([], 1_000, settledAt).length, 0)
 })

@@ -4,7 +4,83 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-21**, end of slice 9 — the builder stopped publishing our neighbourhood into other people's listings.
+Last updated: **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
+
+**READ THIS PARAGRAPH BEFORE ACTING ON ANYTHING BELOW.** Milestone A landed as ten commits
+(`ac87512`..`a934056`) and then a review of that branch found **five defects it had introduced**,
+two of which were the losses milestone A claims to close. They are fixed in `ba1b0fb`, `b83b783`
+and `45f01ef`. The earlier version of this paragraph said *"item 6 is safe to run, the gate is
+lifted"*, and that was written before the review. **It is nearly true now, and the difference is
+two specific things — read "Before item 6 runs" below rather than trusting a summary.**
+
+**What milestone A landed.** Nine roadmap items on one branch: the refund watcher's double-pay
+race and the journal corruption under it (1), the kill switch that minted a key above its own
+`--revoke` branch and banned the wrong pubkey (2), `mintOffer`'s label-only dedupe and "Publish my
+sale" firing before the panel had read the relays (3, plus item 13's quorum and show-the-count
+bullets, which turned out to be the same button), hostile input on the refund path (4), the triage
+of all seven unverified panel claims (5), the startup reconcile (9), the backup classification and
+a restore drill that was actually run (10), and item 25's wire test (25).
+`docs/known-defects.md`'s "Verified by nobody" section is **empty**.
+
+**What the review then found, because it is the more useful half.** All five lived in code that
+reads as the fix for something else, which is why the diff did not show them:
+
+- **The refund transport had no deadline.** `req.setTimeout` fires on *inactivity*, not elapsed
+  time — measured holding a request 24.6× past its stated 1,000 ms. Because item 1's
+  `inFlightGuard` DROPS the polls behind a slow tick, one host named by one buyer stopped the
+  watcher republishing stock entirely: the oversell this slice exists to refund. Items 1 and 4
+  were each correct alone and a denial of service together.
+- **The publish-sale quorum counted the pool's lifetime, not the read**, so it ratcheted upward
+  and could be walked past by pressing the "Reload my items" its own error message recommends —
+  then published a kind 30405 replacement that un-lists real items.
+- **`isPrivateAddress` failed open** on every uncompressed spelling of IPv6 loopback, while its
+  docstring promised it failed closed.
+- **Dropping `fetch` dropped transparent gzip decoding**, and **three redirects** was under what a
+  real wallet host costs.
+- Ten doc line-citations were correct on `main` and wrong on the branch — including the row whose
+  entire purpose is correcting a mis-citation.
+
+**Then running the refund path against a real address for the first time found a sixth**, which
+was pre-existing rather than milestone A's: **a BIP-353 address is the same `user@domain` shape as
+an LNURL one**, so a Phoenix buyer's refund pointer is accepted at buy time and is useless at
+refund time. That is **roadmap item 27**, and it has a trap in it — see below.
+
+### Before item 6 runs
+
+Item 6 is the demo beat and it is one command, but four things first and two of them are decisions:
+
+1. **The pointer must be an LNURL-pay address.** `mugs` is sold out 3/3, so there is exactly
+   **one** oversell available and no way to make another without restocking. Pointing it at a
+   Phoenix / BIP-353 address burns it on a refund that cannot complete (item 27). Wallet of
+   Satoshi, Alby, Coinos, Blink or an `noffer` all work.
+2. ~~Hop 2 of the LNURL path has never run.~~ **DONE 2026-08-24, and it cost one free call.**
+   `resolvePointer` against a real `coinos.io` address returned a BOLT11 for exactly 1,000 sats in
+   1,540 ms — both hops, DNS vetted, TLS against the hostname, a real LUD-06 `payRequest` parsed,
+   the callback returning a `pr`, `invoiceSats` matching exactly. The ledger had recorded this as
+   unproven since slice 7 and its fix column claimed it needed "a real settled sale" and "a wallet
+   and a person"; it needed neither. **`payDebit`'s `{"res":"ok"}` branch is now the only part of
+   the refund path that has never executed**, which is precisely what item 6 exists to prove.
+3. **Item 2's kill switch has never been executed.** Every branch of it — the read-back, the
+   "node still reports AUTHORIZED" throw, the exit-1 on no-grant, `--npub` — is unexecuted code,
+   and item 6 arms a spend path whose off-switch is unexecuted. `check-refund.ts` §4/§4b drive it,
+   but that script **ends by removing the live grant on purpose**, and re-arming is the whole
+   three-step authorisation dance. So this is a decision, not a default.
+4. **Re-decide the frequency cap.** Spec §12 — the account is at 9,000 sats against an 8,000/day
+   rule, so the cap now binds before the balance does, for the first time and without anybody
+   choosing it. `node authorize-refunds.ts --cap <n>`.
+
+And run the watcher **from a terminal** rather than launchd, because item 9's reconcile prompts
+and a daemon has no stdin.
+
+**The one thing milestone A could not close is a human step.** `spike/.dev-key`'s backup is on one
+machine. Losing that disk loses the seller identity and the 9,000 sats in its account. Runbook §5
+has the procedure; getting a copy off this machine needs a second device and a person.
+
+**And item 7 has still never run.** It is the largest source of *unknown* defects in the project —
+five slices of markup that has never rendered — and milestone A being closed means the *known*
+defects are closed, not that there are none. **Item 7 is also blocked on a contradiction in this
+very file — see "The bunker import" below, which is now marked UNVERIFIED rather than asserting
+both answers.**
 
 ---
 
@@ -232,9 +308,15 @@ Not urgent, and cheap on a quiet day. The order when it happens: `mint-offers.ts
 `check-deploy.ts` to confirm.
 
 `spike/.dev-key` and `spike/.offers.json` are gitignored and **not reproducible from the repo**.
-Losing `.dev-key` loses the seller identity, the storefront's npub, and access to the 6,000 sats
+Losing `.dev-key` loses the seller identity, the storefront's npub, and access to the 9,000 sats
 sitting in that node account. Back it up before anyone acts on `seed-listings.ts`'s instruction
 to delete it at slice 4.
+
+**As of 2026-08-24 there is a procedure and it has been drilled** — `/docs/runbook.md` §5 sorts all
+twelve gitignored load-bearing files into gone-forever, gone-forever-and-holds-money,
+redo-the-work and recreated-by-nothing, carries one `tar` command and one restore, and includes
+the transcript of a restore run into a scratch tree. ⚑ **The step it does not close is getting the
+archive off this machine**, which needs a second device and a person.
 
 ---
 
@@ -243,32 +325,78 @@ to delete it at slice 4.
 One spike question remains, and it **needs a phone.** Nothing blocks a slice. Full `NEEDS HUMAN`
 blocks with exact commands live in `/docs/spike-findings.md`.
 
-**Queued, not blocked: four confirmed defects from the 2026-08-21 review panel**, in
-`/docs/known-defects.md` § "Added by the review panel". Two touch the money path and should be
-read before anyone runs the watcher against the node again: the refund poller can pay a buyer
-twice (`spike/watch-sales.ts`, no in-flight guard on a `tick()` that outlives its own 5s timer,
-plus a `record()` that lets a late refusal overwrite a `paid` row), and the kill switch can print
-`BANNED` while the real grant stays live (`spike/authorize-refunds.ts` mints a fresh key above the
-`--revoke` branch). Same section carries seven further findings the panel produced but never
-verified — those are claims, not entries, and two contradict decisions recorded elsewhere.
+~~**Queued, not blocked: four confirmed defects from the 2026-08-21 review panel.**~~
+**ALL FOUR CLOSED 2026-08-24 by milestone A, and the seven unverified claims beside them are
+triaged to empty.** The two that touched the money path — the refund poller paying a buyer twice
+and the kill switch printing `BANNED` on a key it had just invented — were the reason
+`known-defects.md` said not to point the watcher at a real node. **That gate is lifted.** What is
+left in that file is four open rows milestone A opened or confirmed and deliberately did not fix,
+each with its cost: the address-range list is a named list rather than a proof, the reconcile
+cannot prompt a daemon, `authorize-refunds.ts` cannot arm the second seller, and we invent a `k1`
+where `clink-debits.md:163-172` says not to. None loses money or destroys work.
 
-### The bunker import — key backed up 2026-08-21, import NOT yet done
+### The bunker import — **AMBER IS THE WRONG TARGET: the operator is on iOS** (corrected 2026-08-24)
+
+**This section asserted both answers at once and item 7's first bullet has been telling us to fix
+it since 2026-08-23.** Three lines, six lines apart: the heading said "import NOT yet done", one
+paragraph said *"The Amber import has happened"*, and the next said *"The import itself is
+unrun"*. **Resolved 2026-08-24: the operator is on iOS, and Amber is Android-only** (`spec.md:244`
+— "Amber on Android, nsec.app in browser"). So the import cannot have happened, the "has happened"
+line was false, and every plan resting on it needs re-reading.
+
+**What that cost, and it is the reason this file's contradictions are not cosmetic.**
+`spike/.dev-key.nsec` and `spike/.dev-key.qr.svg` were **deleted in slice 9's Phase 0 on the
+stated grounds that "the Amber import has happened, so [they] had no remaining job."** They were
+deleted on a premise nobody checked. Recoverable — `node spike/export-key-qr.ts --yes` regenerates
+both in seconds, gitignored and chmod 600 — but the deletion was reasoned from a false line in
+this file, which is exactly the failure this document exists to prevent. Neither ever reached a
+commit.
 
 `spike/.dev-key` is backed up to `~/.lamppost-key-backup/dev-key-2026-08-21.hex` (chmod 600,
 verified to derive the same seller pubkey). **That backup is on this machine only — get a copy
-off it.**
+off it.** ⚑
 
-~~**`spike/.dev-key.nsec` and `spike/.dev-key.qr.svg` are still in the working tree**~~ —
-**DELETED 2026-08-21 in slice 9's Phase 0, after being asked in slices 7, 8 and 9.** The Amber
-import has happened, so the two extra readable copies of the seller's key had no remaining job.
-`node spike/export-key-qr.ts --yes` regenerates both in seconds if the import ever needs redoing.
-Both were gitignored and neither ever reached a commit.
+**The three routes, and item 7 does not need a phone at all.** The signer holds the seller key and
+signs for the builder, which never touches it (`/CLAUDE.md` rule 2). It must be **this** key:
+`spike/.dev-key` owns the listings, the sale and the Pub account, and the storefront reads by npub
+off its own hostname, so any other key publishes to a storefront nobody is looking at.
 
-The import itself is unrun and needs a phone. `node spike/export-key-qr.ts --yes` writes the nsec
-and a scannable QR, both gitignored and chmod 600; delete them straight after. Amber is the right
-target rather than nsec.app — nsec.app stores the key on somebody else's server, which is the
-custody claim this project spends §3.1 arguing it does not make, and q8's residual risk is
-specifically about Amber's sign policy.
+| route | phone | verdict for this operator |
+|---|---|---|
+| **Amber** | Android only | **Unavailable.** Not an option on iOS, and never was |
+| **nsec.app** | no, browser | Works. But it stores the key on somebody else's server — the custody claim §3.1 spends pages arguing this project does not make. Acceptable for a verification run, **not** for the demo narrative |
+| **nos2x** (NIP-07) | **no** — desktop | ✅ **SET UP AND VERIFIED 2026-08-24.** See below |
+
+**RESOLVED 2026-08-24 — nos2x is installed, holds the seller key, and exposes `nip44`.** Measured
+in the console on the live builder:
+
+```
+await window.nostr.getPublicKey()  -> "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0"
+typeof window.nostr.nip44          -> "object"
+```
+
+The pubkey is `.dev-key`'s, checked against the seller npub rather than assumed — **the first
+attempt loaded a personal key instead and would have published to an npub the storefront never
+reads, reporting success at every step.** Check `getPublicKey()` against
+`fb18e881…cdb47a0` after any signer change; it is two seconds and it is the difference between a
+verified run and a silently wrong one. Note nos2x holds **one key at a time**, so a separate Chrome
+profile for the demo is the clean separation.
+
+**A CORRECTION, because it was written into three documents on 2026-08-24 and is wrong:** "whether
+the extension honours `perms`" **does not apply to NIP-07 at all.** `PERMS` is used only on the
+NIP-46 path (`signer.ts:143`, `createNostrConnectURI`); `connectNip07` (`:90`) never sends it and
+NIP-07 has no such handshake — it calls `getPublicKey()` purely to provoke the extension's own
+prompt at connect time rather than mid-publish (`:100`). So findings §8's Amber/nsec.app `perms`
+measurements, and q8's residual risk about Amber's "Approve basic actions" policy, describe a
+mechanism nos2x does not use.
+
+**What IS unmeasured, and it is item 7's job:** how many prompts nos2x raises across the publish
+sequence. Its model is per-site and remembered, not a `perms` grant, so **the predicted count of 1
+was a NIP-46 prediction and does not transfer either.** Count what actually happens and record it;
+do not carry a number forward from the bunker path.
+
+**Item 6 needs none of this.** It is `check-buy.ts --pay` and `watch-sales.ts --refunds`, spike
+scripts reading `.dev-key` straight off disk. No signer, no browser, no phone.
 
 ### The second Blossom server — **CLOSED 2026-08-21, and it was not a server hunt**
 
@@ -1168,10 +1296,45 @@ which for the first time includes markup that only exists on paper. See below.
   it (GFY 3). Re-arming is the whole authorisation dance again.
 - **`watch-sales.ts` spends only with `--refunds`.** Every other invocation is slice 3's watcher
   exactly as it was. Do not add refunds to a default path.
+- **`--refunds` now RECONCILES AGAINST THE NODE BEFORE THE FIRST TICK, and can refuse to start.**
+  Two refusals, both deliberate: the journal file missing while the node reports outgoing payments
+  (the restored-an-old-file case — it would recompute every oversell already refunded), and the
+  node's outgoing payments being unreadable at all (not knowing what has been sent *is* the
+  double-pay condition). Both name the way out. Dropping `--refunds` always starts.
+- **The reconcile PROMPTS, and a daemon has no stdin.** A `pending` row with a matching outgoing
+  payment asks a human; started without a TTY the watcher runs, transitions nothing, and prints
+  that nobody could answer. **Start it from a terminal after any run that left a `pending` row.**
+  A match on amount and time is evidence, never an input to whether money moves — that asymmetry
+  is the whole item and reversing it was the roadmap's original mistake.
+- **The kill switch reads the granted pubkey back from the node and refuses to improvise one.**
+  `node authorize-refunds.ts --revoke` with no `spike/.refund-key` now exits non-zero instead of
+  minting a key and banning it; `--show` needs no key file at all; `--npub <hex>` kills a grant
+  from a machine that does not hold the key; and "the node reports no grant" prints no success
+  line and exits 1. Runbook §5a. `--reset` had the same bug and goes through the same code.
+- **`authorize-refunds.ts` is still hardcoded to `.dev-key`.** `watch-sales.ts --key .merida-key
+  --refunds` cannot be armed, because the script that mints `.refund-key` and `.ndebit` has no
+  `--key` flag and writes them unsuffixed. Found while fixing item 2; row in the ledger.
 - **Losing `spike/.refunds.json` can double-pay a refund.** It is the only record that a refund
   happened; the node has no such field. Back it up, do not commit it.
 - **Never log a refund pointer or a preimage.** The journal stores the *kind* of pointer
-  ('noffer'/'address'/'none') and whether a preimage existed, never either value.
+  ('noffer'/'address'/'none') and whether a preimage existed, never either value. As of 2026-08-24
+  the LNURL path builds every error message from `new URL(url).host` and never the path, because
+  the path carries the name half of the buyer's address.
+- **A `refund_pointer` is an outbound request driven by hostile input, not just a stored string.**
+  The watcher fetches whatever host it names. Since 2026-08-24 `spike/refund.ts` resolves the name
+  itself, refuses any private or reserved address, and connects to that exact address with
+  `servername` and `Host` set — `dns.resolve()` then `fetch()` cannot work, because `fetch`
+  re-resolves and the address vetted is not the address connected to. Redirects are followed by us,
+  eight at most, vetted per hop. Bodies are counted in bytes off the stream, under a wall-clock
+  deadline, and the request asks for `accept-encoding: identity` because it does not decompress.
+  **The review that followed corrected three things in that transport — an idle timeout that read as
+  a deadline, the transparent gzip decoding that went out with `fetch`, and a redirect cap of three
+  that a real wallet host would exceed. `/docs/spec.md` §12 has the measurements.** If you touch
+  this path, that paragraph is the one to read: every one of the three was invisible in the diff.
+- **A required `payer_data` key is satisfied by ANY string, including the empty one.**
+  `ValidateExpectedData` checks only `typeof payerData[key] !== 'string'`. The guarantee that a
+  payment which could not be refunded is declined is **our page's** (`render.ts` gates on
+  `isPointer`), never the node's. `node spike/check-empty-pointer.ts` reproduces it for free.
 - **A NIP-46 bunker cannot speak kind 21000.** Every native Lightning.Pub RPC — `AddUserOffer`,
   `GetUserOffers`, `GetUserOfferInvoices`, `AuthorizeManage` — needs a raw ECDH secret NIP-46 does
   not expose (findings §13.18). In the browser it is CLINK or nothing. If you find yourself

@@ -19,7 +19,11 @@
 // problem from "you typed it wrong"); the name half is what identifies the person, and it is
 // never written, never printed, and never leaves this file. `new URL(url).host` is the only thing
 // that crosses that line, and it is the only thing that should.
+import { lookup } from 'node:dns/promises'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { request as httpsRequest } from 'node:https'
+import { isIP } from 'node:net'
+import type { Readable } from 'node:stream'
 import { closeBuy, requestInvoice } from '../storefront/src/buy.ts'
 import { decodeNoffer, invoiceSats, LN_ADDRESS } from '../storefront/src/offer.ts'
 
@@ -147,6 +151,59 @@ export const settledByUs = (journal: Journal, invoice: string): RefundRecord | u
   return row && row.state !== 'failed' ? row : undefined
 }
 
+/**
+ * Write one journal row and persist it. **`paid` is terminal.**
+ *
+ * The write used to be an unconditional `journal[invoice] = {…}` in watch-sales.ts, and that is
+ * the second half of the double-refund the 2026-08-21 panel found. Two overlapping ticks both
+ * resolve a BOLT11 for the same oversell and both send it; the node's k1 debouncer refuses the
+ * loser; the loser's write then lands `failed` on top of the winner's `paid`. `settledByUs`
+ * treats `failed` as retryable and `RETRY_AFTER_S` is six minutes — long enough for the
+ * debouncer's five-minute TTL to have swept the k1 — so the retry gets a fresh one and pays for
+ * real. The journal is the ONLY durable double-refund guard and a late refusal could downgrade it.
+ *
+ * It lives here rather than at the call site on purpose: the invariant belongs to the journal, so
+ * every future writer gets it, including the startup reconcile. Grepped before landing it — the
+ * only writer in the tree is watch-sales.ts's `record`, and the only readers of a row's `state`
+ * are `settledByUs` and the watcher's own printing (`summarise`, the pending line). **Nothing in
+ * this codebase legitimately moves a row OUT of `paid`**, so a blanket return costs nothing; if a
+ * flow ever needs to, it needs a new verb rather than this one.
+ */
+export const recordRefund = (journal: Journal, path: string, row: RefundRecord): void => {
+  if (journal[row.invoice]?.state === 'paid') return
+  journal[row.invoice] = row
+  writeJournal(path, journal)
+}
+
+/**
+ * Run at most one of these at a time; a call that arrives while one is running is DROPPED.
+ *
+ * `setInterval(tick, 5_000)` had no guard, and a refunding tick routinely outlives its own timer
+ * by design — `resolvePointer` alone is two sequential LNURL fetches at a 10s timeout each. So
+ * tick B re-read the journal mid-flight, saw nothing at `settledByUs` because the `pending` row
+ * is not written until after that network call, and resolved a second invoice for the same sale.
+ *
+ * DROPPED RATHER THAN QUEUED. Queueing a skipped poll would build a backlog behind exactly the
+ * slow refund that caused the overlap, and the poll is not a job — it recomputes everything from
+ * the node each time, so the next one in five seconds sees whatever this one would have.
+ *
+ * It is here, next to the journal, because the money half is the only half that a double run
+ * costs anything: republishing a signed rung twice is a no-op at the relay by construction
+ * (./ladder.ts), and `lastSold` already collapses a repeated count.
+ */
+export const inFlightGuard = <T>(fn: () => Promise<T>): (() => Promise<T | undefined>) => {
+  let running = false
+  return async () => {
+    if (running) return undefined
+    running = true
+    try {
+      return await fn()
+    } finally {
+      running = false
+    }
+  }
+}
+
 // --- reconciling a `pending` row against the node -------------------------------------------
 //
 // A `pending` row means we sent a debit and never heard back, so whether money moved is unknown.
@@ -177,6 +234,41 @@ export const matchingPayments = (ops: unknown, sats: number, at: number): Outgoi
     })
     .sort((a: Outgoing, b: Outgoing) => a.paidAtUnix - b.paidAtUnix)
 }
+
+// --- item 9 (2026-08-24): the startup reconcile ----------------------------------------------
+//
+// `.refunds.json` is the ONLY durable record that a refund happened. The node has no
+// "already refunded" field, and CLINK's `k1` is in memory with a five-minute TTL (findings
+// §13.28), so it cannot carry idempotency. Lose the file, restore an old one, or start the watcher
+// on a second machine, and every oversell it already paid is recomputed from the node and paid
+// again. This is the same failure class as the tick race, not a durability nicety.
+//
+// THE ONE DECISION THIS FUNCTION ENCODES: **a match is evidence for a human, never an input to
+// whether money moves.** The roadmap originally said a `pending` row with a matching payment
+// becomes `paid` without human intervention; the 2026-08-23 review reversed that (findings §1) and
+// the reversal is load-bearing. The node stores no link between a debit and the settled invoice
+// that caused it, so two refunds of the same amount inside the window are indistinguishable.
+// Marking a row `paid` on that heuristic records a refund that may never have been sent, and the
+// buyer is then stranded with no row reprinting to say so — a NEW way for milestone A to lose
+// money rather than a guard against one.
+//
+// So this returns findings, not transitions. Only the two REFUSALS act without a human, because
+// refusing costs a delay and deciding costs a payment.
+export type PendingMatch = { row: RefundRecord; hits: Outgoing[] }
+export type Reconciliation = {
+  /** The journal file was absent and the node has sent money. That is the "restored an old file"
+   *  case, and it is the one shape where starting up is itself the dangerous act. */
+  refuseToStart: boolean
+  /** Every `pending` row, with whatever the node has that looks like it. Possibly nothing. */
+  pending: PendingMatch[]
+}
+
+export const reconcile = (journal: Journal, journalExisted: boolean, ops: Outgoing[]): Reconciliation => ({
+  refuseToStart: !journalExisted && ops.length > 0,
+  pending: Object.values(journal)
+    .filter(row => row.state === 'pending')
+    .map(row => ({ row, hits: matchingPayments(ops, row.sats, row.at) })),
+})
 
 // --- turning a pointer into a BOLT11 --------------------------------------------------------
 
@@ -234,28 +326,281 @@ const payRequestCallback = (body: unknown, msat: number): string | null => {
   }
 }
 
+// --- item 4 (2026-08-24): this is a trust boundary and it was open ---------------------------
+//
+// THE BUYER CHOOSES THE HOST. `refund_pointer` is a string a stranger typed into our own Buy form
+// and the node stored on the settled invoice; the seller's watcher then fetches it, twice, and
+// asks it for an invoice it is about to pay. Everything from here to `resolvePointer` is written
+// against that fact rather than against a cooperative wallet host.
+//
+// TWO PANEL CLAIMS, BOTH REPRODUCED FIRST (2026-08-24, self-signed listener on 127.0.0.1):
+//   * `:257` — the 64 KB bound bounded nothing. `await res.text()` buffered a 10 MB body in 34 ms
+//     and the length check ran on the line after. The seller's machine ate every byte.
+//   * `:221` — no private-address check on either hop. Hop 2's URL is the `callback` field, which
+//     is chosen by the host the buyer named, so a raw `https://127.0.0.1:…` is fully in reach.
+//     The listener recorded the connection and the watcher parsed its answer.
+// And `redirect: 'follow'` was measured following a self-redirect **21 times** — undici's default
+// of 20, which is a cap in the sense that a wall is a cap.
+//
+// WHAT THE ROADMAP ASKED FOR AND WHY IT COULD NOT BE BUILT ON `fetch`. The bullet says "resolve
+// the host, reject private and loopback ranges, and re-check after each redirect". Neither half
+// works through `fetch`:
+//
+//   * `dns.resolve()` followed by `fetch(url)` RE-RESOLVES the name, so the address that was vetted
+//     is not the address that is connected to. A hostile pointer's DNS can answer differently the
+//     second time. That is security theatre, and shipping it would be worse than shipping nothing,
+//     because the ledger would then carry a guarantee that is not one.
+//   * `redirect: 'follow'` hands back the FINAL response. There is no per-hop anything.
+//
+// SO THE TRANSPORT CHANGED. `node:https` instead of `fetch`, which is stdlib and adds no
+// dependency, and which lets all three fixes fall out of one shape:
+//
+//   1. NO TOCTOU. We resolve the name ourselves, refuse if ANY returned address is private, and
+//      then connect to that exact IP with `servername` and the `Host` header set to the real
+//      hostname — so TLS is still validated against the name and the socket still goes where we
+//      looked. This is the second of the two shapes the brief named; the first (a custom undici
+//      `lookup` dispatcher) needs the `undici` package, and `node:https` is already here.
+//   2. THE REDIRECT CHAIN IS OURS. `https.request` follows nothing, so each hop is a separate,
+//      separately-vetted request, capped at MAX_REDIRECTS and re-checked for https every time.
+//   3. THE BODY IS COUNTED OFF THE STREAM and the request is destroyed the moment it crosses the
+//      bound, in bytes rather than in the UTF-16 code units `text.length` was measuring.
+//
+// ONE DEADLINE covers the whole chain, so a host cannot hold the watcher for MAX_REDIRECTS × the
+// timeout by redirecting slowly.
+//
+// NEVER PUT THE PATH IN AN ERROR. Every message built below names `u.host` and never `u.pathname`
+// — the path carries the name half of the buyer's Lightning address, which is the half that
+// identifies a person. See the header of this file.
 const FETCH_TIMEOUT_MS = 10_000
 const MAX_BODY_BYTES = 64 * 1024
+// Eight, not three. Three was measured against a lab host and is under what a real wallet provider
+// costs: an apex-to-www redirect, a `/.well-known` rewrite and a CDN region hop is already three
+// before anything unusual happens, and exceeding the cap is a PERMANENT failure here — a `queued`
+// row that is never retried. A cap exists to stop a loop, and eight stops a loop just as well.
+const MAX_REDIRECTS = 8
 
 // A 4xx is the host saying "this address does not exist here", which no amount of retrying fixes;
 // a 5xx or a socket error is the host having a bad minute. They need opposite handling — one is a
 // human's problem and one is the next tick's — so the distinction is carried out of here rather
-// than flattened into "the fetch failed".
+// than flattened into "the fetch failed". A pointer aimed at a private address is permanent too:
+// it will resolve there again in six minutes, and a person needs to see it.
 class PermanentHttpError extends Error {}
 
-const getJson = async (url: string): Promise<unknown> => {
-  const res = await fetch(url, {
-    redirect: 'follow',
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    headers: { accept: 'application/json' },
-  })
-  if (!res.ok) {
-    const err = res.status >= 400 && res.status < 500 ? new PermanentHttpError(`HTTP ${res.status}`) : new Error(`HTTP ${res.status}`)
-    throw err
+/**
+ * Is this address one the seller's watcher must not be pointed at?
+ *
+ * Fails CLOSED: anything that is not a parseable public address — including a string that is not
+ * an address at all — reads as private. This is the whole security decision of item 4 and it is a
+ * pure function precisely so it can be tested exhaustively without a network.
+ *
+ * ponytail: the ranges below are the ones an SSRF actually uses — loopback, RFC1918, link-local
+ * (169.254.169.254 is the cloud metadata endpoint), CGNAT, the documentation and benchmark blocks,
+ * multicast and reserved — plus IPv6's loopback, unique-local, link-local, multicast, the
+ * IPv4-mapped forms, and the well-known NAT64 prefix. Exotic v4-in-v6 tunnelling (6to4 2002::/16,
+ * Teredo 2001::/32) is not enumerated; if this ever needs to be airtight, the upgrade is a
+ * published CIDR table rather than more branches here.
+ */
+export const isPrivateAddress = (ip: string): boolean => {
+  const version = isIP(ip)
+  if (version === 0) return true
+
+  if (version === 4) {
+    const [a, b] = ip.split('.').map(Number) as [number, number, number, number]
+    if (a === 0 || a === 10 || a === 127) return true // this-network, RFC1918, loopback
+    if (a === 172 && b >= 16 && b <= 31) return true // RFC1918
+    if (a === 192 && b === 168) return true // RFC1918
+    if (a === 169 && b === 254) return true // link-local, and the cloud metadata endpoint with it
+    if (a === 100 && b >= 64 && b <= 127) return true // CGNAT, RFC6598
+    if (a === 192 && b === 0) return true // IETF protocol assignments and TEST-NET-1
+    if (a === 198 && (b === 18 || b === 19)) return true // benchmarking
+    if (a === 198 && b === 51) return true // TEST-NET-2
+    if (a === 203 && b === 0) return true // TEST-NET-3
+    return a >= 224 // multicast, reserved, broadcast
   }
-  const text = await res.text()
-  if (text.length > MAX_BODY_BYTES) throw new Error('response too large')
-  return JSON.parse(text)
+
+  // NORMALISE BEFORE TESTING ANYTHING, because this function used to fail OPEN on the one class it
+  // exists to catch. `0::1` and `0:0:0:0:0:0:0:1` are loopback, neither starts with `::`, and
+  // `parseInt('0', 16)` is 0, which matches none of the masks below — so both were ALLOWED
+  // (measured 2026-08-24, along with `0:0:0:0:0:ffff:10.0.0.1`). The docstring above promised the
+  // opposite, which is the worse half: a guard that reads as a guarantee and is not one.
+  //
+  // WHATWG URL is the platform's own IPv6 canonicaliser and it is already a dependency of nothing —
+  // `new URL` is a global. It answers `::1` for every spelling of loopback, and it rewrites the
+  // dotted IPv4-mapped forms to hex (`::ffff:127.0.0.1` -> `::ffff:7f00:1`), so the `::` prefix
+  // rule below now catches every mapped address including the public ones. That is stricter than
+  // before and deliberately so: an IPv4-mapped address in a DNS answer for a wallet host is not a
+  // thing that happens legitimately, and this is the direction to be wrong in.
+  let s: string
+  try {
+    s = new URL(`http://[${ip.toLowerCase()}]`).hostname.slice(1, -1)
+  } catch {
+    return true // it parsed as IPv6 above and will not normalise here: refuse rather than guess
+  }
+  if (s.startsWith('::')) return true // ::, ::1, every IPv4-mapped form, and the reserved ::/96
+  if (s.startsWith('64:ff9b:')) return true // NAT64, which carries an embedded IPv4 address
+  const head = Number.parseInt(s.split(':')[0] || 'zz', 16)
+  if (!Number.isFinite(head)) return true
+  if ((head & 0xfe00) === 0xfc00) return true // fc00::/7 unique local
+  if ((head & 0xffc0) === 0xfe80) return true // fe80::/10 link local
+  return (head & 0xff00) === 0xff00 // ff00::/8 multicast
+}
+
+/**
+ * Read a response body, giving up MID-STREAM the moment it crosses `max` BYTES.
+ *
+ * This is the bug in one function. `await res.text()` buffered the whole thing and the bound was
+ * consulted on the next line, so a 64 KB limit let a 10 MB answer through — measured, 34 ms, on a
+ * host a stranger's payment pointer named. Counting off the stream and destroying the socket makes
+ * the limit cost what it says it costs, and it counts bytes rather than the UTF-16 code units
+ * `String.length` reports.
+ *
+ * Exported because it is the only half of `fetchHop` that a test can reach: every address a local
+ * listener can bind is one `isPrivateAddress` refuses, which is the vetting working correctly and
+ * also the reason there is no way to drive a real oversized body through the whole path.
+ */
+export const readBounded = (stream: Readable, max: number): Promise<string> =>
+  new Promise((resolve, reject) => {
+    let size = 0
+    const chunks: Buffer[] = []
+    stream.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > max) {
+        stream.destroy() // closes the socket, so the host stops sending rather than being ignored
+        reject(new Error(`response larger than ${max} bytes`))
+        return
+      }
+      chunks.push(chunk)
+    })
+    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    stream.on('error', reject)
+  })
+
+type Hop = { location?: string; body: string }
+
+/**
+ * One GET, to an address vetted a moment before the socket opens, following nothing.
+ *
+ * The order is the point: resolve, refuse, then connect to the address that was refused-or-not.
+ * `servername` keeps TLS validating against the hostname rather than the literal, and the `Host`
+ * header keeps virtual hosting working, so nothing about this is visible to a well-behaved host.
+ */
+const fetchHop = async (url: string, deadline: number): Promise<Hop> => {
+  const u = new URL(url)
+  if (u.protocol !== 'https:') throw new PermanentHttpError('not an https URL')
+  const hostname = u.hostname.replace(/^\[|\]$/g, '') // a URL keeps an IPv6 literal's brackets
+
+  const literal = isIP(hostname) !== 0
+  // A NAME WITH NO ADDRESS IS A PERSON'S PROBLEM, NOT THE NEXT TICK'S. This was a plain throw, so
+  // `resolvePointer`'s catch read it as transient and the row journalled `failed` — retried every
+  // six minutes, forever, never reaching a human. Measured 2026-08-24 against a real buyer's
+  // address: `phoenixwallet.me` has NS records and no A or AAAA at all, so every refund to a
+  // Phoenix address would have retried until the sale was over with no `queued` line to say so.
+  //
+  // BUT ONLY THE PERMANENT CODES. `EAI_AGAIN` is OUR resolver having a bad minute — making that
+  // permanent would strand every pending refund on the seller's machine the moment their network
+  // hiccupped, which is a far worse failure than the one being fixed.
+  let addresses: string[]
+  if (literal) {
+    addresses = [hostname]
+  } else {
+    try {
+      addresses = (await lookup(hostname, { all: true })).map(a => a.address)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code !== 'ENOTFOUND' && code !== 'ENODATA') throw err
+      throw new PermanentHttpError(`${u.host} has no address record (${code}) — it may not be an LNURL host at all`)
+    }
+  }
+  if (addresses.length === 0) throw new PermanentHttpError(`${u.host} does not resolve to anything`)
+  // ANY private answer refuses the whole name. A host that resolves to both a public and a private
+  // address is a DNS-rebinding attempt, not a host with an unusual DNS setup.
+  const bad = addresses.find(isPrivateAddress)
+  if (bad) throw new PermanentHttpError(`${u.host} resolves to ${bad}, a private or reserved address`)
+
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) throw new Error('out of time before the request was sent')
+
+  return new Promise<Hop>((resolve, reject) => {
+    // A WALL-CLOCK DEADLINE. `req.setTimeout` was here and it is an IDLE timeout — `socket.setTimeout`
+    // fires after N ms of INACTIVITY, not N ms of elapsed time. Measured 2026-08-24: a host sending
+    // one byte every 600 ms held a request whose "deadline" was 1,000 ms open for 24.6 seconds, and
+    // the timeout never fired. At one byte per 9.9 s a host stays under both this and MAX_BODY_BYTES
+    // for a week.
+    //
+    // The cost of that is not the refund, it is the watcher. `refundOversells` is awaited inside
+    // `tick`, `tick` is wrapped in `inFlightGuard`, and that guard DROPS the polls queued behind it —
+    // so one slow host chosen by one buyer stops stock republishing, ladder rungs and sold-out
+    // marking for as long as it cares to trickle. That is the oversell this slice exists to refund.
+    //
+    // `fetch` had this for free: `AbortSignal.timeout` aborts the body read too. Losing it was the
+    // real cost of the transport change and it was not visible in the diff.
+    let killer: ReturnType<typeof setTimeout> | undefined
+    const done = (hop: Hop) => {
+      clearTimeout(killer)
+      resolve(hop)
+    }
+    const fail = (err: Error) => {
+      clearTimeout(killer)
+      reject(err)
+    }
+    const req = httpsRequest(
+      {
+        host: addresses[0],
+        // SNI cannot carry an IP, and a literal has to be matched by the certificate itself.
+        servername: literal ? undefined : hostname,
+        port: u.port || 443,
+        path: u.pathname + u.search,
+        method: 'GET',
+        // `identity` because we do not decompress. RFC 7231 §5.3.4: a request with NO
+        // accept-encoding lets the server use ANY content-coding — absence is not a refusal. `fetch`
+        // sent `gzip, deflate` and decompressed transparently; `node:https` does neither, so a host
+        // that gzipped would hand JSON.parse a gzip stream. That throws a SyntaxError, which is not
+        // a PermanentHttpError, so the row journals `failed` and retries every six minutes forever
+        // — a permanent failure wearing a transient label, and no `queued` line to tell the seller.
+        headers: { host: u.host, accept: 'application/json', 'accept-encoding': 'identity' },
+      },
+      res => {
+        const status = res.statusCode ?? 0
+        const location = typeof res.headers.location === 'string' ? res.headers.location : undefined
+        if (status >= 300 && status < 400 && location) {
+          res.resume()
+          return done({ location, body: '' })
+        }
+        if (status < 200 || status >= 300) {
+          res.resume()
+          return fail(status >= 400 && status < 500 ? new PermanentHttpError(`HTTP ${status}`) : new Error(`HTTP ${status}`))
+        }
+        readBounded(res, MAX_BODY_BYTES).then(body => done({ body }), fail)
+      },
+    )
+    // Subsumes the idle timeout it replaced: this fires at `remaining` ms of elapsed time, which is
+    // always at or before the moment an idle timer of the same length could.
+    killer = setTimeout(() => req.destroy(new Error('deadline exceeded')), remaining)
+    req.on('error', fail)
+    req.end()
+  })
+}
+
+/**
+ * GET some JSON, vetting every hop of the redirect chain.
+ *
+ * ponytail: `hop` is injectable ONLY so the redirect cap can be tested. Every address a local test
+ * server can bind is one `isPrivateAddress` correctly refuses, so a loop bound that could run away
+ * is otherwise unprovable — and an unbounded loop here hangs the watcher.
+ */
+export const getJson = async (url: string, hop = fetchHop): Promise<unknown> => {
+  const deadline = Date.now() + FETCH_TIMEOUT_MS
+  let target = url
+  for (let n = 0; ; n++) {
+    const res = await hop(target, deadline)
+    if (res.location === undefined) return JSON.parse(res.body)
+    if (n >= MAX_REDIRECTS) throw new PermanentHttpError(`more than ${MAX_REDIRECTS} redirects`)
+    const next = new URL(res.location, target)
+    // Re-checked per hop, which is the thing `redirect: 'follow'` made impossible. A 302 to
+    // http:// would otherwise downgrade the whole exchange after the first hop looked fine.
+    if (next.protocol !== 'https:') throw new PermanentHttpError(`redirected to ${next.protocol}, which is not https`)
+    target = next.toString()
+  }
 }
 
 /**

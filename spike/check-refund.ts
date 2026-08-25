@@ -28,7 +28,8 @@
 // nothing settles.
 //
 // Usage: node check-refund.ts [--nprofile <path|nprofile1…>]
-import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -136,16 +137,71 @@ const stillUnpaid = await rpc('DecodeInvoice', { invoice: probe }).catch(() => n
 check(stillUnpaid !== null, 'the probe invoice is still decodable, and nothing settled against it')
 
 // --- 4. THE KILL SWITCH ----------------------------------------------------------------------
-console.log(`\n# 4. the kill switch — restoring the cap to ${originalCap}, then BanDebit`)
+console.log(`\n# 4. the kill switch — restoring the cap to ${originalCap}, then revoking`)
 await rpc('EditDebit', {
   authorize_npub: refundPub,
   rules: [{ rule: { type: 'frequency_rule', frequency_rule: { number_of_intervals: 1, interval: 'DAY', amount: originalCap ?? 8_000 } } }],
 })
 check(capOf((await grants()).find(g => g.npub === refundPub)) === originalCap, `the cap is back to ${originalCap} — a debit would now be within it`)
 
-await rpc('BanDebit', { npub: refundPub })
-const banned = (await grants()).find(g => g.npub === refundPub)
-check(banned?.authorized === false, 'BanDebit flipped the grant to unauthorized')
+// THE KILL SWITCH AS AN OPERATOR ACTUALLY RUNS IT (item 2, 2026-08-24). This block used to call
+// `rpc('BanDebit')` directly, which proved the NODE's half and skipped ours — and ours was the
+// half that was broken. `authorize-refunds.ts` minted a fresh random refund key at module top
+// level, above the `--revoke` branch, so on a machine without spike/.refund-key the switch banned
+// a pubkey that had never been granted anything, printed `BANNED`, and exited 0 while the real
+// grant stayed live. Driving the script is the only thing that can catch that coming back.
+const SCRIPT = join(HERE, 'authorize-refunds.ts')
+const run = (...args: string[]) =>
+  spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', timeout: 60_000 })
+
+const revoked = run('--revoke')
+console.log((revoked.stdout + revoked.stderr).trim().split('\n').map(l => `   ${l}`).join('\n'))
+check(revoked.status === 0, 'node authorize-refunds.ts --revoke exited 0')
+check(
+  /BANNED, and the node agrees/.test(revoked.stdout),
+  'and its success line is printed from a re-read of GetDebitAuthorizations, not from the RPC returning',
+)
+
+const afterRevoke = await grants()
+// The roadmap's wording is "the grant list no longer contains the key", and the node is narrower
+// than that: `BanDebit` flips `authorized` to false and LEAVES the row (debitStorage.ts:43-47).
+// What has to be true is that the list holds no AUTHORIZED grant for this key. `--reset` is the
+// one that removes the row, and the restore step at the foot of this file asserts that.
+check(
+  !afterRevoke.some(g => g.npub === refundPub && g.authorized),
+  'the grant list no longer contains an AUTHORIZED grant for the refund key',
+)
+const banned = afterRevoke.find(g => g.npub === refundPub)
+check(banned?.authorized === false, 'the row is still there and reads as banned, which is what BanDebit does')
+
+// --- 4b. AND IT REFUSES TO IMPROVISE A KEY ---------------------------------------------------
+// The defect in one sentence: with spike/.refund-key absent, both switches used to write a brand
+// new random key, derive a pubkey from it, and ban THAT. So this hides the real key for as long
+// as it takes to run each branch and asserts they refuse. The key is read into memory first and
+// the restore is in a `finally` that also deletes any replacement the script may have minted, so
+// the only way to lose it here is a SIGKILL inside a few hundred milliseconds.
+console.log('\n# 4b. both switches refuse to run without a key rather than inventing one')
+const HIDDEN = `${REFUND_KEY_FILE}.hidden-by-check-refund`
+const keyBytes = readFileSync(REFUND_KEY_FILE)
+renameSync(REFUND_KEY_FILE, HIDDEN)
+try {
+  for (const flag of ['--revoke', '--reset']) {
+    const out = run(flag)
+    const said = `${out.stdout}${out.stderr}`
+    check(out.status !== 0, `${flag} with no key file exits non-zero`)
+    check(/REFUSING/.test(said), `${flag} says it is refusing rather than inventing a key`)
+    check(!/BANNED, and the node agrees|REMOVED, and the node agrees/.test(said), `${flag} reports no success`)
+    check(!existsSync(REFUND_KEY_FILE), `${flag} minted no replacement key`)
+  }
+} finally {
+  // Anything sitting at the real path now is a key this test caused to exist, and the real one is
+  // still at HIDDEN. Delete it before restoring, or the rename would fail and we would keep the
+  // wrong key.
+  if (existsSync(REFUND_KEY_FILE)) unlinkSync(REFUND_KEY_FILE)
+  if (existsSync(HIDDEN)) renameSync(HIDDEN, REFUND_KEY_FILE)
+  else writeFileSync(REFUND_KEY_FILE, keyBytes, { mode: 0o600 })
+}
+check(readFileSync(REFUND_KEY_FILE).equals(keyBytes), 'the real refund key is back, byte for byte')
 
 const afterBan = await payDebit(refundSk, node, { bolt11: probe, amountSats: PROBE_SATS, k1: k1For(`check-refund-ban-${Date.now()}`) })
 console.log(`   node said: ${JSON.stringify(afterBan)}`)
@@ -178,6 +234,7 @@ check(
 await rpc('ResetDebit', { npub: refundPub })
 const finalGrants = await grants()
 check(!finalGrants.some(g => g.npub === refundPub), 'the grant row is removed — refunds are OFF')
+check(!finalGrants.some(g => g.authorized), 'and no OTHER key is left holding spend authority on this account')
 
 console.log(`
 # The cap and the kill switch are both real, both enforced by the node, and both were seen

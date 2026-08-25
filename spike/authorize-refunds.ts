@@ -74,9 +74,10 @@
 //   node authorize-refunds.ts                  # grant, at the default cap
 //   node authorize-refunds.ts --cap 2000       # grant, or re-cap an existing grant, sats/day
 //   node authorize-refunds.ts --days 30        # how long the grant lives before it self-deletes
-//   node authorize-refunds.ts --show           # list grants, change nothing
+//   node authorize-refunds.ts --show           # list grants, change nothing. Needs no key file
 //   node authorize-refunds.ts --revoke         # BanDebit: the kill switch
 //   node authorize-refunds.ts --reset          # ResetDebit: remove the row entirely
+//   node authorize-refunds.ts --revoke --npub <64 hex>   # kill a key this machine does not hold
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -114,16 +115,37 @@ if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — run seed-listings
 const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const sellerPub = getPublicKey(sk)
 
-// The refund key is minted here rather than derived from anything, because a key derived from the
-// seller's key would be the seller's key wearing a hat.
-if (!existsSync(REFUND_KEY_FILE)) {
-  writeFileSync(REFUND_KEY_FILE, bytesToHex(generateSecretKey()) + '\n', { mode: 0o600 })
-  console.log(`# minted a new refund key at ${REFUND_KEY_FILE} (gitignored, chmod 600)`)
+// THE MINT USED TO BE HERE, AND THAT MADE THE KILL SWITCH LIE. It ran at module top level, above
+// `--revoke` and above `--reset`, so on any machine where spike/.refund-key was absent — a fresh
+// clone, a restored .dev-key, a deleted file — the kill switch wrote a brand-new random key,
+// derived a pubkey from it, and called BanDebit on a pubkey that had never been granted anything.
+// Per debitStorage.ts:43-47 that just creates a fresh banned row, so the node answers happily. It
+// printed `# BANNED the refund key` and exited 0 while the real grant stayed live and a watcher
+// elsewhere kept its spend authority. A kill switch that lies is worse than no kill switch,
+// because it ENDS the seller's response instead of starting it.
+//
+// So nothing is minted until the grant path below, and the two kill branches refuse rather than
+// improvise. What identifies the key is read here and may be absent:
+//
+//   * --npub <64 hex> names the key directly, so a seller on a machine that does not hold the file
+//     can still kill the grant. `--show` and watch-sales.ts's startup banner both print it.
+//   * otherwise the file, if it is there.
+//
+// `--show` now needs neither, which is the point of moving this: on a fresh clone it lists what
+// the node actually has instead of inventing a key to compare against.
+const NPUB = arg('npub', '')
+if (NPUB && !/^[0-9a-f]{64}$/i.test(NPUB)) {
+  throw new Error('--npub wants a 64-character HEX pubkey. The proto calls it npub and means hex — findings §13.19')
 }
-const refundSk = hexToBytes(readFileSync(REFUND_KEY_FILE, 'utf8').trim())
-const refundPub = getPublicKey(refundSk)
+let refundPub = NPUB
+  ? NPUB.toLowerCase()
+  : existsSync(REFUND_KEY_FILE)
+    ? getPublicKey(hexToBytes(readFileSync(REFUND_KEY_FILE, 'utf8').trim()))
+    : ''
 
-if (refundPub === sellerPub) throw new Error('the refund key IS the seller key — refusing to grant it anything')
+if (refundPub && refundPub === sellerPub) {
+  throw new Error('the refund key IS the seller key — refusing to grant it anything')
+}
 
 // The pushed authorisation request lands on the seller's own kind 21000 channel with the fixed
 // requestId "GetLiveDebitRequests" (debitManager.ts:216-221). Catch it before we trigger it.
@@ -149,16 +171,11 @@ const { appPub, relays, rpc, close } = connectPub(
 
 console.log(`# node app pubkey ${appPub.slice(0, 12)}… on ${relays.join(', ')}`)
 console.log(`# account owner   ${nip19.npubEncode(sellerPub)}`)
-console.log(`# refund key      ${refundPub.slice(0, 16)}…  (holds no funds, no identity)`)
-
-// The account pointer, exactly as ./authorize-manage.ts derives it: the default offer is the one
-// whose offer_id EQUALS the account's app_user_id (offerManager.ts:30), and that equality is the
-// only way to read app_user_id back out of this API. CLINK Debits wants it as the `pointer`.
-// NEVER published — /docs/spec.md §6.1.
-type OfferConfig = { offer_id: string; default_offer: boolean }
-const offers: OfferConfig[] = (await rpc('GetUserOffers', {})).offers ?? []
-const pointer = offers.find(o => o.default_offer)?.offer_id
-if (!pointer) throw new Error('no default offer on this account — cannot determine the account pointer')
+console.log(
+  refundPub
+    ? `# refund key      ${refundPub.slice(0, 16)}…  (holds no funds, no identity)`
+    : `# refund key      not on this machine — ${REFUND_KEY_FILE} is absent and no --npub was given`,
+)
 
 // `authorize_npub` is a misnomer in the proto, the same way it is on the Manage side
 // (findings §13.19): the row stores `npub` and matches it against `event.pub`, which is 64-char
@@ -171,7 +188,7 @@ const grants = async (): Promise<Grant[]> => ((await rpc('GetDebitAuthorizations
 const describe = (list: Grant[]) => {
   if (list.length === 0) return console.log('#   (no debit grants on this account)')
   for (const g of list) {
-    const mine = g.npub === refundPub ? '  <- our refund key' : ''
+    const mine = refundPub && g.npub === refundPub ? '  <- our refund key' : ''
     console.log(`#   debit_id ${g.debit_id}  ${g.authorized ? 'AUTHORIZED' : 'banned    '}  ${g.npub.slice(0, 16)}…  rules ${JSON.stringify(g.rules ?? [])}${mine}`)
   }
 }
@@ -187,25 +204,104 @@ if (process.argv.includes('--show')) {
 // (and creates the row first if there is none, debitStorage.ts:43-47), after which
 // `assertDebitFrequency` throws `DebitUnauthorizedError` INSIDE the payment transaction — so it
 // stops a refund that is already in flight, not merely the next one (debitManager.ts:376-401).
-// /CLAUDE.md's "the refund path needs a kill switch" is this call.
-if (process.argv.includes('--revoke')) {
-  await rpc('BanDebit', { npub: refundPub })
-  console.log(`\n# BANNED the refund key. Every further debit gets GFY 1, checked in-transaction.`)
-  describe(await grants())
+// `ResetDebit` is the other half: it removes the row entirely (debitManager.ts:111-113 ->
+// RemoveDebitAccess), so a ban denies and a reset forgets. /CLAUDE.md's "the refund path needs a
+// kill switch" is these two calls, and the ledger's rule is that a switch is only satisfying that
+// requirement if it can tell you it did NOTHING.
+//
+// BOTH branches go through here, because both used to dereference the same improvised key and a
+// fix that guarded only `--revoke` would have left a second switch reporting success.
+//
+// IT READS THE NODE BEFORE AND AFTER, and this will read as added coupling to the next person, so:
+// the kill switch ALREADY needed the node — `BanDebit` is an RPC. Requiring the node and a local
+// file is strictly worse than requiring the node, and the grant list is the only thing that can
+// answer "is it actually stopped?". Sending the RPC proves that we asked. Reading the list back
+// proves the node agrees. That difference is the entire defect this branch is fixing, so the
+// success line is printed from the AFTER state and never from the fact that the call returned.
+const killSwitch = async (method: 'BanDebit' | 'ResetDebit') => {
+  if (!refundPub) {
+    throw new Error(
+      `no ${REFUND_KEY_FILE} and no --npub, so there is no key to ${method === 'BanDebit' ? 'ban' : 'reset'}. ` +
+        `REFUSING rather than minting one: this used to invent a random key and ban that, which reports ` +
+        `success while the real grant stays live and a watcher elsewhere keeps spending. Run ` +
+        `\`--show\` to see what the node actually has, then pass --npub <hex>, or restore the key file.`,
+    )
+  }
+
+  const before = await grants()
+  const ours = before.filter(g => g.npub === refundPub)
+  const others = before.filter(g => g.npub !== refundPub)
+
+  if (ours.length === 0) {
+    // Do NOT print a success line here. The node has nothing granted to this key, so whatever the
+    // RPC does next is not the thing the seller came to do — and this is exactly the state the old
+    // bug manufactured for itself. Send it anyway (BanDebit fails closed by creating a banned row,
+    // debitStorage.ts:43-47), then say plainly what was found.
+    console.log(`\n# THE NODE REPORTS NO GRANT FOR THIS KEY. There was nothing live to stop.`)
+    console.log(`#   ${refundPub.slice(0, 16)}… is not in GetDebitAuthorizations.`)
+    if (others.length) {
+      console.log(`#   BUT the account has ${others.length} other grant(s), and this switch has NOT touched them:`)
+      describe(others)
+      console.log(`#   If refunds are still going out, one of those is the key doing it — --npub <hex> kills it.`)
+    }
+  }
+
+  await rpc(method, { npub: refundPub })
+
+  // The verdict comes from the node, not from the call returning.
+  const after = await grants()
+  const still = after.filter(g => g.npub === refundPub && g.authorized)
+  console.log('\n# debit grants on this account:')
+  describe(after)
+  if (still.length) {
+    throw new Error(
+      `${method} returned, but the node STILL reports this key as AUTHORIZED. The grant is live. ` +
+        `Do not trust this switch — ban it from ShockWallet and stop the watcher by hand.`,
+    )
+  }
+  if (ours.length === 0) {
+    console.log(`#\n# Exiting non-zero: the switch ran and found no live grant of its own to stop.`)
+    close()
+    process.exit(1)
+  }
+  console.log(
+    method === 'BanDebit'
+      ? `#\n# BANNED, and the node agrees. Every further debit from this key gets GFY 1, checked in-transaction.`
+      : `#\n# REMOVED, and the node agrees. The next debit from this key would ask for authorisation again.`,
+  )
   close()
   process.exit(0)
 }
 
-// ResetDebit removes the row entirely rather than banning it (debitManager.ts:111-113 ->
-// RemoveDebitAccess). After this the next debit re-triggers the authorisation dance, which is a
-// different thing from a ban: a ban denies, a reset forgets.
-if (process.argv.includes('--reset')) {
-  await rpc('ResetDebit', { npub: refundPub })
-  console.log(`\n# REMOVED the grant row. The next debit from this key would ask for authorisation again.`)
-  describe(await grants())
-  close()
-  process.exit(0)
+if (process.argv.includes('--revoke')) await killSwitch('BanDebit')
+if (process.argv.includes('--reset')) await killSwitch('ResetDebit')
+
+// Granting needs the SECRET key, so --npub cannot be honoured past this point. Silently falling
+// back to the file would grant a different key than the one the operator named.
+if (NPUB) throw new Error('--npub only applies to --show, --revoke and --reset. Granting needs the secret key itself.')
+
+// --- everything below needs the account pointer, and only the grant path gets this far ---------
+// Exactly as ./authorize-manage.ts derives it: the default offer is the one whose offer_id EQUALS
+// the account's app_user_id (offerManager.ts:30), and that equality is the only way to read
+// app_user_id back out of this API. CLINK Debits wants it as the `pointer`. NEVER published —
+// /docs/spec.md §6.1. It sits below the kill switch so a missing default offer cannot stop a
+// seller revoking a grant.
+type OfferConfig = { offer_id: string; default_offer: boolean }
+const offers: OfferConfig[] = (await rpc('GetUserOffers', {})).offers ?? []
+const pointer = offers.find(o => o.default_offer)?.offer_id
+if (!pointer) throw new Error('no default offer on this account — cannot determine the account pointer')
+
+// The key is minted HERE, on the granting path only, because a key derived from the seller's key
+// would be the seller's key wearing a hat and a key minted above the kill switch is the defect
+// this file just closed.
+if (!existsSync(REFUND_KEY_FILE)) {
+  writeFileSync(REFUND_KEY_FILE, bytesToHex(generateSecretKey()) + '\n', { mode: 0o600 })
+  console.log(`# minted a new refund key at ${REFUND_KEY_FILE} (gitignored, chmod 600)`)
 }
+const refundSk = hexToBytes(readFileSync(REFUND_KEY_FILE, 'utf8').trim())
+refundPub = getPublicKey(refundSk)
+if (refundPub === sellerPub) throw new Error('the refund key IS the seller key — refusing to grant it anything')
+console.log(`# refund key      ${refundPub.slice(0, 16)}…  (holds no funds, no identity)`)
 
 // --- the rules ------------------------------------------------------------------------------
 // structs.proto:808-813 — `DebitRule` is a oneof of DebitExpirationRule or FrequencyRule, and

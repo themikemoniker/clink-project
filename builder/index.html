@@ -203,7 +203,9 @@
           holding your key on your phone cannot construct. So a browser that never touches your
           key cannot read your sales, and that is the cost of the custody claim rather than a
           missing feature. Run <code>node spike/sales-report.ts</code> on the machine with your
-          node for amounts, timestamps and refund pointers.
+          node for amounts, timestamps, and how many of each item&rsquo;s sales carry a refund
+          pointer &mdash; it prints the count, never the pointers themselves, because a refund
+          pointer identifies a buyer.
         </p>
       </section>
 

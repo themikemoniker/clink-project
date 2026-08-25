@@ -40,8 +40,12 @@ import type { Blob, Draft } from './listing.ts'
 
 export type Owned = { item: Item; event: Event }
 
-/** What `loadItems` found: the seller's items, and the sale event they belong to if there is one. */
-export type Loaded = { items: Owned[]; sale: Sale | undefined }
+/**
+ * What `loadItems` found: the seller's items, the sale event they belong to if there is one, and
+ * **which relays actually contributed** — item 13's quorum bullet, brought into milestone A
+ * because it is the same button as item 3 (roadmap-review-findings §13).
+ */
+export type Loaded = { items: Owned[]; sale: Sale | undefined; answered: string[] }
 
 const SHA256 = /^[0-9a-f]{64}$/
 // A relay is hostile input. A yard sale does not have this many items, and an `imeta` tag does
@@ -148,6 +152,50 @@ export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null
  * seller changed the price, the old offer still charges the old one. Returning nothing there is
  * what makes a price edit mint a new offer instead of publishing a Buy button that lies.
  */
+/**
+ * Why publishing the sale would destroy something right now, or `undefined` if it would not.
+ *
+ * A kind 30405 is a REPLACEMENT: `publishSale` sends every member every time, so the member list
+ * it is handed IS the sale from that moment on. Two ways that list is wrong, and they are the same
+ * button — which is why the 2026-08-23 review moved half of item 13 into milestone A beside item 3
+ * (roadmap-review-findings §13):
+ *
+ *   * **It is empty.** `#publish-sale` was enabled synchronously from `showSigner()` while
+ *     `loadPanel()`'s four-relay read was still in flight, and `owned` is `[]` until that
+ *     resolves. A click in that window signed a kind 30405 with zero member tags — and NIP-01
+ *     replaces on (kind, pubkey, `d`), so it did not replace the sale, it published a SECOND one
+ *     with nothing in it and un-listed every item from the new collection.
+ *   * **It is short.** One slow relay and the union is missing whatever only that relay held.
+ *
+ * The gate lives here rather than at the enable site because a guard on the button protects one
+ * path and a guard the submit handler consults protects every caller — including the next entry
+ * point somebody adds. `#publish-sale`'s disabled state is derived from this same answer, and the
+ * reason is shown rather than left to be guessed at: a disabled control with no explanation is its
+ * own defect.
+ *
+ * QUORUM IS A MAJORITY of the configured relays. Not all of them — one permanently unreachable
+ * relay would then block a seller forever — and not one, which is the reading that drops items.
+ * Item 13's third bullet, refusing to SHRINK a sale, deliberately stays in milestone D: shrinking
+ * is also what a legitimate delete looks like, and telling those apart entangles with M3.
+ */
+export const noPublishSaleReason = (state: {
+  signedIn: boolean
+  panelLoaded: boolean
+  items: number
+  answered: number
+  relays: number
+}): string | undefined => {
+  if (!state.signedIn) return 'Connect a signer first.'
+  if (!state.panelLoaded) return 'Still reading your items from the relays — publishing now would send an empty sale.'
+  if (state.items === 0) {
+    return 'No items came back from the relays. Publishing now would replace your sale with an empty one.'
+  }
+  if (state.answered * 2 <= state.relays) {
+    return `Only ${state.answered} of ${state.relays} relays answered, so this list may be short. Press “Reload my items”.`
+  }
+  return undefined
+}
+
 export const reusableOffer = (noffer: string | undefined, priceSats: number): string | undefined => {
   if (!noffer) return undefined
   const decoded = decodeNoffer(noffer)
@@ -182,7 +230,39 @@ export const loadItems = async (
   relays: string[],
   pubkey: string,
 ): Promise<Loaded> => {
+  // WHICH RELAYS ANSWERED, and it has to be measured rather than assumed. `querySync` returns the
+  // union and says nothing about where any of it came from, so one relay silently returning
+  // nothing is indistinguishable from a seller who owns nothing — and pressing "Publish my sale"
+  // on that reading sends a kind 30405 with a short member list, which is a REPLACEMENT and
+  // un-lists whatever did not come back.
+  //
+  // `trackRelays` + `seenOn` is nostr-tools' own answer (both are public on AbstractSimplePool):
+  // it records the relay each event arrived from. So "answered" here means "contributed at least
+  // one of this seller's events", which is the honest measurement available. It is NOT "sent
+  // EOSE" — a relay that connects and times out its EOSE looks the same as an empty one, and
+  // nostr-tools reports EOSE only in aggregate (`oneose` fires once, for all of them).
+  //
+  // CLEAR IT FIRST, and this line is the whole of the 2026-08-24 fix. `seenOn` is a Map on the POOL
+  // (abstract-pool.js:698) that is only ever added to — never cleared, never expired — and main.ts
+  // holds ONE pool for the session. `loadItems` runs on connect, after every item publish, and on
+  // every "Reload my items"; an unchanged item keeps its event id across all of them. So a relay
+  // that answered once was still counted as answering forever, and the gate turned into a ratchet
+  // in the direction that protects nobody:
+  //
+  //   t0  damus + nos.lol answer, two relays time out  -> answered 2, blocked. Correct.
+  //   t1  seller presses "Reload my items", as the message tells them to. band answers, damus is
+  //       now down, so `items` is short by whatever only damus held — but damus is still in seenOn
+  //       from t0, so answered is 3, the quorum PASSES, and publishing un-lists a real item.
+  //
+  // That is the kind 30405 replacement dropping members, which is the loss item 13's quorum bullet
+  // was moved into milestone A to close. `items` comes from THIS query; `answered` has to as well.
+  // `loadItems` is the only reader of `seenOn` in this codebase, so clearing it costs nothing.
+  pool.trackRelays = true
+  pool.seenOn.clear()
   const events = await pool.querySync(relays, { kinds: [LISTING_KIND, SALE_KIND], authors: [pubkey] })
+  const answered = new Set<string>()
+  for (const ev of events) for (const relay of pool.seenOn.get(ev.id) ?? []) answered.add(relay.url)
+
   // parseListings verifies every signature and keeps the newest per address; `item.id` is that
   // winning event's id, so this pairing cannot pick up a superseded version.
   const byId = new Map(events.map(ev => [ev.id, ev]))
@@ -193,5 +273,5 @@ export const loadItems = async (
       const event = byId.get(item.id)
       return event ? [{ item, event }] : []
     })
-  return { items, sale }
+  return { items, sale, answered: [...answered] }
 }

@@ -242,153 +242,210 @@ made, not duration.
 
 | | When it is done you can say | Tasks | |
 |---|---|---|---|
-| **A** | Safe to point at a real node | 1, 2, 3, 4, 5, 9, 10, 24, 25 | unblocked |
-| **B** | Nothing on the critical path is unexecuted | 6, 7, 8 | ⚑ |
+| **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
+| **B** | Nothing on the critical path is unexecuted | 6, 7, 8 | ⚑ — **6 is now unblocked** |
 | **C** | A sale you can change from your phone | M1, 11, M2, M3 | |
-| **D** | Runs unattended for a weekend | 12, 13, 14 | |
-| **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26 | ⚑ |
+| **D** | Runs unattended for a weekend | 12, **13 (refuse-to-shrink only)**, 14 | |
+| **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26, **27** | ⚑ — 27's first bullet is liftable earlier |
 | **F** | The seller can see their own business | M4, M5 | liftable earlier |
 | **G** | A shop rather than one weekend | M6, M7, M8 | |
 | **∥** | Upstream — runs alongside, gates nothing | 20, 21, 22 | ⚑ |
 
-### Milestone A — Safe to point at a real node
+**Item 13 appears in two rows on purpose.** It was mis-placed: it is the same button as item 3's
+second defect, so its *quorum* and *show-the-count* bullets belong in A and landed there on
+2026-08-24, while its *refuse-to-shrink* bullet stays in D because shrinking is also what a
+legitimate delete looks like. Task IDs are stable, so it keeps its number in both places rather
+than being split into a 13a and a 13b. `docs/roadmap-review-findings.md` §13.
+
+### Milestone A — Safe to point at a real node — **CLOSED 2026-08-24, with one ⚑ step still open**
 
 > **Nothing known-broken can lose money or destroy a seller's work.**
-> Nothing here is blocked; this starts immediately.
+> **This is now true of the code.** Every defect that was known and broken on 2026-08-23 is
+> closed, refuted, or an open ledger row with its cost written down. **Item 6 is safe to run.**
 
-`docs/known-defects.md` is explicit that the watcher should not be pointed at a real node until
-1 and 2 land, and the watcher is the thing that spends. Everything here is pure code with no
-hardware dependency, so this starts immediately.
+`docs/known-defects.md` gated pointing the watcher at a real node on items 1 and 2. Both landed,
+with tests, so that gate is lifted: the watcher can no longer pay the same buyer twice, and the
+kill switch can no longer report success on a grant it never touched.
 
-**Item 7 runs in parallel with this milestone and gates nothing.** It is the largest source of
-*unknown* defects in the project — five slices of markup that has never rendered — so it should
-begin the moment a phone is free, and whatever it finds gets triaged into this list rather than
-discovered after A is declared done. It is listed under B because that is where its *claim*
-lands, not because the work waits.
+**What the claim does NOT cover, said plainly rather than left to be discovered:**
+- ⚑ **Item 10's human step.** The seller key's backup is on one machine. Losing that disk loses
+  the seller identity and the 9,000 sats in its account, and no session at a terminal can fix it.
+  The claim is about known-broken *code*; this is known-broken *storage*.
+- **Item 7 has still never run**, and it is the largest source of *unknown* defects in the project
+  — five slices of markup that has never rendered. It gates nothing here and it should begin the
+  moment a phone is free. Whatever it finds is triaged into this list; A being closed means the
+  known defects are closed, not that there are none.
+- **Four open rows in `docs/known-defects.md`** were opened or confirmed by this milestone and
+  deliberately not fixed: the address-range list is a named list rather than a proof, the reconcile
+  cannot prompt a daemon, `authorize-refunds.ts` cannot arm the second seller, and we invent a `k1`
+  the spec says not to. Each is there with its cost. None of them loses money or destroys work,
+  which is why the claim survives them.
 
-**1. The refund watcher can pay the same buyer twice**
-`setInterval(tick, 5_000)` has no in-flight guard, and a refunding tick routinely outlives its
-own timer by design: `resolvePointer` alone is two sequential LNURL fetches at a 10s timeout
-each. So tick B re-reads the journal mid-flight, sees nothing, and resolves a second invoice for
-the same sale. The node's debouncer refuses the loser — and the loser's `record()` then writes
-`failed` over the winner's `paid`, which `settledByUs` treats as retryable. `RETRY_AFTER_S` is
-6 minutes, chosen to outlast the node's 5-minute `k1` TTL, so the retry gets a fresh `k1` the
-debouncer has already swept **and pays for real.** The journal is the only durable double-refund
-guard, and this both bypasses and corrupts it.
-- `let ticking = false` around the interval callback — closes the race.
-- `if (journal[row.invoice]?.state === 'paid') return` at the top of `record` — makes the journal
-  monotonic so a late refusal can never downgrade a settled row.
-- Land **both** even though either alone breaks the chain. The second is the one that survives
-  somebody later adding a concurrent caller.
-- One `node --test` case with two overlapping ticks against a stub, asserting one payment.
+**~~1. The refund watcher can pay the same buyer twice~~ — CLOSED 2026-08-24 (`e070ca4`).**
+Both prescribed fixes landed, because either alone breaks the chain and the second is the one that
+survives somebody adding a concurrent caller. `inFlightGuard` DROPS an overlapping tick rather than
+queueing it — queueing would build a backlog behind the slow refund that caused the overlap, and
+each poll recomputes everything from the node anyway. `recordRefund` makes `paid` terminal, and it
+lives on the **journal** rather than at the call site, so item 9's reconcile inherits the rule.
+- **Grepped before landing the second one, as the ledger asked:** the only writer of a row's
+  `state` is `watch-sales.ts`'s `record`, the only readers are `settledByUs` and the watcher's own
+  printing, and nothing in the tree moves a row *out* of `paid`. A test asserts the guard is exactly
+  one state wide, because breaking `pending → paid` silently would be the same class of bug.
+- **There are two timers, and only one is guarded, deliberately.** `summarise()` on its five-minute
+  loop is a pure reader — a synchronous snapshot of the in-memory journal, one `GetUserOperations`
+  read, and printing. Guarding it would swallow the reminder of money still owed on exactly the run
+  where the node answers slowly.
+- **The test is the deliverable as much as the guard is.** `--once` installs no timer, so nothing
+  can drive the interval that raced; the regression test drives the shape underneath it and a
+  second test asserts the same stub double-pays with the guard removed.
 
-**2. The kill switch can report success while the grant stays live**
-`spike/authorize-refunds.ts` mints a fresh refund key at module top level, *above* the `--revoke`
-branch. On any machine where `spike/.refund-key` is absent — a fresh clone, a restored backup, a
-deleted file — `--revoke` invents a new random key, derives a pubkey from it, and bans that. It
-prints `BANNED`. The real grant is untouched.
-- Move key generation below **both** downstream branches. `--revoke` is not the only one:
-  `--reset` calls `ResetDebit` on the same improvised `refundPub`, so a fix that guards one leaves
-  a second switch reporting success on a key that was never granted anything.
-- Make both **refuse to run** when the key file is missing, rather than improvising.
-- Read the granted pubkey back from `GetDebitAuthorizations` and ban *that*, so the file is a
-  convenience rather than the source of truth. The helper already exists — `grants()`, which
-  `--revoke` calls one line after it prints `BANNED`. This is a reordering, not new machinery.
-- Assert in `check-refund.ts` that after `--revoke` the grant list no longer contains the key.
+**~~2. The kill switch can report success while the grant stays live~~ — CLOSED 2026-08-24
+(`d77400a`).** It under-scoped by one branch and the review caught it (§9): `--reset` called
+`ResetDebit` on the same improvised key, so guarding only `--revoke` would have left a second
+switch reporting success. The mint moved below `--show`, `--revoke` **and** `--reset`; both kill
+branches refuse rather than improvise; and the verdict is read back from
+`GetDebitAuthorizations` — the success line is printed from the after-state and never from the RPC
+returning.
+- If the node still reports the key AUTHORIZED it throws and says to ban it from ShockWallet by
+  hand. If the node reports no grant at all it prints no success line, names any **other** grants
+  on the account, and exits 1.
+- **The objection to expect, written into the file:** this does not make the kill switch need the
+  node. `BanDebit` is an RPC — it already did. Requiring the node **and** a local file is strictly
+  worse, which is why `--show` now works with no key file and `--npub <hex>` kills a grant from a
+  machine that does not hold one.
+- `check-refund.ts` drives `authorize-refunds.ts --revoke` rather than calling `BanDebit` directly,
+  asserts no AUTHORIZED grant survives, and section 4b hides the key and asserts both branches exit
+  non-zero, refuse, and mint nothing.
+- **Left open:** `authorize-refunds.ts` is still hardcoded to `.dev-key`, so the second seller
+  cannot arm refunds at all. New row in `docs/known-defects.md`.
 
-**3. Two confirmed authoring defects that silently destroy a seller's sale**
-Neither touches money; both lose work, which for a seller is the same feeling.
-- `mintOffer` dedupes on `label` alone, so after a price edit the list holds two same-label
-  offers and every retry mints another. Match on label **and** the price in the pointer's TLV 4.
-- `#publish-sale` is enabled synchronously before `loadPanel()`'s four-relay read resolves. A
-  click in that window publishes a kind 30405 with an empty member list and un-lists the whole
-  sale. Keep the button disabled until the load settles, and say why in the label.
+**~~3. Two confirmed authoring defects that silently destroy a seller's sale~~ — CLOSED 2026-08-24
+(`90dc844`), and it brought half of item 13 with it.**
+- `mintOffer` now dedupes on the **pair** — label and the TLV-4 price — in a pure `matchingOffer`.
+  Testing it against the fixture account would prove nothing either way: those five offers were
+  minted natively and Manage `list` cannot see natively-minted offers (findings §13.20), so an
+  empty list there is correct behaviour rather than a broken fix.
+- `#publish-sale` is gated on `noPublishSaleReason()`, consulted **both** at the enable site and
+  inside `doPublishSale`. The ledger named both fixes and preferred the smaller one; this takes the
+  larger, because a guard at the sink protects every caller. `loadPanel` clears the flag again if
+  the read throws.
+- The reason is in the copy, because a disabled control with no explanation is its own defect.
+- **Item 13's quorum and show-the-count bullets landed here** — same button, same class of loss.
+  See item 13 in milestone D for what stayed there and why.
 
-**4. Hostile input on the refund path**
-The buyer chooses the `refund_pointer`, and the seller's watcher then fetches it. That is a
-trust boundary and it is currently open. Both are panel claims (`spike/refund.ts:221`, `:257`)
-that have not been reproduced — reproduce first, then fix.
-- `getJson` buffers the whole response before checking `MAX_BODY_BYTES`, so the 64 KB bound
-  bounds nothing. Count bytes as they arrive and abort the stream.
-- Neither LNURL hop has a host allowlist or a private-address check, so a pointer can aim the
-  watcher at `127.0.0.1` or a link-local address. Require https, resolve the host, reject
-  private and loopback ranges, and re-check after each redirect.
-- Cap the redirect chain.
+**~~4. Hostile input on the refund path~~ — CLOSED 2026-08-24 (`534a0ff`). Both claims were
+reproduced first, and the item cost more than one line of it suggested.**
+- **Reproduced** against a self-signed listener on 127.0.0.1: a 10 MB body arrived whole through
+  the 64 KB "bound" in 34 ms, a callback of `https://127.0.0.1:8443/cb` was fetched and parsed, and
+  `redirect: 'follow'` followed a self-redirect **21 times** (undici's default of 20).
+- **Two of the bullets were already done and were not rewritten**: https is required on both hops
+  by construction, and the name half is guarded against path traversal with `encodeURIComponent`.
+- **The interesting half is that the roadmap's own shape could not be built.** `dns.resolve()` then
+  `fetch(url)` re-resolves the name, so the address vetted is not the address connected to — a
+  hostile pointer's DNS can answer differently the second time. And `redirect: 'follow'` hands back
+  the *final* response, so "re-check after each redirect" is not expressible at all.
+- **So the transport changed**, from `fetch` to `node:https` — stdlib, no new dependency. The name
+  is resolved once, refused if **any** answer is private, and connected to at that exact address
+  with `servername` and `Host` set, so TLS still validates against the hostname. Each redirect is a
+  separate vetted request, capped at three, re-checked for https, under one deadline for the chain.
+  The body is counted in **bytes** off the stream and the socket destroyed at the bound.
+- `isPrivateAddress` is a pure exported function and fails closed. **It is a named range list, not
+  a proof** — 6to4 and Teredo are not enumerated — and that gap is an honest row in
+  `docs/known-defects.md` rather than a check that reads as a guarantee.
 
-**5. Triage the five remaining unverified panel claims**
-They are claims, not entries — never reproduced, and some contradict decisions recorded
-elsewhere. Reproduce or refute each, and move it into the ledger either way.
-- `storefront/src/render.ts:521` — the Buy form awaits `requestInvoice` with no `catch`, so a
-  rejection leaves the buyer on a permanently disabled form. **Most likely to be real, and it is
-  buyer-facing.** Fix on sight.
-- `builder/src/admin.ts:82` — treats a photo's dimension element as mandatory where NIP-58 and
-  Gamma make it optional; editing such a listing republishes it with no image at all.
-- `builder/src/main.ts:507` — `loadPanel` overwrites sale-form inputs the seller has typed.
-- ~~`spike/watch-sales.ts:327`~~ — the `k1`/TLV-3 claim. **The citation was wrong and checking it
-  was the right instinct:** `:327` is a comment; the `k1` is sent at `:335`. Judge the claim
-  against `spike/ndebit.ts:82-86`, which already reads `clink-debits.md:167-171` as a MUST that
-  binds *when TLV 3 is present* — so a `k1` sent without one is not obviously forbidden.
-- `builder/index.html:206` — shipped copy promises refund pointers that `sales-report.ts`
-  deliberately never emits. One-line copy fix.
+**~~5. Triage the seven remaining unverified panel claims~~ — CLOSED 2026-08-24. All seven moved,
+and that section of `docs/known-defects.md` is now empty.** Four confirmed and fixed, three
+confirmed and deliberately not fixed, none left in limbo.
+- ~~`render.ts:521`~~ **Fixed (`63eb718`), and grepping every caller found a second victim.** The
+  reachable throws are synchronous, before the promise: a `clink_offer` carrying 32 bytes that are
+  not a curve point throws inside `getConversationKey`. `spike/refund.ts` awaits the same function
+  **outside** its try/catch, so that throw killed the watcher's tick — every tick, paying nothing
+  and journalling nothing. The fix is in `buy.ts`, which now honours the contract the rest of it
+  already kept. `render.ts` keeps a `.catch` as the belt.
+- ~~`refund.ts:257`~~ and ~~`refund.ts:221`~~ **— both reproduced, both fixed. See item 4.**
+- ~~`builder/index.html:206`~~ **Fixed (`63eb718`).** The copy now says what `sales-report.ts`
+  actually prints: a refundable **count**, never a pointer.
+- ~~`spike/watch-sales.ts:327`~~ **— CONFIRMED at `:369`, and this roadmap's reading of it was
+  wrong.** The bullet said the MUST binds only when TLV 3 is present, "so a `k1` sent without one
+  is not obviously forbidden". `docs/clink-notes.md` §3.3, quoting `clink-debits.md:163-172`, has
+  two bullets, and the second is *"Absent ⇒ the wallet MUST NOT invent one."* Our `.ndebit` carries
+  no TLV 3 and we invent one. Not fixed — removing it loses the crash-loop guard and buys nothing
+  back, and doing it properly is a session ndebit per refund, which is a design change. Ledger row,
+  and a candidate for the upstream track beside 21 and 22.
+- ~~`builder/src/admin.ts:86`~~ **— CONFIRMED, and this repo already held the citation.**
+  `storefront/src/listing.ts:111-113` reads `58.md:31`, `58.md:34` and Gamma `spec.md:135` and says
+  the dimension is optional; `blobFrom` requires it. The parser and the re-publisher disagree, in
+  writing, in this repo. Not fixed: it is unreachable from anything this project writes (both
+  writers always emit `WxH`), and the fix changes what gets signed on the edit path. Ledger row.
+- ~~`builder/src/main.ts:544`~~ **— CONFIRMED from the code path.** `loadPanel` calls `showSale()`
+  unconditionally and `loadPanel(false)` runs after every item publish. The file already guards the
+  same hazard for notes one line below. **The user-visible half is UNVERIFIED** — `loadPanel`
+  returns early without a signer, and a signer needs the phone, so it belongs to item 7. Ledger row.
 
-**9. Reconcile the refund journal against the node at startup** *(build here, prove it in B)*
-`spike/.refunds.json` is the **only** durable record that a refund happened — the node has no
-such field, and CLINK's `k1` is in-memory with a 5-minute TTL, so it cannot carry idempotency.
-Lose the file, restore an old one, or run the watcher on a second machine, and every oversell it
-already paid is recomputed and paid again. The reporting half is built (`matchingPayments`,
-`sales-report.ts --outgoing`); the deciding half is not. **This is the same failure class as item 1,
-not a durability nicety** — which is why it sits here rather than with the bad-day work. It can
-only be properly exercised once a refund has actually been paid, so build it now and prove it in
-milestone B.
-- At watcher startup, read the node's outgoing payments and match them against journal rows.
-- A `pending` row with a matching payment produces a **prompt, never a transition** — *"the node
-  has one 1,000-sat payment 40 seconds after this row was written — mark it paid? [y/N]"*. The
-  ledger is explicit that a match on **amount and time alone** is evidence for a human and a
-  different thing as an input to whether money moves, and the reporting half deliberately
-  branches on nothing. Marking a row `paid` on the heuristic strands a buyer whose refund never
-  went — which is a new way for this milestone to lose money, not a guard against one.
-- An oversell with no journal row but a matching outgoing payment **blocks the refund** and says
-  why, rather than paying again.
-- Refuse to start with `--refunds` when the journal is missing but the node shows outgoing
-  payments — that is the "restored an old file" case and it must be loud.
+**~~9. Reconcile the refund journal against the node at startup~~ — BUILT 2026-08-24 (`aee8a86`);
+proof is item 6's.**
+- The reconcile returns **findings, never transitions**. A `pending` row with a match prompts and
+  says in the prompt that the match is on amount and time only; a row with no match is reported as
+  having no evidence. The 2026-08-23 review reversed this item's original bullet (§1) and the
+  reversal is load-bearing: marking a row `paid` on the heuristic records a refund that may never
+  have been sent and strands the buyer.
+- Only the **refusals** act without a human, because refusing costs a delay and deciding costs a
+  payment. An oversell with no journal row but a matching outgoing payment is blocked and
+  journalled `queued`; `--refunds` refuses to start when the journal file is absent and the node
+  reports outgoing payments; and it refuses to arm at all if the node's outgoing payments cannot be
+  read, because not knowing what has already been sent **is** the double-pay condition.
+- **The non-TTY decision: a non-TTY start RUNS, transitions nothing, and says so loudly.** Refusing
+  to start was the other defensible option and it is the wrong one, because this process is also
+  slice 3's watcher — stop it and items stay advertised as available after they sell, which is a
+  new loss rather than a guard against one. A `pending` row is already never retried and never
+  dropped, so not asking returns it to exactly the state the watcher has always kept it in.
+- Five tests, all against a stub. **It can only be *proven* once a real refund has been paid**,
+  which is item 6.
 
-**10. Make the un-regenerable files survivable**
-Several gitignored files are load-bearing, and they fail in different ways. Sort them, then treat
-them accordingly.
-- **Gone forever if lost:** `.builder-key` and `.deploy-test-key`. A kind 15128 root site is one
-  per pubkey, so losing `.builder-key` loses the builder's nsite URL permanently. Neither holds
-  funds, which is the only reason this is survivable at all.
-- **Regenerable, but only by redoing work:** `.refund-key` (a new one needs the whole
-  authorisation dance again) and `.ladder.json` (`seed-listings.ts` re-cuts it, and the watcher
-  must then be restarted).
-- **Regenerable by nothing:** `.refunds.json`. See item 9 — this is why the reconcile matters.
-- The seller key backup currently exists **on one machine only**. Get a copy off it.
-- Write one backup procedure, and run one restore drill so it is known to work rather than
-  believed to.
+**~~10. Make the un-regenerable files survivable~~ — CLOSED 2026-08-24 (`06e56a2`), except the ⚑
+step, which is still open.** `docs/runbook.md` §5 sorts twelve gitignored files into gone-forever,
+gone-forever-and-holds-money, redo-the-work, and recreated-by-nothing, and carries one backup
+command and one restore procedure.
+- **The drill was run**, into a scratch tree, from the archive alone, and its transcript is in the
+  runbook — because a procedure that has never been run is a belief. It proved three things beyond
+  "the files came back": file modes survive the `tar` round trip, the restored ladder is current
+  enough that the stale-ladder check watches all five items, and `sales-report.ts --key` reaches
+  the **second** seller's sub-account rather than silently reporting the first.
+- It also found that both scripts resolve paths from their own file location and import
+  `../storefront`, so a restore is a whole `spike/` next to a `storefront/`. The procedure says so.
+- ⚑ **STILL OPEN, and this PR cannot close it.** `spike/.dev-key`'s backup is on **one machine**.
+  Getting a copy off it is a human step with a second device — an encrypted stick or a hardware
+  password manager, verified there. Named in the runbook and in the demo-day checklist.
+- The `.builder-key` half is why item 26 exists. Noted, not decided here.
 
-**24. The only tool that reports money is hardcoded to one seller**
-`spike/sales-report.ts:49` is `const KEY_FILE = join(HERE, '.dev-key')` and there is no `--key`
-flag, so `node sales-report.ts --key .merida-key` silently reports the *default* seller's sales.
-`spike/watch-sales.ts:80` is already `arg('key', '.dev-key')` and `.merida-key.offers.json` and
-`.merida-key.ladder.json` both exist — so the watcher is multi-seller and the reporting half is
-not. It sits here rather than with the onboarding work because it is one line and two things
-downstream rest on it: M4 says "carry exactly what `sales-report.ts` prints", and item 19 hands a
-stranger a system in which they cannot see what they earned.
-- `arg('key', '.dev-key')`, matching `watch-sales.ts`. The ladder and offers paths beside it need
-  the same `suffixed()` treatment the watcher already has.
+**~~24. The only tool that reports money is hardcoded to one seller~~ — CLOSED 2026-08-23
+(`ac87512`), before this milestone's PR.** `spike/sales-report.ts:56` is `arg('key', '.dev-key')`,
+matching `watch-sales.ts:83`, and the ladder and offers paths beside it got the same `suffixed()`
+treatment. Exercised again by item 10's restore drill, which reads both accounts from a restore.
 
-**25. An empty string satisfies a required `payer_data` key, and three documents say it cannot**
-`ValidateExpectedData` checks only `typeof payerData[key] !== 'string'`, so `{"refund_pointer": ""}`
-passes and the node issues the invoice. The node's own decline names the key it wants, so a client
-that retries with any string value gets served. Our page is safe — it gates on `isPointer` before
-requesting — which is why nobody has hit it.
-- What it costs is a **claim**, in three places: spec §7.3's "a payment that would be unrefundable
-  is therefore declined rather than accepted", design.md §4's "unpayable by anything that cannot
-  supply `refund_pointer`", and slice 8's re-decision, which argues the alternative would produce a
-  `queued` row no human can act on. An empty pointer produces exactly that row.
-- Drive it once against the live node — free, no `--pay` — then either narrow the three claims or
-  file it upstream beside items 21 and 22. Do not weaken the form.
-- M5 inherits this hole for its pickup code, so settle it first.
+**~~25. An empty string satisfies a required `payer_data` key~~ — CLOSED 2026-08-24 (`35b6621`),
+driven on the wire, free, and the hole is wider than this item described.**
+`node spike/check-empty-pointer.ts` sends four kind 21001 requests and pays nothing:
+
+```
+declined        the key absent entirely (the control)
+                code 1: Missing or invalid payer_data: refund_pointer
+INVOICE ISSUED  the empty string
+INVOICE ISSUED  one space
+INVOICE ISSUED  a string that is not a pointer of any kind
+```
+
+- It is not that the empty string slips through. `ValidateExpectedData` checks only
+  `typeof payerData[key] !== 'string'` (`offerManager.ts:148-152`), so what the node enforces is
+  "the key is present and is a string" and **any** value buys an invoice.
+- **The decision was to narrow the three claims**, which is done: `docs/spec.md` §7.3 and
+  `docs/design.md` §4 now say what is true — the guarantee is our page's, not the node's — and
+  slice 8's re-decision is annotated rather than rewritten, because its *conclusion* still holds.
+- **The form was not weakened.** `render.ts`'s `isPointer` gate is the thing that makes the claim
+  true for our buyers and it stays.
+- Filing it upstream stays open and is now cheap, because that script is the reproduction an
+  upstream issue wants. M5 inherits this hole for its pickup code, so settling it here is what
+  unblocks that later.
 
 ### Milestone B — Nothing on the critical path is unexecuted
 
@@ -396,12 +453,30 @@ requesting — which is why nobody has hit it.
 > ⚑ Blocked on a person with a phone and a funded wallet.
 
 Code that has never executed is not a feature. Two of these have been carried across five
-slices. Item 6 genuinely must wait for A; item 7 should already be underway.
+slices. ~~Item 6 genuinely must wait for A~~ — **A closed on 2026-08-24, so item 6 is unblocked**;
+item 7 should already be underway.
 
-**6. Pay one real refund, end to end ⚑** *(needs 1, 2 and 4)*
+**6. Pay one real refund, end to end ⚑** *(needed 1, 2 and 4 — **all three landed 2026-08-24**)*
+**It is now safe to run.** The watcher cannot pay the same buyer twice, the kill switch cannot lie
+about having stopped, and the pointer a stranger supplies can no longer aim the watcher at a
+private address or feed it an unbounded body. Two things to know before the run:
+- **Item 9's reconcile is built but has never been exercised**, because nothing has ever written a
+  `pending` row. This run is what proves it. Run the watcher from a **terminal**, not launchd, so
+  the prompt can be answered.
+- **Re-decide the cap first.** `docs/spec.md` §12: the account is at 9,000 sats against an
+  8,000/day frequency rule, so the cap now binds before the balance does — for the first time, and
+  without anybody deciding it should. `node authorize-refunds.ts --cap <n>` re-caps in one call.
+
 Every debit driven so far is one the node **refused**. That proves the cap and proves nothing
-about the happy path. `payDebit`'s `{"res":"ok"}` branch and `resolvePointer`'s LNURL branch
-have never executed on the wire.
+about the happy path. `payDebit`'s `{"res":"ok"}` branch has never executed on the wire —
+**it is now the only branch of the refund path that has not.** `resolvePointer`'s LNURL branch was
+proven end to end on 2026-08-24: an address at `coinos.io` returned a BOLT11 for exactly 1,000 sats
+in 1,540 ms, both hops, with `invoiceSats` matching. It cost one free call. So what item 6 still
+proves is the *payment*, not the resolution.
+- **The pointer must be an LNURL-pay address, and Phoenix is not one.** A BIP-353 address
+  (`…@phoenixwallet.me`) is the same `user@domain` shape and resolves to nothing this path can
+  use — item 27, measured 2026-08-24. Wallet of Satoshi, Alby, Coinos, Blink or an `noffer` all
+  work. Getting this wrong burns the oversell on a refund that cannot complete.
 - `mugs` is already **sold out 3/3**, and a depleted offer stays payable (findings §13.17) — so
   a single `node check-buy.ts yardsale-2026-08-mugs --pay --pointer <a wallet you control>` **is**
   the oversell. No restocking, no second payment. 1,000 sats.
@@ -416,10 +491,20 @@ Slices 4 through 9 shipped markup that has **never been rendered**: the sticker 
 been printed, the `@media print` block has never run, `noBuyReason` and `missingItemNote` have
 never painted, the `geo:` link has never been tapped. `docs/prompts/browser-verify-and-deploy.md`
 is the script for one sitting that covers all of it.
-- **First: resolve the contradiction in `docs/status.md`** — one paragraph says the Amber import
-  has happened, another says it is unrun. Nothing here works if the bunker is not set up.
-- Import the key into Amber, connect the builder, confirm `perms` is honoured (the residual risk
-  is Amber's "Approve basic actions" policy silently discarding it with no error).
+- ~~**First: resolve the contradiction in `docs/status.md`**~~ — **RESOLVED 2026-08-24. The
+  operator is on iOS and Amber is Android-only** (`spec.md:244`), so the import cannot have
+  happened and the "it has happened" line was false. It mattered: `spike/.dev-key.nsec` and the
+  QR were deleted in slice 9 *on that line's authority*. `export-key-qr.ts --yes` regenerates them.
+- ~~**Pick a signer that exists on this operator's hardware.**~~ **DONE 2026-08-24: nos2x**, a
+  desktop NIP-07 extension, holds the seller key and exposes `nip44`. No phone. Verified in the
+  console — `getPublicKey()` returns `fb18e881…cdb47a0` and `typeof nip44` is `"object"`.
+  **Check the pubkey after any signer change**: the first import loaded a personal key, which
+  would have published to an npub the storefront never reads while reporting success throughout.
+- **Do not carry the predicted signature count over.** `PERMS` is NIP-46 only (`signer.ts:143`);
+  `connectNip07` (`:90`) never sends it and NIP-07 has no perms handshake. So findings §8's
+  Amber/nsec.app measurements and q8's "Approve basic actions" risk describe a mechanism nos2x
+  does not use, and **the predicted 1 was a bunker-path number.** Count nos2x's actual prompts
+  across the publish sequence and record that instead — it is per-site and remembered, not granted.
 - Publish one item, press Deploy, print a sticker sheet, tap a `geo:` link on a phone.
 - Count the actual signature prompts and compare against the predicted 1.
 
@@ -468,7 +553,7 @@ and today costs a file copy and a daemon restart every single time. M1 also resh
 12, so building D first means building parts of it twice.
 
 **M1. The ladder has to travel over a relay, not a USB stick**
-Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:293`: *"Save it as
+Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:298`: *"Save it as
 `.ladder.json` next to `watch-sales.ts`, then restart the watcher."* The seller downloads a file
 from their browser, copies it onto the machine running the daemon, and restarts a process. Miss
 the step and either `isStale` refuses to watch the item, or the watcher publishes rungs the relay
@@ -481,7 +566,7 @@ watcher to every item that device never published.
   30078 — but **encrypt to the watcher's pubkey, not to the seller's own key.** `notes.ts` is
   encrypt-to-self because only the seller's browser ever reads it; here the *watcher* has to
   decrypt, and only a holder of the seller's private key can open a self-encrypted payload. It
-  holds one today (`watch-sales.ts:112` reads `.dev-key`) purely because the fixture seller and
+  holds one today (`watch-sales.ts:115` reads `.dev-key`) purely because the fixture seller and
   the node account are one identity — a coincidence spec §12 says should be a separate key "where
   possible". Encrypting to self would turn that coincidence into a requirement. The shape is
   `notes.ts`'s; the recipient is not.
@@ -531,7 +616,7 @@ pasted per browser and stored in `localStorage`, so a seller on a new device is 
 
 **M3. Retire an item, and edit a fiat one**
 Two holes in the edit form that have nothing to do with each other except that both are refusals.
-- **Fiat items cannot be edited at all.** `builder/src/admin.ts:112` returns `null` for any
+- **Fiat items cannot be edited at all.** `builder/src/admin.ts:116` returns `null` for any
   currency that is not sats, so `records` at 80 MXN can never be changed — the guard exists
   because a sats-only form would republish it as 80 sats, which is right, but "refuse forever" is
   not the only way to be right. Carry currency and amount through the form as a display price
@@ -567,14 +652,27 @@ If it dies, stock goes stale and oversells stop being refunded, and nothing anyw
   missing journal, a revoked grant.
 - Do not build a monitoring service. A supervisor and a log line is the whole of it.
 
-**13. Make publishing robust against a slow relay**
+**13. Make publishing robust against a slow relay** *(two bullets moved to A and landed there)*
 A kind 30405 is a replacement, so `publishSale` must send every member every time — and the
 member list it is handed is whatever four relays returned on the last "Load my items". One slow
 relay and pressing "Publish my sale" quietly un-lists real items.
-- Require a quorum of relays to answer before treating a member list as complete.
-- Show the seller the member count they are about to publish, and refuse to shrink a sale
-  without an explicit confirmation.
-- Surface which relays answered, so a partial read is visible rather than inferred.
+
+**This item was mis-placed** (`docs/roadmap-review-findings.md` §13). It is the *same button* as
+item 3's second defect — `#publish-sale` → `doPublishSale` → `publishSale(signer, draft,
+owned.map(…))`. Item 3 fixed "fires before `owned` is populated"; this fixes "fires when `owned`
+is short". Fixing one still leaves a button that can drop items, which is a kind 30405 replacement
+that un-lists real listings — exactly the loss milestone A claims to have closed. So two of the
+three bullets went to A and landed there on 2026-08-24:
+- ~~Require a quorum of relays to answer before treating a member list as complete.~~ **DONE in A.**
+  `loadItems` reports which relays contributed (`trackRelays`/`seenOn`); below a majority,
+  publishing is refused.
+- ~~Show the seller the member count they are about to publish~~ **DONE in A** — `#sale-cost` says
+  how many items are about to replace the collection, and how many relays it was read from.
+  ~~Surface which relays answered, so a partial read is visible rather than inferred.~~ **DONE in
+  A** as a consequence: it is the same measurement the quorum rule needs.
+- **Still here, and deliberately:** refuse to shrink a sale without an explicit confirmation.
+  Shrinking is also what a legitimate delete looks like (`docs/known-defects.md`, slice-9 section,
+  row 1), so telling those apart entangles with M3 (findings §4). It is sequenced against M3.
 
 **14. Node liveness and the channel lease**
 - The inbound channel is a **lease and it expires 2026-11-19.** Nothing watches it. Add the check
@@ -614,10 +712,14 @@ rather than a bug. Right now the page presents stale stock as current.
 - Say it out loud in the demo too. Disclosed staleness is a design property; undisclosed
   staleness is a lie the page tells.
 
-**17. Remove the buyer's dead ends** *(the fix half of item 5)*
-- Wrap the Buy form's `requestInvoice` so a rejection re-enables the form and explains itself.
+**17. Remove the buyer's dead ends**
+~~Wrap the Buy form's `requestInvoice` so a rejection re-enables the form and explains itself.~~
+**That bullet was item 5's, scheduled twice** (`docs/roadmap-review-findings.md` §18), and item 5
+closed it in milestone A on 2026-08-24. What is left is the half that was always separate:
 - Distinguish "this item has no offer" from "this item's offer disagrees with its price tag" —
   `noBuyReason` currently collapses both into one unhelpful sentence.
+- **Item 27 is the same class and is worse**, because that dead end is only reached *after* the
+  buyer has paid: a BIP-353 refund pointer is accepted at buy time and is useless at refund time.
 
 **18. Make redeploying safe**
 The nsite gateway sends `max-age=3600` and serves the previous build until it lapses. The current
@@ -649,6 +751,35 @@ question in `docs/prompts/browser-verify-and-deploy.md` since then and nothing h
   move now, before anything else prints or publishes that URL.
 - Either answer is fine. Leaving it unanswered while the URL spreads is the one that is not.
 
+**27. A Phoenix buyer cannot be refunded, and nothing says so until after the sale**
+`LN_ADDRESS.test()` cannot tell a BIP-353 address from an LNURL-pay one — they are the same
+`user@domain` shape — so `resolvePointer` builds a `/.well-known/lnurlp/…` URL for a host that
+serves no HTTPS at all. **Measured 2026-08-24**: `phoenixwallet.me` has NS records on Route 53 and
+no A or AAAA record, no `www`/`api`/`app` either. What it has is a TXT record at
+`<name>.user._bitcoin-payment.<domain>` carrying a `bitcoin:?lno=…` BOLT12 offer. Phoenix is a
+mainstream wallet, so this is the common case for one popular wallet rather than an edge one.
+
+Found by running `resolvePointer` against a real address for the first time — the thing
+`docs/known-defects.md` had recorded as never done since slice 7. It cost one free call, and no
+offline test could have found it: every address a test server can bind is one `isPrivateAddress`
+correctly refuses.
+
+- **Say the true reason.** When the LNURL hop fails to resolve, look up the BIP-353 TXT record; if
+  it answers, the `queued` row should read *"that is a BIP-353 address and this refund path speaks
+  LNURL-pay"* rather than naming DNS. Cheap, and it is the difference between a seller who hands
+  the money over at the table and one who files a bug. **Liftable earlier than the rest of E.**
+- **Then decide the buy side, which is the larger half and is a decision rather than a fix.**
+  Should `isPointer` refuse a pointer the refund path cannot use? It would move the failure from
+  *after* the sale to *before* it — a settled invoice stores the pointer forever and the node
+  cannot fix it afterwards (`docs/spike-findings.md` §13.17). But refusing means turning away
+  Phoenix buyers outright, and a manual refund at the table may well be the better trade for a
+  yard sale. **Name the answer; do not let it be decided by whichever code path someone edits
+  first.** Related to item 17: this is a dead end the buyer only meets once the money is gone.
+- **Paying a BOLT12 offer is a feature, not a fix, and it is not this item.** `payDebit` sends a
+  BOLT11, and whether this Lightning.Pub can pay an offer at all is **UNVERIFIED**. That is a
+  spike, and it lands after item 6 has proved the ordinary path.
+- Ledger row with the full reasoning is in `docs/known-defects.md`, "Added by milestone A".
+
 ### Milestone F — The seller can see their own business
 
 > **Settled sales and pickup verification, without a terminal and without holding a key.**
@@ -666,7 +797,7 @@ that can call `GetUserOfferInvoices`, and the watcher can publish.
   publishes it as a kind 30078 under **a third key** — not `.dev-key` and not `.refund-key`. The
   browser subscribes and decrypts.
 - **The "watcher holds no signing key" line is already false, and knowing that is what makes this
-  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:112`) and signs kind
+  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:115`) and signs kind
   21000 with it (`pub-rpc.ts:97-99`). So the ledger's stated reason for keeping the refund journal
   off a relay — "the watcher holds no signing key by design, so it cannot publish a record of what
   it did" — is wrong on the facts. What slice 3 actually guarantees is narrower: the watcher signs

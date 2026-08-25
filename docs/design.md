@@ -177,6 +177,22 @@ case about wallets; slice 8 checked, and the worst case is not the reason. Two m
 
 - **A raw `noffer` sticker is unpayable by anything that cannot supply `refund_pointer`**, which
   is the node declining rather than a wallet failing (`code: 1`, confirmed on the wire in slice 2).
+
+  **NARROWED 2026-08-24 by roadmap item 25, driven on the wire, and the sentence above is now too
+  strong.** What the node enforces is that the key is **present and is a string** —
+  `ValidateExpectedData` checks only `typeof payerData[key] !== 'string'`
+  (`offerManager.ts:148-152`) — so `{"refund_pointer": ""}`, one space, and `"not-a-pointer"` each
+  bought a BOLT11 from the live node. `node spike/check-empty-pointer.ts` is the reproduction and
+  it costs nothing to re-run. So the accurate claim is: **a raw `noffer` is unpayable by anything
+  that cannot supply the KEY, and the value is not checked by anybody but us.**
+
+  **The conclusion below survives, and is arguably stronger for it.** A wallet that guesses a value
+  to get past the decline produces a settled invoice carrying a pointer `spike/refund.ts` cannot
+  resolve — a `queued` journal row, reprinted every five minutes, that no human can act on, because
+  nothing on the invoice identifies who paid. That is the same failure the "make the key optional"
+  option was rejected for. The deep link is what makes the value real: `storefront/src/render.ts`
+  gates the Buy form on `isPointer` before it will request anything. The guarantee is our page's,
+  not the node's.
 - **Relaxing the offer to accept anyone is not available.** `payer_data` on an offer is a
   required-key list with no optional tier, and a key the offer does not declare is **discarded**
   rather than stored (`offerManager.ts:139-142`, `:276`). So there is no sticker that is both

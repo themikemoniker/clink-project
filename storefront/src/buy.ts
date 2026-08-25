@@ -126,32 +126,62 @@ const attempt = async (
   //
   // It never leaves this function, is never persisted, and is never logged. Grep `KEY HANDLING`
   // to audit rule 2 and this file is meant to come back with the spike scripts.
-  const sk = generateSecretKey()
-  const pk = getPublicKey(sk)
-  const convo = getConversationKey(sk, offer.pubkey)
+  // THIS FUNCTION RESOLVES; IT DOES NOT REJECT. Every network and protocol path below already
+  // honours that — one `finish()` per branch plus a deadline — and until 2026-08-24 the six lines
+  // that follow did not, which is the whole of the panel's `render.ts:521` claim.
+  //
+  // `decodeNoffer` checks TLV 0 is 32 bytes and nothing more, so a `clink_offer` carrying 32 bytes
+  // that are not a point on secp256k1 parses fine and then throws SYNCHRONOUSLY inside
+  // `getConversationKey`. That is a malformed offer in the SELLER's own listing, not a dead relay,
+  // which is why no amount of network testing found it.
+  //
+  // GREPPED BEFORE FIXING, and the Buy form is not the only caller. `spike/refund.ts`
+  // `resolvePointer` awaits `requestInvoice` for the noffer branch OUTSIDE its try/catch, so the
+  // same throw came out of `refundOversells` and killed the watcher's tick — every tick, for as
+  // long as that oversell existed, refunding nothing and journalling nothing. The refund pointer
+  // is a string a stranger typed, so producing one is free. Fixing it at the call sites would have
+  // meant fixing it at two and missing that one.
+  let sk: Uint8Array
+  let pk: string
+  let convo: Uint8Array
+  let request: Event
+  try {
+    sk = generateSecretKey()
+    pk = getPublicKey(sk)
+    convo = getConversationKey(sk, offer.pubkey)
 
-  const payload: Payload = {
-    offer: offer.offer, // noffer TLV 2
-    payer_data: payerData, // clink-offers.md:136 — an object on the request
-    expires_in_seconds: INVOICE_TTL_SECONDS,
-    description: description.slice(0, 100), // clink-offers.md:141 — max 100 chars, node enforces
+    const payload: Payload = {
+      offer: offer.offer, // noffer TLV 2
+      payer_data: payerData, // clink-offers.md:136 — an object on the request
+      expires_in_seconds: INVOICE_TTL_SECONDS,
+      description: description.slice(0, 100), // clink-offers.md:141 — max 100 chars, node enforces
+    }
+    // "Required for spontaneous/variable, optional otherwise" (clink-offers.md:134). A fixed-price
+    // offer is priced by the node; sending our own number there would only invite disagreement.
+    if (offer.priceType !== PRICE_FIXED) payload.amount_sats = expectSats
+
+    request = finalizeEvent(
+      {
+        kind: CLINK_OFFER_KIND,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ['p', offer.pubkey],
+          ['clink_version', '1'],
+        ],
+        content: encrypt(JSON.stringify(payload), convo),
+      },
+      sk,
+    )
+  } catch {
+    // Named as the seller's problem, because it is: nothing the buyer typed can cause it and
+    // nothing they can do will fix it. The error carries no detail from the exception — it would
+    // be a curve-arithmetic message, and it is not addressed to this reader.
+    return {
+      ok: false,
+      code: 0,
+      error: 'This item’s payment pointer is unusable, so no request could be built. Nothing was sent. Tell the seller.',
+    }
   }
-  // "Required for spontaneous/variable, optional otherwise" (clink-offers.md:134). A fixed-price
-  // offer is priced by the node; sending our own number there would only invite disagreement.
-  if (offer.priceType !== PRICE_FIXED) payload.amount_sats = expectSats
-
-  const request = finalizeEvent(
-    {
-      kind: CLINK_OFFER_KIND,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ['p', offer.pubkey],
-        ['clink_version', '1'],
-      ],
-      content: encrypt(JSON.stringify(payload), convo),
-    },
-    sk,
-  )
 
   const relays = [offer.relay]
   const pool = new SimplePool() // verifies every event's signature before onevent — pool.js:1132
