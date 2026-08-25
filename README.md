@@ -243,7 +243,7 @@ made, not duration.
 | | When it is done you can say | Tasks | |
 |---|---|---|---|
 | **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
-| **B** | Nothing on the critical path is unexecuted | 6, 7, 8 | ⚑ — **6 is now unblocked** |
+| **B** | Nothing on the critical path is unexecuted | ~~6~~, **7 (headless half)**, ~~8~~ | **6 and 8 done 2026-08-25**; 7 ⚑ on a human at a browser |
 | **C** | A sale you can change from your phone | M1, 11, M2, M3 | |
 | **D** | Runs unattended for a weekend | 12, **13 (refuse-to-shrink only)**, 14 | |
 | **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26, **27** | ⚑ — 27's first bullet is liftable earlier |
@@ -456,8 +456,29 @@ Code that has never executed is not a feature. Two of these have been carried ac
 slices. ~~Item 6 genuinely must wait for A~~ — **A closed on 2026-08-24, so item 6 is unblocked**;
 item 7 should already be underway.
 
-**6. Pay one real refund, end to end ⚑** *(needed 1, 2 and 4 — **all three landed 2026-08-24**)*
-**It is now safe to run.** The watcher cannot pay the same buyer twice, the kill switch cannot lie
+**~~6. Pay one real refund, end to end~~ — DONE 2026-08-25, and the two decisions it forced were
+the point of it.** A 1,000-sat oversell on `mugs` (4 settled against 3 units) refunded end to end
+to a `coinos.io` address. `payDebit`'s `{"res":"ok"}` branch has executed on the wire, so **no
+branch of the refund path is unexecuted.** Journal row terminal at `paid`, node reporting one
+outgoing payment of 1,000 sats at 16:43:31Z, balance 10,000 → 8,990 — the 1,000 back plus **10
+sats of routing fee** — and the buyer's wallet showed it, which is the half no script here can see.
+Transcript in `docs/spike-findings.md` §14.
+- **The kill switch was proven BEFORE the spend path armed, not after.** Every branch of item 2's
+  rebuild has now run: the read-back, `--npub`, and the `exit 1` on no-grant. `check-refund.ts`
+  ends by destroying the live grant on purpose, so this cost the whole re-authorisation dance —
+  which is the trade that was made deliberately rather than defaulted.
+- **The cap was re-cut 8,000 → 2,000 sats/day.** Spec §12 had asked twice and it had been
+  inherited twice; the account had walked past it to 9,000. The new grant is `debit_id 4`,
+  expiring **2026-09-24** rather than 2026-09-20.
+- **Two defects found by running it**, both fixed: `check-buy.ts --pay` could not wait for a
+  payment at all (an `unref`'d timer against a 900-second invoice expiry — findings §32), and
+  `sales-report.ts` said `Refund owed` about a refunded oversell and would have said it forever
+  (findings §33). A third, milder one is a ledger row: `--revoke` reports success on a second run.
+- **Item 9's reconcile armed correctly from cold** — no journal, zero outgoing, `refuseToStart`
+  false. Its *prompting* half is still unrun: that needs a `pending` row, and this refund never
+  produced one.
+
+Original scoping follows. **It is now safe to run.** The watcher cannot pay the same buyer twice, the kill switch cannot lie
 about having stopped, and the pointer a stranger supplies can no longer aim the watcher at a
 private address or feed it an unbounded body. Two things to know before the run:
 - **Item 9's reconcile is built but has never been exercised**, because nothing has ever written a
@@ -486,8 +507,23 @@ proves is the *payment*, not the resolution.
 - Net cost is routing fees. Record the transcript in `docs/spike-findings.md` and close the two
   ledger rows that name these branches.
 
-**7. The browser verification run ⚑**
-Slices 4 through 9 shipped markup that has **never been rendered**: the sticker sheet has never
+**7. The browser verification run ⚑ — HEADLESS HALF DONE 2026-08-25, human half open.**
+Item 8's harness rendered it, so this is now two halves with a clear line between them.
+
+**Ran, and asserted:** the index off the live relays (9 items, sold ones stamped not hidden), the
+detail view, the Buy form and its `required` refund pointer, the `@media print` block, the
+tear-off tabs, the hostname fallback, and the console on every page. **What it found:** the
+flyer's QR is deploy-time only, so everything served from `dist/` — including every screenshot in
+the submission PDF — renders eight empty tear-off boxes under a caption claiming otherwise
+(findings §34, ledger row). Two code comments still assert the superseded build-time answer.
+
+**Still needs a human at a browser, and a green suite must not be read as covering it:** the
+nos2x prompt count across the publish sequence, the publish itself (it mints a real offer and
+publishes to four public relays), the ladder download, the Deploy button, printing the sheet on
+paper, and tapping the `geo:` link. A `window.nostr` shim was declined deliberately — it holds a
+private key in a page, which `/CLAUDE.md` rule 2 reaches directly.
+
+Original scoping follows. Slices 4 through 9 shipped markup that has **never been rendered**: the sticker sheet has never
 been printed, the `@media print` block has never run, `noBuyReason` and `missingItemNote` have
 never painted, the `geo:` link has never been tapped. `docs/prompts/browser-verify-and-deploy.md`
 is the script for one sitting that covers all of it.
@@ -508,13 +544,28 @@ is the script for one sitting that covers all of it.
 - Publish one item, press Deploy, print a sticker sheet, tap a `geo:` link on a phone.
 - Count the actual signature prompts and compare against the predicted 1.
 
-**8. A smoke test so unrendered markup cannot accumulate again** *(needs 7)*
-There are 58 + 58 unit tests and none of them touch the DOM, which is exactly how five slices of
-markup reached a demo unrendered. Playwright is already installed in `shots/` — reuse it.
-- One headless run per app: load the page, assert the Buy form renders and its required field is
-  present, assert the print stylesheet hides `<main>`.
-- Wire it into `npm test` so it is not a thing anyone remembers to do.
-- Resist building a page-object framework. Two files, a handful of assertions.
+**~~8. A smoke test so unrendered markup cannot accumulate again~~ — DONE 2026-08-25.**
+`shots/storefront.smoke.test.ts` and `shots/builder.smoke.test.ts`, **11 assertions in ~11
+seconds**, wired in as `"test": "node --test *.test.ts"` in `shots/package.json`. Library-only
+`playwright` driven from `node --test` with `node:assert` — same runner, no config file, no
+reporter, no page objects, no fourth pattern. Counts went **61 + 67 + 42 → 61 + 67 + 42 + 11**.
+- **It lives in `shots/`, not in the two apps.** `capture.ts`'s header already decided this:
+  shots keeps its own package.json *"so Playwright never lands in the dependency list of the two
+  apps that have a gzip budget to defend"*. Reversing a written-down decision silently in a
+  different slice is how documented decisions rot.
+- **This item's own spec was wrong and it was nearly encoded.** "Assert the print stylesheet
+  hides `<main>`" — nothing hides `<main>`, and nothing should: it is the item grid, which
+  `style.css:235` regrids to three columns *precisely so it prints*. The real invariant is the
+  inverse — print **reveals** `.flyer-foot` and **hides** `.buy`. Measured, findings §34.
+- **The assertion that earns its place** guards `withQR`'s silent no-op: renaming the `<!--QR-->`
+  comment out of `index.html` fails no build, fails no deploy, logs nothing, and ships a flyer
+  whose every QR box is blank forever.
+- Relay console errors are **weather, not markup** — two runs produced two different shapes — so
+  those are filtered by narrow regex, printed rather than swallowed, and everything else fails.
+- ~~*(needs 7)*~~ It did not: building it is what *ran* item 7's headless half.
+
+Original scoping: there are 58 + 58 unit tests and none of them touch the DOM. *(That count was
+already stale — it was 61 + 67 + 42.)*
 
 **~~23. One real payment into the second seller's sub-account~~ — ALREADY DONE, and nothing knew.**
 This was written on 2026-08-23 as an open item, on the strength of
