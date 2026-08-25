@@ -468,11 +468,11 @@ private address or feed it an unbounded body. Two things to know before the run:
   without anybody deciding it should. `node authorize-refunds.ts --cap <n>` re-caps in one call.
 
 Every debit driven so far is one the node **refused**. That proves the cap and proves nothing
-about the happy path. `payDebit`'s `{"res":"ok"}` branch has never executed on the wire.
-`resolvePointer`'s LNURL branch is now **half** proven: on 2026-08-24 its first hop reached a real
-host — `walletofsatoshi.com`, 200 and a clean parse in 246 ms, so DNS, the address vetting, TLS
-against the hostname and the bounded read all work. Hop 2 has still never run: no real
-`payRequest` has been parsed and no callback has returned a `pr`.
+about the happy path. `payDebit`'s `{"res":"ok"}` branch has never executed on the wire —
+**it is now the only branch of the refund path that has not.** `resolvePointer`'s LNURL branch was
+proven end to end on 2026-08-24: an address at `coinos.io` returned a BOLT11 for exactly 1,000 sats
+in 1,540 ms, both hops, with `invoiceSats` matching. It cost one free call. So what item 6 still
+proves is the *payment*, not the resolution.
 - **The pointer must be an LNURL-pay address, and Phoenix is not one.** A BIP-353 address
   (`…@phoenixwallet.me`) is the same `user@domain` shape and resolves to nothing this path can
   use — item 27, measured 2026-08-24. Wallet of Satoshi, Alby, Coinos, Blink or an `noffer` all
@@ -491,10 +491,18 @@ Slices 4 through 9 shipped markup that has **never been rendered**: the sticker 
 been printed, the `@media print` block has never run, `noBuyReason` and `missingItemNote` have
 never painted, the `geo:` link has never been tapped. `docs/prompts/browser-verify-and-deploy.md`
 is the script for one sitting that covers all of it.
-- **First: resolve the contradiction in `docs/status.md`** — one paragraph says the Amber import
-  has happened, another says it is unrun. Nothing here works if the bunker is not set up.
-- Import the key into Amber, connect the builder, confirm `perms` is honoured (the residual risk
-  is Amber's "Approve basic actions" policy silently discarding it with no error).
+- ~~**First: resolve the contradiction in `docs/status.md`**~~ — **RESOLVED 2026-08-24. The
+  operator is on iOS and Amber is Android-only** (`spec.md:244`), so the import cannot have
+  happened and the "it has happened" line was false. It mattered: `spike/.dev-key.nsec` and the
+  QR were deleted in slice 9 *on that line's authority*. `export-key-qr.ts --yes` regenerates them.
+- **Pick a signer that exists on this operator's hardware.** A desktop **NIP-07 extension**
+  (Alby, nos2x) needs no phone and is the likely answer — `builder/src/signer.ts:93`, and it must
+  expose `nip44` or offer minting fails (`:96`). nsec.app also works but holds the key on
+  someone else's server, which is the custody claim §3.1 argues this project does not make.
+- **UNVERIFIED and now on the critical path:** whether Alby honours `perms` the way findings §8
+  measured Amber and nsec.app doing. Never tested — Amber was always assumed. The residual risk
+  q8 records is about *Amber's* "Approve basic actions" policy and does not transfer.
+- Connect the builder and confirm the requested `perms` survive.
 - Publish one item, press Deploy, print a sticker sheet, tap a `geo:` link on a phone.
 - Count the actual signature prompts and compare against the predicted 1.
 
