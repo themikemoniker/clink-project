@@ -495,14 +495,16 @@ is the script for one sitting that covers all of it.
   operator is on iOS and Amber is Android-only** (`spec.md:244`), so the import cannot have
   happened and the "it has happened" line was false. It mattered: `spike/.dev-key.nsec` and the
   QR were deleted in slice 9 *on that line's authority*. `export-key-qr.ts --yes` regenerates them.
-- **Pick a signer that exists on this operator's hardware.** A desktop **NIP-07 extension**
-  (Alby, nos2x) needs no phone and is the likely answer — `builder/src/signer.ts:93`, and it must
-  expose `nip44` or offer minting fails (`:96`). nsec.app also works but holds the key on
-  someone else's server, which is the custody claim §3.1 argues this project does not make.
-- **UNVERIFIED and now on the critical path:** whether Alby honours `perms` the way findings §8
-  measured Amber and nsec.app doing. Never tested — Amber was always assumed. The residual risk
-  q8 records is about *Amber's* "Approve basic actions" policy and does not transfer.
-- Connect the builder and confirm the requested `perms` survive.
+- ~~**Pick a signer that exists on this operator's hardware.**~~ **DONE 2026-08-24: nos2x**, a
+  desktop NIP-07 extension, holds the seller key and exposes `nip44`. No phone. Verified in the
+  console — `getPublicKey()` returns `fb18e881…cdb47a0` and `typeof nip44` is `"object"`.
+  **Check the pubkey after any signer change**: the first import loaded a personal key, which
+  would have published to an npub the storefront never reads while reporting success throughout.
+- **Do not carry the predicted signature count over.** `PERMS` is NIP-46 only (`signer.ts:143`);
+  `connectNip07` (`:90`) never sends it and NIP-07 has no perms handshake. So findings §8's
+  Amber/nsec.app measurements and q8's "Approve basic actions" risk describe a mechanism nos2x
+  does not use, and **the predicted 1 was a bunker-path number.** Count nos2x's actual prompts
+  across the publish sequence and record that instead — it is per-site and remembered, not granted.
 - Publish one item, press Deploy, print a sticker sheet, tap a `geo:` link on a phone.
 - Count the actual signature prompts and compare against the predicted 1.
 

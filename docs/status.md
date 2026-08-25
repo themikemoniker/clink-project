@@ -365,12 +365,35 @@ off its own hostname, so any other key publishes to a storefront nobody is looki
 |---|---|---|
 | **Amber** | Android only | **Unavailable.** Not an option on iOS, and never was |
 | **nsec.app** | no, browser | Works. But it stores the key on somebody else's server — the custody claim §3.1 spends pages arguing this project does not make. Acceptable for a verification run, **not** for the demo narrative |
-| **NIP-07 extension** (Alby, nos2x) | **no** — desktop | `builder/src/signer.ts:93`. Must expose `nip44` or offer minting fails with a named error (`:96`). **Most likely the right answer here**, and it needs no phone |
+| **nos2x** (NIP-07) | **no** — desktop | ✅ **SET UP AND VERIFIED 2026-08-24.** See below |
 
-**UNVERIFIED, and it is the next thing item 7 needs:** whether a desktop Alby extension honours
-`perms` the way `spike-findings.md` §8 measured Amber and nsec.app doing. That was never tested,
-because Amber was always assumed. Test it before planning signature counts around it — q8's
-residual risk was written about *Amber's* sign policy and does not transfer.
+**RESOLVED 2026-08-24 — nos2x is installed, holds the seller key, and exposes `nip44`.** Measured
+in the console on the live builder:
+
+```
+await window.nostr.getPublicKey()  -> "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0"
+typeof window.nostr.nip44          -> "object"
+```
+
+The pubkey is `.dev-key`'s, checked against the seller npub rather than assumed — **the first
+attempt loaded a personal key instead and would have published to an npub the storefront never
+reads, reporting success at every step.** Check `getPublicKey()` against
+`fb18e881…cdb47a0` after any signer change; it is two seconds and it is the difference between a
+verified run and a silently wrong one. Note nos2x holds **one key at a time**, so a separate Chrome
+profile for the demo is the clean separation.
+
+**A CORRECTION, because it was written into three documents on 2026-08-24 and is wrong:** "whether
+the extension honours `perms`" **does not apply to NIP-07 at all.** `PERMS` is used only on the
+NIP-46 path (`signer.ts:143`, `createNostrConnectURI`); `connectNip07` (`:90`) never sends it and
+NIP-07 has no such handshake — it calls `getPublicKey()` purely to provoke the extension's own
+prompt at connect time rather than mid-publish (`:100`). So findings §8's Amber/nsec.app `perms`
+measurements, and q8's residual risk about Amber's "Approve basic actions" policy, describe a
+mechanism nos2x does not use.
+
+**What IS unmeasured, and it is item 7's job:** how many prompts nos2x raises across the publish
+sequence. Its model is per-site and remembered, not a `perms` grant, so **the predicted count of 1
+was a NIP-46 prediction and does not transfer either.** Count what actually happens and record it;
+do not carry a number forward from the bunker path.
 
 **Item 6 needs none of this.** It is `check-buy.ts --pay` and `watch-sales.ts --refunds`, spike
 scripts reading `.dev-key` straight off disk. No signer, no browser, no phone.

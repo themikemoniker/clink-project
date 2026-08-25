@@ -79,16 +79,27 @@ it cost (the nsec and QR were deleted on its authority).
 
 So the human half of this run is **a desktop NIP-07 extension**, not a phone:
 
-- **Alby or nos2x**, `connectNip07` at `/builder/src/signer.ts:93`. No phone, which
-  means this is no longer ⚑-blocked on hardware nobody has.
-- **It must expose `nip44`** or minting an item's offer fails — `signer.ts:96` already
-  raises a named error for exactly this, because CLINK Manage (kind 21003) is NIP-44
-  encrypted. Alby does; confirm rather than assume.
-- **UNVERIFIED and it is now on this run's critical path:** whether Alby honours `perms`
-  the way `/docs/spike-findings.md` §8 measured Amber and nsec.app doing. Nobody tested
-  it, because Amber was always assumed. **q8's residual risk is about Amber's "Approve
-  basic actions" policy and does not transfer to an extension** — do not carry that
-  prediction over. Measure the actual prompt count against the predicted 1 and record it.
+- **nos2x is installed and verified (2026-08-24).** `connectNip07` at
+  `/builder/src/signer.ts:90`. No phone, so this is no longer ⚑-blocked on hardware
+  nobody has. Console on the live builder: `getPublicKey()` returns
+  `fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0` and
+  `typeof window.nostr.nip44` is `"object"` — `signer.ts:96` refuses an extension
+  without the latter, because CLINK Manage (kind 21003) is NIP-44 encrypted.
+- **RE-CHECK THE PUBKEY AFTER ANY SIGNER CHANGE.** The first import loaded a personal
+  key. The builder would have signed as that npub, published to a storefront nobody
+  reads, and reported success at every step. Two seconds of `getPublicKey()` is the
+  whole guard. nos2x holds one key at a time — a separate Chrome profile for the demo
+  keeps a personal identity out of every screenshot.
+- **`perms` DOES NOT APPLY HERE, and three documents said it did until 2026-08-24.**
+  `PERMS` is used only on the NIP-46 path (`signer.ts:143`, `createNostrConnectURI`).
+  NIP-07 has no perms handshake; `connectNip07` calls `getPublicKey()` purely to provoke
+  the extension's own prompt at connect rather than mid-publish (`:100`). So
+  `/docs/spike-findings.md` §8's Amber/nsec.app measurements and q8's "Approve basic
+  actions" residual risk describe a mechanism nos2x does not use.
+- **So the predicted prompt count of 1 is a bunker-path number and must not be carried
+  over.** What is genuinely unmeasured is how many prompts nos2x raises across the
+  publish sequence — its model is per-site and remembered, not a grant. Count what
+  happens and record that, rather than confirming a prediction made about Amber.
 - nsec.app remains the fallback and costs the custody claim `/docs/spec.md` §3.1 spends
   pages making — the key sits on somebody else's server. Acceptable to verify with,
   wrong to demo with. Say which was used.
