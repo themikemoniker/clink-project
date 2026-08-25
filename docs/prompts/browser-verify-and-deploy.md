@@ -67,9 +67,31 @@ what "verified in a browser" is going to mean here:
   piece of work and it would be our own code standing in for Amber, which is not the
   thing we want confidence about. Probably not worth it — but look before you rule it
   out, and if you rule it out, say so in the findings.
-- **Leave the extension/bunker handshake to the human run.** It is one scan and it is
-  already scheduled (`/docs/status.md`, "The bunker import"). Name it as still-unrun
+- **Leave the extension/bunker handshake to the human run.** Name it as still-unrun
   rather than quietly implying the browser run covered it.
+
+**CORRECTED 2026-08-24, and it changes what the human run is.** This section said the
+handshake was "one scan and it is already scheduled". It was not scheduled, and the scan
+is not possible: **the operator is on iOS and Amber is Android-only** (`/docs/spec.md:244`).
+`/docs/status.md` asserted the Amber import had both happened and not happened, six lines
+apart, and the "has happened" line was false — it is now corrected there, along with what
+it cost (the nsec and QR were deleted on its authority).
+
+So the human half of this run is **a desktop NIP-07 extension**, not a phone:
+
+- **Alby or nos2x**, `connectNip07` at `/builder/src/signer.ts:93`. No phone, which
+  means this is no longer ⚑-blocked on hardware nobody has.
+- **It must expose `nip44`** or minting an item's offer fails — `signer.ts:96` already
+  raises a named error for exactly this, because CLINK Manage (kind 21003) is NIP-44
+  encrypted. Alby does; confirm rather than assume.
+- **UNVERIFIED and it is now on this run's critical path:** whether Alby honours `perms`
+  the way `/docs/spike-findings.md` §8 measured Amber and nsec.app doing. Nobody tested
+  it, because Amber was always assumed. **q8's residual risk is about Amber's "Approve
+  basic actions" policy and does not transfer to an extension** — do not carry that
+  prediction over. Measure the actual prompt count against the predicted 1 and record it.
+- nsec.app remains the fallback and costs the custody claim `/docs/spec.md` §3.1 spends
+  pages making — the key sits on somebody else's server. Acceptable to verify with,
+  wrong to demo with. Say which was used.
 
 **The shim holds a private key in a page, so `/CLAUDE.md` rule 2 applies to it
 directly.** It is a test-only throwaway, it must never be importable from
@@ -145,9 +167,14 @@ first, gateway last and separately, because the gateway is a cache and not the t
 
 ## State you are inheriting
 
-- **Node running**, 90,160 inbound / 8,000 outbound. `mugs` is 1,000 sat with one
-  unit left — the cheap item if anything genuinely needs a payment. Do not spend
-  `lamp` (30,000) to test plumbing, and prefer not to spend anything at all.
+- **Node running.** ~~`mugs` is 1,000 sat with one unit left — the cheap item if anything
+  genuinely needs a payment.~~ **STALE, corrected 2026-08-24: `mugs` is SOLD OUT 3/3.**
+  `node spike/sales-report.ts` reports 4 settled invoices, 9,000 sats in the account and
+  8,946 payable after the Pub's fee. **Do not spend anything on this account without
+  reading item 6 first**: `mugs` being depleted is what makes it the oversell milestone B
+  needs, a depleted offer stays payable (findings §13.17), and there is exactly ONE such
+  oversell available with no way to make another without restocking. Burning it here would
+  cost the demo beat. Do not spend `lamp` (30,000) to test plumbing either.
 - **Two nsites are live**: the builder and a slice-5 test storefront. Both verified
   serving from four Blossom servers. URLs in `/docs/status.md`.
 - **The live seller storefront still works** and is the demo. Prefer not to touch it.
