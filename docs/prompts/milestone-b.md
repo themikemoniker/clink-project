@@ -182,7 +182,7 @@ one key at a time, so a separate Chrome profile keeps a personal identity out of
 
 Three documents said "confirm the extension honours `perms`" until 2026-08-24. **`perms` does not
 exist in NIP-07.** `PERMS` is used only on the NIP-46 path (`signer.ts:143`,
-`createNostrConnectURI`); `connectNip07` (`:90`) never sends it and calls `getPublicKey()` purely to
+`createNostrConnectURI`); `connectNip07` (`:91`) never sends it and calls `getPublicKey()` purely to
 provoke the extension's own prompt at connect rather than mid-publish (`:100`).
 
 So findings §8's Amber/nsec.app measurements and q8's "Approve basic actions" residual risk describe
