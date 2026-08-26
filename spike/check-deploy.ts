@@ -100,11 +100,12 @@ console.log(`\n#      site version ${x}\n#      published ${new Date(manifest.cr
 console.log(`\n# 2. BLOSSOM — the blobs behind the manifest\n`)
 // `allow404` matters: 5A.md:196's fallback is served WITH a 404 status, so treating a 404 as
 // "nothing" would report the one behaviour we are checking for as a failure.
-const fetchHash = async (url: string, allow404 = false) => {
+const fetchBody = async (url: string, allow404 = false) => {
   const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(30_000) }).catch(() => null)
-  if (!res || (!res.ok && !(allow404 && res.status === 404))) return null
-  return sha256(new Uint8Array(await res.arrayBuffer()))
+  if (!res || (!res.ok && !(allow404 && res.status === 404))) return { res, hash: null }
+  return { res, hash: await sha256(new Uint8Array(await res.arrayBuffer())) }
 }
+const fetchHash = async (url: string, allow404 = false) => (await fetchBody(url, allow404)).hash
 
 let mirrors = 0
 for (const server of servers) {
@@ -144,13 +145,39 @@ if (seller) {
 }
 
 // --- 4. the gateway, which is only a cache ----------------------------------------------------
+// ITEM 18. "Did my deploy land" used to get three answers here and the third one only said
+// STALE. STALE alone does not separate "wait twenty more minutes" from "waiting has already
+// failed", which is the only distinction an operator can act on. So this section now prints the
+// freshness headers the gateway ACTUALLY sends — read off the response, never assumed — and
+// turns them into one verdict.
+const fmtAge = (s: number) => {
+  const d = Math.floor(s / 86_400), h = Math.floor((s % 86_400) / 3600), m = Math.floor((s % 3600) / 60)
+  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : `${Math.max(0, Math.floor(s))}s`
+}
+
 if (!process.argv.includes('--skip-gateway')) {
   console.log(`\n# 4. GATEWAY — a cache in front of the two above, NOT the source of truth\n`)
   let stale = 0
+  let firstStale: string | null = null
+  let staleServesBytes = false
+  let headers: Headers | null = null
+  let etagIsBodyHash: boolean | null = null
   for (const p of paths) {
-    const got = await fetchHash(`${base}${p.path}`)
+    const { res, hash: got } = await fetchBody(`${base}${p.path}`)
     const ok = got === p.sha256
-    if (!ok) stale++
+    // Prefer a stale path the gateway actually ANSWERS for the escape-hatch probe below. A
+    // stale asset path 404s (the cached index.html names different filenames), and "(nothing)"
+    // busted still reads "(nothing)", which proves nothing either way.
+    if (!ok) { stale++; if (firstStale === null || (got !== null && staleServesBytes === false)) { firstStale = p.path; staleServesBytes = got !== null } }
+    headers ??= res?.headers ?? null
+    // The gateway's ETag looks like the sha256 of the bytes it served. If that holds, `curl -sI`
+    // answers the staleness question with no body at all. Asserted every run rather than
+    // believed, because a cheap check that is quietly wrong is worse than no cheap check.
+    // `W/` matters: the gateway weak-tags the SAME sha256 when it negotiates gzip, so a naive
+    // quote-strip reports a false mismatch on any client that sends `accept-encoding`. Measured
+    // 2026-08-26: identity gives `"<sha>"`, gzip gives `W/"<sha>"`, same digest, and the digest
+    // is of the DECOMPRESSED bytes.
+    if (res && got) etagIsBodyHash = (etagIsBodyHash ?? true) && res.headers.get('etag')?.replace(/^W\//, '').replace(/"/g, '') === got
     console.log(`  ${ok ? 'ok  ' : 'STALE'} ${p.path.padEnd(34)} ${ok ? 'byte-identical' : `serving ${got?.slice(0, 12) ?? '(nothing)'}, manifest says ${p.sha256.slice(0, 12)}`}`)
   }
   const missing = await fetchHash(`${base}/definitely-missing`, true)
@@ -158,11 +185,62 @@ if (!process.argv.includes('--skip-gateway')) {
   console.log(`  ${missing === want ? 'ok  ' : 'FAIL'} /definitely-missing${' '.repeat(15)} ${missing === want ? 'served our /404.html (5A.md:196)' : 'did NOT serve our /404.html'}`)
   if (missing !== want) failures++
 
-  if (stale > 0) {
-    console.log(`\n#      ${stale} path(s) stale. This is almost always the hour-long gateway cache
-#      (findings §7), not a broken deploy — sections 1 and 2 passed, which means the
-#      relays and Blossom already have the new version. Wait it out, and do not
-#      redeploy on the day of the sale.`)
+  // --- what the gateway says about its own freshness, as it said it -----------------------------
+  const hdr = (n: string) => headers?.get(n) ?? null
+  const cc = hdr('cache-control')
+  const maxAge = Number(cc?.match(/max-age=(\d+)/)?.[1] ?? NaN)
+  const ageHdr = hdr('age')
+  const publishedAgo = Date.now() / 1000 - manifest.created_at
+  console.log(`\n#      cache-control: ${cc ?? '(not sent)'}`)
+  console.log(`#      age:           ${ageHdr ?? '(NOT SENT — the gateway does not expose how much of its window is left)'}`)
+  console.log(`#      date:          ${hdr('date') ?? '(not sent)'}`)
+  console.log(`#      last-modified: ${hdr('last-modified') ?? '(not sent)'}  <- the BLOB's mtime, not the cache entry's`)
+  console.log(`#      etag:          ${etagIsBodyHash === null ? '(nothing served to compare against)' : etagIsBodyHash ? 'IS the sha256 of the bytes served — `curl -sI <url>` answers this whole section without a body' : 'is NOT the sha256 of the bytes served — do not use it as a cheap check'}`)
+  console.log(`#      manifest published ${fmtAge(publishedAgo)} ago`)
+
+  if (stale === 0) {
+    console.log(`\n#      The gateway is serving exactly what the manifest names. Nothing to wait for.`)
+  } else {
+    // `last-modified` is deliberately NOT used to date the cache entry. Measured 2026-08-26:
+    // the Blossom origin (cdn.hzrd149.com) returns the identical `last-modified` for the same
+    // blob, so it is the blob's timestamp travelling through, not when this gateway filled.
+    let verdict: string
+    if (Number.isFinite(maxAge) && ageHdr !== null && Number.isFinite(Number(ageHdr))) {
+      const left = maxAge - Number(ageHdr)
+      verdict = left > 0
+        ? `the gateway's own \`age\` says ${fmtAge(left)} of a ${fmtAge(maxAge)} window is left. WAIT IT OUT.`
+        : `the gateway's own \`age\` says its ${fmtAge(maxAge)} window lapsed ${fmtAge(-left)} ago and it is STILL stale. WAITING IS NOT THE FIX.`
+    } else if (Number.isFinite(maxAge) && publishedAgo < maxAge) {
+      verdict = `no \`age\` header, so this is inferred from the manifest: published ${fmtAge(publishedAgo)} ago, inside the ${fmtAge(maxAge)} the gateway advertises, so at most ${fmtAge(maxAge - publishedAgo)} to go. WAIT IT OUT.`
+    } else if (Number.isFinite(maxAge)) {
+      verdict = `no \`age\` header. This manifest was published ${fmtAge(publishedAgo)} ago, which is ${(publishedAgo / maxAge).toFixed(1)}x the ${fmtAge(maxAge)} the gateway advertises. The advertised window lapsed long ago and the gateway is still stale, so WAITING IS NOT THE FIX. Findings §7 recorded this at 70 minutes; it is now ${fmtAge(publishedAgo)}.`
+    } else {
+      verdict = `the gateway sent no parseable \`max-age\`, so there is no window to reason about. UNVERIFIED.`
+    }
+    console.log(`\n#      ${stale} path(s) stale — the gateway is serving bytes this manifest does not name.
+#      Sections 1 and 2 passed, so the relays and Blossom already hold the new version
+#      and the deploy itself landed.
+#
+#      HOW LONG IS LEFT: ${verdict}`)
+
+    // Item 18's second bullet: is a cache-busting query string an escape hatch? Findings §7 says
+    // no, measured at 70 minutes. Probe it live rather than citing the note, and probe the
+    // request-side `no-cache` too, because "I tried a query string" is not the same as "I tried".
+    if (firstStale) {
+      const wantStale = paths.find(p => p.path === firstStale)!.sha256
+      const bust = `${firstStale}?nocache=${x?.slice(0, 12)}`
+      const byQuery = await fetchHash(`${base}${bust}`)
+      const byHeader = await fetch(`${base}${firstStale}`, { headers: { 'cache-control': 'no-cache', pragma: 'no-cache' }, signal: AbortSignal.timeout(30_000) })
+        .then(async r => (r.ok ? await sha256(new Uint8Array(await r.arrayBuffer())) : null))
+        .catch(() => null)
+      const say = (got: string | null) => (got === wantStale ? 'DEFEATED THE CACHE' : `no — still ${got?.slice(0, 12) ?? '(nothing)'}`)
+      console.log(`\n#      ESCAPE HATCH, probed against ${firstStale}:
+#        query string  ${bust.slice(firstStale.length).padEnd(22)} ${say(byQuery)}
+#        request header cache-control: no-cache  ${say(byHeader)}
+#      A stale copy on the gateway's side is not addressable from the client. What IS
+#      addressable: every blob is content-addressed on Blossom, so section 2 above is the
+#      deploy's proof and the gateway is only the last mile.`)
+    }
   }
 }
 

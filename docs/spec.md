@@ -972,6 +972,185 @@ above is where it said it.
 - `nsyte` or `nsite-cli` for deploy during development; in-app deploy for the product
 - Watcher: small Node process, no framework
 
+### 9.1 The test stack, and the one dev dependency item 8 added (2026-08-25)
+
+Eleven `node --test` suites across the three packages, no framework, no runner config, no
+assertion library. That stays. What item 8 changed is that **two new ones open a browser**,
+because none of the 170 existing assertions could: `render.test.ts` says so in its own header ("no assertion here says `renderDetail` emits a
+`<main>`"), and five slices of markup reached a demo unrendered in exactly that gap.
+
+**`playwright@1.62.1`, devDependency, added to `/storefront` and `/builder`.** The justification
+rule in `/CLAUDE.md` is about the bundle, and this costs the bundle nothing: it is a
+devDependency, it is never imported by `src/`, and the storefront's cold JS measured **31,883
+bytes gzip before and after**. Three things made it the right call rather than a new stack:
+
+- **It was already a dependency of this repo**, in `shots/`, where it renders the submission PDF.
+  The roadmap's instruction was "reuse it, do not add a second browser automation stack", and the
+  alternative, jsdom, is not a browser and cannot answer the question item 8 asks. Both
+  assertions that matter are about **computed style under `@media print`**, which needs a real
+  engine with a real cascade. jsdom does not implement layout or `getComputedStyle` for print.
+- **It cost no download.** `playwright@1.62.1` wants chromium v1234 (Chrome for Testing
+  151.0.7922.34), which was already in `~/Library/Caches/ms-playwright` from `shots/`. Pinning the
+  exact version `shots/package-lock.json` resolves is what keeps that true. A floating range that
+  drifts to a new revision means a second multi-hundred-MB binary per app.
+- **Three packages own the dep rather than one**, which looks like duplication and is not: each
+  directory is its own npm package with no monorepo tooling (README, "Repo layout"), so a test in
+  `/storefront` can only import what `/storefront` declares. The alternative was putting the
+  product's regression tests in `shots/`, which is explicitly throwaway.
+
+**The tests are `smoke.test.ts` at each package root, and they are wired into `npm test`**
+(`node --test src/*.test.ts smoke.test.ts`) so nobody has to remember them. Both are also in
+`tsconfig.json`'s `include`, so `npm run build`'s `tsc --noEmit` type-checks them. An untyped
+test file drifts silently, which is the same class of problem item 8 exists to close.
+
+**How they get data without a relay, a node or a key, which was the whole design problem.**
+`SimplePool` verifies the signature of every event it accepts (`nostr-tools/lib/esm/index.js`,
+`this.verifyEvent(event, this.url)` in `_onmessage`), so hand-written fixture events are dropped
+before they reach the page and a fixture must be genuinely signed. Signing one in the test suite
+would mean a private key in this codebase, which **rule 2 forbids**. The way out is that the
+signatures already exist in public: `storefront/smoke-fixture.json` is the real kind 30402/30405
+events, read off the four public relays on 2026-08-25 with their real signatures, replayed in the
+browser by a ~30-line `window.WebSocket` stub that answers a `REQ` with every event and then
+`EOSE`. No key, no network at test time, ~1.4 s per app. The assertions are structural, so stock
+counts drifting on the relays does not break them; re-capture with a plain relay read if the sale
+is ever re-cut.
+
+**What these tests deliberately do not assert**, stated so nobody reads more into a green run:
+nothing submits the Buy form, so no kind 21001 is ever sent and the money path is untouched.
+Nothing asserts copy: that is `render.test.ts`'s job and duplicating it here would make both
+brittle. Nothing screenshots or compares pixels; there is no visual-regression baseline and
+adding one is not on any slice. And **nothing checks the relays against the repo**, which is the
+gap that let the live-geohash defect survive (`/docs/known-defects.md`, "Added by item 8"):
+every test in this project reads the repo, and the repo was right while the relays were wrong.
+
+**One correction to the roadmap's own wording, found by reading the code.** Item 8 says "assert
+the print stylesheet hides `<main>`". That is true of the **builder** (`builder/src/style.css`,
+`body > main { display: none }`, where everything in `<main>` is a tool and only the sticker
+sheet belongs on paper). It is false of the **storefront**, where `<main>` is the item grid and
+printing the sale is the entire point of the flyer (design.md §3); its print rule hides `.buy`,
+`.back`, `.byline` and `.missing` instead. Each app is now asserted against the rule it actually
+has.
+
+**Both tests were verified to fail before they were trusted.** Deleting `required` from
+`render.ts`'s refund-pointer field fails the storefront's form assertion; flipping
+`body > main` to `display: block` fails the builder's print assertion; and removing the
+storefront's `@media print { .buy }` block fails its third. All three were reverted and both
+suites re-run green. A smoke test nobody has watched fail is a smoke test that asserts nothing,
+and that is the same mistake as markup nobody has watched render.
+
+### 9.2 What items 16 and 17 cost, and the one number that moved (2026-08-25)
+
+Both are storefront render work and both landed against item 8's harness, which is the first time
+a slice in this project has been able to watch its own markup paint before claiming it works.
+
+**The budget moved and it is the third time, so it is written down like the other two.** The
+storefront's cold JS went **31,883 -> 32,134 bytes gzip**, +251 bytes, against the 33 KB budget
+raised in slice 9. CSS went 2,195 -> 2,214. Where the 251 bytes went: the two new sentences are
+most of it, `freshnessNote`'s unit selection is ~80 bytes, and `Intl.RelativeTimeFormat` is a
+browser global and costs **nothing**, which is the reason the phrasing is relative rather than a
+hand-rolled absolute format. Headroom left against 33,000 is 866 bytes. That is now small enough
+that the next render slice should measure before it writes, not after.
+
+**Item 16's three decisions, none of which the roadmap bullet made for us.**
+- **Relative, not absolute.** The buyer's real question is "is this fresh enough to drive over
+  for". `14:32` answers that only for someone who knows what time it is.
+- **Detail view only.** design.md §2.3 makes the index a scanning surface; nine dated rows is the
+  same noise `stockNote` already declines to print.
+- **Print-hidden**, which is the inverse of the item's own thesis and follows from it. A relative
+  phrase is frozen the moment it is printed, and a frozen "as of 2 hours ago" is a lie of exactly
+  the kind item 16 exists to stop. The flyer foot already says the true thing.
+- A sold item is not dated: stock only counts down (§7.3), so sold cannot go stale toward
+  available, and dating it would imply it might.
+
+**Item 17 reversed a judgement slice 8 wrote into a test**, and the reversal is the interesting
+part. The old test asserted the two no-offer cases were "reached two ways a buyer cannot tell
+apart **and does not need to**". The first clause holds. The second does not, because the cases
+differ in whether the **displayed price** can be trusted, and that is the only thing a buyer acts
+on. `buyableOffer` now returns `{ offer }` or `{ priceDisagrees: true }` instead of collapsing
+everything to `undefined`.
+
+It is **one bit rather than a reason code**, deliberately. A pointer we cannot decode is grouped
+with an absent one, because we do not know what it says and therefore cannot accuse the price of
+being wrong. Sold, fiat and below-floor items are refused before any price comparison happens, so
+they can never set it. `listing.test.ts` asserts all five of those non-cases by name.
+
+**And the slice left one thing unproven, which it says out loud.** The new sentence is
+unit-tested and has never rendered, because reaching it needs a signed listing whose price tag and
+`clink_offer` disagree, and minting one needs a key (rule 2). The wrapper markup is proven through
+the fiat and free branches. Ledger row in `/docs/known-defects.md`. Recording that gap rather than
+rounding it up to "done" is the habit item 8 was bought to install.
+
+### 9.3 The dead-ends sweep: items 18, 27, 13 and M3's fiat half (2026-08-26)
+
+Four roadmap items on one machine with no node, no LND, no keys and no NIP-07 signer. One spine:
+a dead end is a place the app stops and tells somebody nothing they can act on. Nothing in this
+session signed, published or spent.
+
+**The byte budget moved by 6 and nothing else touched the storefront.** 32,134 -> **32,140 bytes
+gzip**, headroom against 33 KB **866 -> 860**. The six bytes are §6.1's currency predicate being
+exported so that every file can share one copy of it; the rest of the session is in `/spike` and
+`/builder`, which have their own budgets. Measured before and after, both times.
+
+It cost 7 on the first pass and 6 after the review, and the difference is the point rather than
+noise: `render.ts` kept two literal copies of the regex the predicate replaced, in `formatPrice`
+and in `noBuyReason`, so "one predicate, exported" had gone from two readers to three. Deleting
+them is what made the change cheaper than the thing it replaced.
+
+**Item 18 — the gateway's premise was wrong, and finding that out was the item.** The README says
+the nsite gateway "serves the previous build until it lapses". Measured 2026-08-26: it does not
+lapse. The live manifest was replaced `2026-08-21T18:11:43Z` and the gateway was still serving the
+pre-replacement `index.html` **4d 9h later** — 106x the advertised `max-age=3600` — while
+`check-deploy.ts` sections 1 and 2 passed throughout. Same picture on the builder's own nsite,
+independently. Three of the four freshness headers change what the tool may honestly claim:
+`age` is **not sent at all**, so nothing can compute how much of the window is left; `last-modified`
+is the **Blossom blob's** mtime travelling through (the origin returns the identical value for the
+same hash), so dating the cache from it would have been the obvious wrong answer that looked
+right; and `etag` **is** the sha256 of the decompressed bytes, weak-tagged `W/"…"` under gzip,
+which makes `curl -sI` a complete staleness check and is asserted every run. §4 turns those into
+one verdict with four branches, all four watched render. Details and the escape-hatch probes are
+in `/docs/spike-findings.md` §7 and `/docs/runbook.md` §8.
+
+**Item 27's first bullet — a DNS answer is hostile input.** `LN_ADDRESS` cannot tell a BIP-353
+address from an LNURL-pay one, so a Phoenix buyer's refund pointer resolved to
+`/.well-known/lnurlp/…` on a domain with no A or AAAA record, and the `queued` row named DNS.
+It now looks up `<name>.user._bitcoin-payment.<domain>` when the FIRST LNURL hop fails
+**permanently**, and says the true reason. §12's money-path rules bind on a TXT lookup exactly as
+they do on a fetch: its own resolver at 2 s / 1 try, an outer **wall-clock** race (a resolver
+timeout bounds the query; this bounds the promise — the same distinction that made `req.setTimeout`
+a denial of service), 16 records, 4 KB, a single validated DNS label, and it returns a **boolean**
+because the record's value is a payment credential addressed to a person. Proven live against
+`matt@mattcorallo.com` in 392 ms and proven **not** to fire against a real LNURL host.
+`payDebit` is untouched: paying a BOLT12 offer is a feature, not a fix, and whether this
+Lightning.Pub can pay one is UNVERIFIED.
+
+**Item 13's last bullet — a set difference, not a length comparison.** §6.3's kind 30405 is a
+replacement, so the member list handed to `publishSale` IS the sale. Milestone A closed the two
+ways that list is short by accident; this is the case neither can see, a list that is short and
+correct because the seller meant it. The roadmap words it as "shorter than the one on the relays",
+and a count is a proxy: swap one item for another and the count is identical while a real listing
+is un-listed. `droppedMembers` asks which current members are missing from the replacement, names
+them, and requires an explicit tick. It sits **after** the quorum gate on purpose — below quorum
+the list is short because a relay was slow, and asking someone to confirm that is how you train
+them to tick without reading. This had to land **before** M3's delete, which retires an item BY
+dropping it from the member list.
+
+**M3's fiat half — the guard was right about the danger and wrong about the only remedy.**
+`admin.ts` refused to edit any item priced in anything but sats, so `records` at 80 MXN could not
+have its title, photo, stock or summary changed either. It now carries currency and amount through
+as a display price, and what makes that safe is that the offer cannot follow it: `publish.ts`,
+`approvalCount` and `draftFrom` each refuse independently, and `fiatCurrency` refuses every
+spelling of sats so the two paths can never meet.
+
+**And the currency comparison the item asked about was two questions.** §6.1's price tag is
+"ISO 4217-like" (99.md:41). `storefront/src/listing.ts` accepted `/^sats?$/i` and
+`builder/src/admin.ts` demanded the exact lowercase `sats`, so an item priced `sat` or `SATS` was
+**buyable and uneditable**. That disagreement is real. It is also **latent**: both live sales read
+off the relays on 2026-08-26 carry 17 listings whose price tags are exactly `sats` or `MXN`, and
+`builder/src/listing.ts` writes the literal `'sats'`, which is why three slices passed without
+anybody meeting it. Closed by construction — `isSats` is exported from the storefront and both
+files call it — and **widened rather than narrowed**, because tightening the storefront would have
+been a money-path change made to fix a builder bug.
+
 ---
 
 ## 10. Build plan — vertical slices

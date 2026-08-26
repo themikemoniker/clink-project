@@ -243,18 +243,20 @@ made, not duration.
 | | When it is done you can say | Tasks | |
 |---|---|---|---|
 | **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
-| **B** | Nothing on the critical path is unexecuted | 6, 7, 8 | ⚑ — **6 is now unblocked** |
-| **C** | A sale you can change from your phone | M1, 11, M2, M3 | |
-| **D** | Runs unattended for a weekend | 12, **13 (refuse-to-shrink only)**, 14 | |
-| **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26, **27** | ⚑ — 27's first bullet is liftable earlier |
+| **B** | Nothing on the critical path is unexecuted | ~~8~~, 6, 7 | ⚑ (**8 done 2026-08-25**); 6 and 7 both need the machine with the node and the key |
+| **C** | A sale you can change from your phone | M1, 11, M2, **M3 (delete only)** | **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
+| **D** | Runs unattended for a weekend | ~~13~~, 12, 14 | **13 closed 2026-08-26**, its last bullet with it |
+| **E** | A stranger can set it up | ~~16~~, ~~18~~, 15, 17, 19, 26, **27 (buy side only)** | ⚑ (**16 done 2026-08-25**, and 17's `noBuyReason` half with it; **18 done 2026-08-26**, and its premise was wrong); **27's first bullet done 2026-08-26** — what is left of 27 is a decision, not a fix |
 | **F** | The seller can see their own business | M4, M5 | liftable earlier |
 | **G** | A shop rather than one weekend | M6, M7, M8 | |
 | **∥** | Upstream — runs alongside, gates nothing | 20, 21, 22 | ⚑ |
 
-**Item 13 appears in two rows on purpose.** It was mis-placed: it is the same button as item 3's
-second defect, so its *quorum* and *show-the-count* bullets belong in A and landed there on
-2026-08-24, while its *refuse-to-shrink* bullet stays in D because shrinking is also what a
-legitimate delete looks like. Task IDs are stable, so it keeps its number in both places rather
+**Item 13 appeared in two rows on purpose, and both are now closed.** It was mis-placed: it is the
+same button as item 3's second defect, so its *quorum* and *show-the-count* bullets belonged in A
+and landed there on 2026-08-24, while its *refuse-to-shrink* bullet stayed in D because shrinking
+is also what a legitimate delete looks like. That last bullet **landed 2026-08-26**, and the way it
+resolved the entanglement is worth keeping: a guard that cannot tell a mistake from an intention
+must **ask** rather than decide. Task IDs are stable, so it kept its number in both places rather
 than being split into a 13a and a 13b. `docs/roadmap-review-findings.md` §13.
 
 ### Milestone A — Safe to point at a real node — **CLOSED 2026-08-24, with one ⚑ step still open**
@@ -476,7 +478,9 @@ proves is the *payment*, not the resolution.
 - **The pointer must be an LNURL-pay address, and Phoenix is not one.** A BIP-353 address
   (`…@phoenixwallet.me`) is the same `user@domain` shape and resolves to nothing this path can
   use — item 27, measured 2026-08-24. Wallet of Satoshi, Alby, Coinos, Blink or an `noffer` all
-  work. Getting this wrong burns the oversell on a refund that cannot complete.
+  work. Getting this wrong burns the oversell on a refund that cannot complete. **Since 2026-08-26
+  it at least fails legibly** — the `queued` row names BIP-353 instead of DNS — but a legible
+  failure still burns the one oversell there is, so this instruction is unchanged.
 - `mugs` is already **sold out 3/3**, and a depleted offer stays payable (findings §13.17) — so
   a single `node check-buy.ts yardsale-2026-08-mugs --pay --pointer <a wallet you control>` **is**
   the oversell. No restocking, no second payment. 1,000 sats.
@@ -507,14 +511,44 @@ is the script for one sitting that covers all of it.
   across the publish sequence and record that instead — it is per-site and remembered, not granted.
 - Publish one item, press Deploy, print a sticker sheet, tap a `geo:` link on a phone.
 - Count the actual signature prompts and compare against the predicted 1.
+- **The render-only half is DONE, 2026-08-25, on the machine with no key.** Item 8's harness
+  drives it for free, so what is left here is genuinely only the publish/deploy/sign half.
+  Verified painting against the live sale's events: `noBuyReason` on the fiat item ("Priced in
+  MXN — cash at the table…") and on the free one ("Free — just ask when you get here."),
+  `missingItemNote` on a deep link to a `d` that is not in the sale, the `geo:` link, the
+  `@media print` block in both apps, and the sticker sheet's element and `hidden` state. A
+  sold-out item correctly renders no `.buy` at all. **Five of the six surfaces this item calls
+  "never rendered" have now rendered**; the sticker sheet has still never been *printed* with
+  content in it, because building one needs a signer.
+- **And the `geo:` tap is the one that failed.** It resolves to 20.6261, -103.3930, which is 5.9 km
+  from Colonia Americana, because the corrected geohash was never published. Do not tap it on
+  a phone expecting a pass; republish first.
 
-**8. A smoke test so unrendered markup cannot accumulate again** *(needs 7)*
-There are 58 + 58 unit tests and none of them touch the DOM, which is exactly how five slices of
-markup reached a demo unrendered. Playwright is already installed in `shots/` — reuse it.
-- One headless run per app: load the page, assert the Buy form renders and its required field is
-  present, assert the print stylesheet hides `<main>`.
-- Wire it into `npm test` so it is not a thing anyone remembers to do.
-- Resist building a page-object framework. Two files, a handful of assertions.
+**~~8. A smoke test so unrendered markup cannot accumulate again~~ LANDED 2026-08-25**, and it
+did **not** need item 7 first, which is the part worth keeping. It was written on a second machine
+with no node, no keys and no signer (`docs/status.md`, "THE SECOND MACHINE"), because the DOM is
+not the money path. The two are only coupled in the sentence that said item 8 "needs 7".
+- `storefront/smoke.test.ts` and `builder/smoke.test.ts`, two files, six assertions, wired into
+  `npm test` (`node --test src/*.test.ts smoke.test.ts`) and into `tsconfig.json`'s `include` so
+  `tsc --noEmit` type-checks them. Suites are now **64** in the storefront (61 + 3) and **70** in
+  the builder (67 + 3). No page-object framework, and the run costs ~1.4 s per app.
+- `playwright@1.62.1` as a devDependency in both apps, pinned to the version `shots/` already
+  resolves so the chromium binary is shared and nothing downloads. **Zero bundle cost**: the
+  storefront's cold JS is 31,883 bytes gzip before and after. Reasoning in spec §9.1.
+- **No relay, node or key at test time.** `storefront/smoke-fixture.json` is the real signed kind
+  30402/30405 events read off the four public relays once, replayed through a `window.WebSocket`
+  stub, because `SimplePool` verifies every event and signing a fixture here would put a private
+  key in the codebase against rule 2.
+- **The roadmap bullet above was half wrong and the code said so.** `body > main { display: none }`
+  is the *builder's* print rule; the storefront must print its `<main>` (that is the flyer) and
+  hides `.buy` instead. Each app is asserted against the rule it actually has.
+- Each assertion was **watched failing** before it was trusted: delete `required`, flip
+  `body > main` to `block`, drop the storefront's `@media print { .buy }`. One failure each,
+  all reverted.
+- **It found a defect on its first run**, which is the argument for the whole item: the live sale's
+  `geo:` link points **5.9 km** from the sale. Slice 9 corrected the geohash in `spike/fixture.ts`
+  and never republished, so the relays still serve `9ewmr4z`. See `docs/known-defects.md`, "Added
+  by item 8". **Fixing it is a republish and therefore item 7's machine, not this one.**
 
 **~~23. One real payment into the second seller's sub-account~~ — ALREADY DONE, and nothing knew.**
 This was written on 2026-08-23 as an open item, on the strength of
@@ -616,12 +650,21 @@ pasted per browser and stored in `localStorage`, so a seller on a new device is 
 
 **M3. Retire an item, and edit a fiat one**
 Two holes in the edit form that have nothing to do with each other except that both are refusals.
-- **Fiat items cannot be edited at all.** `builder/src/admin.ts:116` returns `null` for any
-  currency that is not sats, so `records` at 80 MXN can never be changed — the guard exists
-  because a sats-only form would republish it as 80 sats, which is right, but "refuse forever" is
-  not the only way to be right. Carry currency and amount through the form as a display price
-  that stays unpayable.
-- **There is no delete.** "Mark sold" is the only retirement and the item stays on the storefront
+- ~~**Fiat items cannot be edited at all.**~~ **DONE 2026-08-26.** `Draft.fiat` carries currency
+  and amount through and replaces the sats price tag, so `records` republishes as
+  `["price","80","MXN"]`. What makes that safe is that **the offer cannot follow it**: `publish.ts`,
+  `approvalCount` and `draftFrom` each refuse to mint or reuse one independently, and
+  `fiatCurrency` refuses every spelling of sats so the two paths can never meet. The currency is
+  read off the listing and can never be typed. `#price` is **disabled**, not merely hidden, because
+  a `required` control in a hidden wrapper still blocks submit — asserted in chromium.
+  - **The currency comparison was two questions.** The disagreement is REAL: `admin.ts` demanded
+    the exact lowercase `sats` while `storefront/src/listing.ts` accepted `/^sats?$/i`, so an item
+    priced `sat` or `SATS` was **buyable and uneditable**. It is also **LATENT**: measured against
+    both live sales on 2026-08-26, all 17 listings write exactly `sats` or `MXN`. Closed by
+    construction — one exported `isSats`, called from both — and **widened**, not narrowed, because
+    tightening the storefront is a money-path change made to fix a builder bug. Cost: 7 bytes gzip.
+- **Still open, and it is the delete:**
+  **There is no delete.** "Mark sold" is the only retirement and the item stays on the storefront
   at stock 0 permanently. **Removing it from the kind 30405 member list hides nothing** — the
   storefront queries `{kinds: [30402, 30405], authors: [pubkey]}` and `orderBySale` only *sorts*,
   so a non-member falls to the foot of the page in `d` order and keeps rendering. That is the
@@ -629,10 +672,11 @@ Two holes in the edit form that have nothing to do with each other except that b
   stock 0 with `status: sold` (which `ladder.ts` `atStock` already produces) plus an optional
   NIP-09 kind 5 request — and the NIP-09 half, the one relays honour at their discretion, is the
   only half that can stop a page drawing it.
-- **This has to land after item 13, not before.** M3's delete works *by* shrinking the member
-  list, which is indistinguishable on the wire from item 13's slow-relay short read. Build the
-  "refuse to shrink without confirmation" guard first or M3 trips it on every legitimate delete —
-  the ledger names this collision outright.
+- ~~**This has to land after item 13, not before.**~~ **Item 13's guard landed 2026-08-26, so
+  this is unblocked.** M3's delete works *by* shrinking the member list, which is indistinguishable
+  on the wire from item 13's slow-relay short read; the confirmation path now exists, so a
+  legitimate delete has somewhere to go instead of tripping a refusal. The delete itself needs a
+  re-publish and therefore the machine with the key.
 - Do **not** delete the offer on the node when retiring an item. It takes the buyer's stored
   refund pointer with it (findings §13.17).
 
@@ -652,7 +696,7 @@ If it dies, stock goes stale and oversells stop being refunded, and nothing anyw
   missing journal, a revoked grant.
 - Do not build a monitoring service. A supervisor and a log line is the whole of it.
 
-**13. Make publishing robust against a slow relay** *(two bullets moved to A and landed there)*
+**~~13. Make publishing robust against a slow relay~~ CLOSED 2026-08-26** *(two bullets moved to A and landed there 2026-08-24; the third landed here)*
 A kind 30405 is a replacement, so `publishSale` must send every member every time — and the
 member list it is handed is whatever four relays returned on the last "Load my items". One slow
 relay and pressing "Publish my sale" quietly un-lists real items.
@@ -670,9 +714,14 @@ three bullets went to A and landed there on 2026-08-24:
   how many items are about to replace the collection, and how many relays it was read from.
   ~~Surface which relays answered, so a partial read is visible rather than inferred.~~ **DONE in
   A** as a consequence: it is the same measurement the quorum rule needs.
-- **Still here, and deliberately:** refuse to shrink a sale without an explicit confirmation.
-  Shrinking is also what a legitimate delete looks like (`docs/known-defects.md`, slice-9 section,
-  row 1), so telling those apart entangles with M3 (findings §4). It is sequenced against M3.
+- ~~**Still here, and deliberately:** refuse to shrink a sale without an explicit confirmation.~~
+  **DONE 2026-08-26, and it is a SET DIFFERENCE rather than a length comparison.** "Shorter than
+  the one on the relays" is a proxy: swap one item for another and the count is identical while a
+  real listing is un-listed. `droppedMembers` asks which current members are missing from the
+  replacement, **names them**, and requires an explicit tick. It sits **after** the quorum gate on
+  purpose — below quorum the list is short because a relay was slow, and asking a seller to confirm
+  that trains them to tick without reading. The confirmation is asserted rendering in
+  `builder/smoke.test.ts`. This is what unblocks M3's delete for the machine with the key.
 
 **14. Node liveness and the channel lease**
 - The inbound channel is a **lease and it expires 2026-11-19.** Nothing watches it. Add the check
@@ -705,30 +754,78 @@ both things a paired wallet *can* speak.
   set from the wallet UI rather than over the raw RPC.
 - If it does not: file it upstream and keep the script, documented as the one terminal step.
 
-**16. Show staleness instead of hiding it**
+**~~16. Show staleness instead of hiding it~~ LANDED 2026-08-25**
 Availability is only as fresh as the watcher, and that is inherent to a serverless storefront
-rather than a bug. Right now the page presents stale stock as current.
-- Render "availability as of <listing `created_at`>" on the item.
-- Say it out loud in the demo too. Disclosed staleness is a design property; undisclosed
+rather than a bug. The page used to present stale stock as current; it now dates it.
+- `render.ts` `freshnessNote` renders "Availability as of 5 days ago" on the item, from the
+  listing's own `created_at`. Relative rather than absolute, because the question a buyer is
+  asking is "is this recent enough to drive over for", and "14:32" only answers that if you
+  already know the time. `Intl.RelativeTimeFormat` is a browser global, so the phrasing costs no
+  bytes and the plurals are not ours to get wrong. `now` is injected, so it tests without a clock.
+- **Detail view only.** design.md §2.3 makes the index a scanning surface, and a timestamp on all
+  nine rows is the same noise `stockNote` already refuses to print. The disclosure sits in front
+  of the Buy button, which is where "is this still true" is the question being asked.
+- **A sold item is not dated.** Stock only ever counts down (the pre-signed ladder, spec §7.3),
+  so sold cannot go stale in the direction that costs a buyer a trip. Dating it would imply it
+  might come back.
+- **Print-hidden**, and that is the sharper half of the same idea: a relative phrase is frozen
+  the moment it is on paper, and therefore false. The flyer foot already carries the honest
+  version, which is that the list changes during the sale and the URL is where it changes.
+- Still worth saying out loud in the demo. Disclosed staleness is a design property; undisclosed
   staleness is a lie the page tells.
 
-**17. Remove the buyer's dead ends**
+**17. Remove the buyer's dead ends.** **The `noBuyReason` half LANDED 2026-08-25**
 ~~Wrap the Buy form's `requestInvoice` so a rejection re-enables the form and explains itself.~~
 **That bullet was item 5's, scheduled twice** (`docs/roadmap-review-findings.md` §18), and item 5
 closed it in milestone A on 2026-08-24. What is left is the half that was always separate:
-- Distinguish "this item has no offer" from "this item's offer disagrees with its price tag" —
-  `noBuyReason` currently collapses both into one unhelpful sentence.
+- ~~Distinguish "this item has no offer" from "this item's offer disagrees with its price tag" —
+  `noBuyReason` currently collapses both into one unhelpful sentence.~~ **DONE.** `listing.ts`
+  `buyableOffer` now reports one bit, `priceDisagrees`, and `noBuyReason` branches on it.
+  - **This reversed a judgement slice 8 made in writing.** Its test said the two were "reached two
+    ways a buyer cannot tell apart **and does not need to**". The first half is still true; the
+    second was wrong, and the reason is specific: the two cases differ in whether **the price on
+    the page can be trusted**, which is the one thing a buyer acts on. A disagreement means the
+    number above may be wrong and driving over with that much cash is a wasted trip. Every other
+    way to have no offer leaves the price tag standing.
+  - **One bit, not a reason code**, because exactly one distinction changes buyer behaviour. A
+    pointer we cannot decode is grouped with an absent one deliberately: we do not know what it
+    says, so we cannot accuse the price of being wrong. Sold, fiat and below-floor items are
+    refused before any price is compared, so they can never set it.
+  - **The new sentence is unit-tested and has never rendered**, which is worth naming given what
+    item 8 is for. A mismatched item needs a signed 30402 whose price tag and `clink_offer`
+    disagree; SimplePool verifies every event, and minting one needs a key (rule 2). The wrapper
+    markup is proven via the fiat and free branches, which use the identical path. Ledger row in
+    `docs/known-defects.md`.
 - **Item 27 is the same class and is worse**, because that dead end is only reached *after* the
   buyer has paid: a BIP-353 refund pointer is accepted at buy time and is useless at refund time.
+  **Still open**, and the nearest thing to this slice on the list.
 
-**18. Make redeploying safe**
-The nsite gateway sends `max-age=3600` and serves the previous build until it lapses. The current
-mitigation is a note reading "do not redeploy on demo day", which is not a mitigation.
-- Have `check-deploy.ts` report the gateway's cache age alongside the relay and Blossom state, so
-  "did my deploy land" has one answer instead of three.
-- Document the cache-busting query-string escape hatch, if one exists on the gateway.
-- Build stickers **after** deploying — they encode the site URL, so a sheet printed first points
-  at nothing.
+**~~18. Make redeploying safe~~ LANDED 2026-08-26**
+~~The nsite gateway sends `max-age=3600` and serves the previous build until it lapses.~~ **It
+does not lapse, and that is the item's finding.** Measured 2026-08-26: the live manifest was
+replaced 2026-08-21T18:11:43Z and the gateway was still serving the pre-replacement `index.html`
+**4d 9h later**, 106× the advertised `max-age`, while `check-deploy.ts` §1 and §2 passed
+throughout. Same on the builder's own nsite. The mechanism is UNVERIFIED.
+- ~~Have `check-deploy.ts` report the gateway's cache age alongside the relay and Blossom state.~~
+  **DONE**, and it reports what the gateway actually sends rather than a cache age it does not
+  have: `age` is **not sent at all**, `last-modified` is the **Blossom blob's** mtime (the origin
+  returns the identical value, so it dates the build and not the cache), `cache-control` is
+  `public, max-age=3600`, and `etag` **is** the sha256 of the decompressed bytes — weak-tagged
+  `W/"…"` under gzip, which makes `curl -sI <url>` a complete staleness check. §4 turns those into
+  one verdict: `WAIT IT OUT` while the manifest is younger than `max-age`, `WAITING IS NOT THE FIX`
+  once it is older and still stale.
+- ~~Document the cache-busting query-string escape hatch, if one exists on the gateway.~~ **It
+  does not exist, and that is now probed rather than believed.** §4 runs two probes on every stale
+  run — a query string and `cache-control: no-cache` — and both returned the same stale bytes on
+  2026-08-26. The stale copy is on the gateway's side and is not addressable from a client.
+- ~~Build stickers **after** deploying~~ **already true in the app** — `builder/src/main.ts:551`
+  says so on screen next to the sheet. What was missing was the ordering in the runbook (§8), and
+  one correction: the sticker URL is derived from the pubkey and is stable across *re*-deploys, so
+  this binds on the **first** deploy, not on every one.
+- **Candidate spun out of this, not built:** the current kind 15128 answers from `relay.damus.io`,
+  `nos.lol` and `purplepag.es` and **not** from `relay.nostr.band` or `relay.primal.net`, both in
+  `SALE_RELAYS`. §1 queries the pool as a set and cannot show this. Whether it explains the
+  gateway is UNVERIFIED.
 
 **19. A second seller who is not us ⚑**
 `docs/spec.md` §3.1 draws the line: two keys that are both ours is model 1; somebody else's sats
@@ -751,7 +848,7 @@ question in `docs/prompts/browser-verify-and-deploy.md` since then and nothing h
   move now, before anything else prints or publishes that URL.
 - Either answer is fine. Leaving it unanswered while the URL spreads is the one that is not.
 
-**27. A Phoenix buyer cannot be refunded, and nothing says so until after the sale**
+**27. A Phoenix buyer cannot be refunded** ~~, and nothing says so until after the sale~~ **— the seller is told now (2026-08-26); the BUYER still is not, and that half is a decision**
 `LN_ADDRESS.test()` cannot tell a BIP-353 address from an LNURL-pay one — they are the same
 `user@domain` shape — so `resolvePointer` builds a `/.well-known/lnurlp/…` URL for a host that
 serves no HTTPS at all. **Measured 2026-08-24**: `phoenixwallet.me` has NS records on Route 53 and
@@ -764,10 +861,15 @@ Found by running `resolvePointer` against a real address for the first time — 
 offline test could have found it: every address a test server can bind is one `isPrivateAddress`
 correctly refuses.
 
-- **Say the true reason.** When the LNURL hop fails to resolve, look up the BIP-353 TXT record; if
-  it answers, the `queued` row should read *"that is a BIP-353 address and this refund path speaks
-  LNURL-pay"* rather than naming DNS. Cheap, and it is the difference between a seller who hands
-  the money over at the table and one who files a bug. **Liftable earlier than the rest of E.**
+- ~~**Say the true reason.**~~ **DONE 2026-08-26.** `resolvePointer` looks up
+  `<name>.user._bitcoin-payment.<domain>` when the **first** LNURL hop fails **permanently** (no
+  address record, or a 4xx) and this exact address publishes a record starting `bitcoin:`. Per
+  **address**, not per domain, so a typo cannot become a BIP-353 accusation. Bounded as hostile
+  input: its own resolver at 2 s / 1 try, an outer **wall-clock** race, 16 records, 4 KB, a single
+  validated DNS label, and it returns a **boolean** so the offer is never logged. Proven live
+  against `matt@mattcorallo.com` (a published test vector) in 392 ms, and proven **not** to fire
+  against `coinos.io`. **Still open here:** a real Phoenix address cannot be tested from a machine
+  with no buyer — a made-up name is NXDOMAIN at the BIP-353 name too and correctly falls back.
 - **Then decide the buy side, which is the larger half and is a decision rather than a fix.**
   Should `isPointer` refuse a pointer the refund path cannot use? It would move the failure from
   *after* the sale to *before* it — a settled invoice stores the pointer forever and the node

@@ -16,7 +16,19 @@
 // and it should not look AI-generated either — warm paper neutrals, one accent, high contrast.
 import './style.css'
 import { SimplePool } from 'nostr-tools/pool'
-import { draftFrom, loadItems, noPublishSaleReason, reusableOffer, soldCount, type Owned } from './admin.ts'
+import {
+  draftFrom,
+  droppedMembers,
+  fiatCurrency,
+  fiatPriceReason,
+  isSats,
+  loadItems,
+  noPublishSaleReason,
+  reusableOffer,
+  saleMemberDs,
+  soldCount,
+  type Owned,
+} from './admin.ts'
 import {
   draftFromSale,
   geohashOf,
@@ -66,6 +78,10 @@ let ladder: LadderFile = {}
 // this a replacement rather than a second item, and its `noffer` is what stops an edit minting a
 // second payable offer for something already on sale (admin.ts `reusableOffer`).
 let editing: { d: string; noffer?: string } | null = null
+// M3. The currency of the item being edited, when it is not sats. Set ONLY from a listing that
+// already carried one — there is no control anywhere that types a currency — and cleared by
+// `resetItem`, or the next item authored in the same page load would silently inherit it.
+let fiatCode: string | null = null
 // Photos uploaded THIS session, which is not the same as photos on the draft: an edit carries
 // blobs that are already on Blossom and re-uploads nothing. Only this number costs signatures.
 let uploads = 0
@@ -76,6 +92,11 @@ let owned: Owned[] = []
 // real items. admin.ts `noPublishSaleReason` is the decision; these two are its inputs.
 let panelLoaded = false
 let answered: string[] = []
+// The `d`s the kind 30405 on the relays lists RIGHT NOW, which is the only thing a shrink can be
+// measured against. Set from the same read that sets `answered`, and cleared with it: a read that
+// failed cannot say anything about what is on the relays, and claiming otherwise would either
+// warn about nothing or wave a real shrink through.
+let saleMembers: string[] = []
 let notes: Notes = {}
 // SLICE 9. The sale this browser authors under. It used to be `SALE`, imported from the spike
 // fixture, which meant every seller published our neighbourhood, our geohash and an `a` tag
@@ -206,7 +227,10 @@ const readDraft = (): Draft => {
     slug: normaliseSlug($<HTMLInputElement>('#slug').value || $<HTMLInputElement>('#title').value),
     title: $<HTMLInputElement>('#title').value.trim(),
     summary: $<HTMLTextAreaElement>('#summary').value.trim(),
-    priceSats: Number($<HTMLInputElement>('#price').value),
+    priceSats: fiatCode ? 0 : Number($<HTMLInputElement>('#price').value),
+    ...(fiatCode
+      ? { fiat: { amount: Number($<HTMLInputElement>('#price-fiat-amount').value), currency: fiatCode } }
+      : {}),
     stock: Number($<HTMLInputElement>('#stock').value),
     alt: $<HTMLInputElement>('#alt').value.trim(),
     blobs: photos,
@@ -215,7 +239,9 @@ const readDraft = (): Draft => {
   // An edit keeps the offer the item already advertises — but only while the price still agrees
   // with the pointer's own TLV 4. Change the price and this returns nothing, publish.ts mints a
   // fresh offer, and the old one is left alone on the node rather than deleted (findings §13.17).
-  draft.noffer = reusableOffer(editing?.noffer, draft.priceSats)
+  // A fiat item has no sats price for a pointer's TLV 4 to agree with, so there is nothing to
+  // reuse and nothing to mint. `draftFrom` already dropped any `clink_offer` it found.
+  draft.noffer = fiatCode ? undefined : reusableOffer(editing?.noffer, draft.priceSats)
   return draft
 }
 
@@ -227,13 +253,16 @@ const refreshCost = () => {
   // An edit that reuses its offer mints nothing, and one that keeps its photos uploads nothing.
   // Both terms have to come out of the count or the number shown is a lie in the safe direction,
   // which is still a lie: a seller who is told thirty and sees four stops trusting the number.
-  const mint = !!node && draft.stock > 0 && !draft.noffer
+  // M3: never for a fiat item. `approvalCount` and publish.ts enforce the same thing, so the
+  // number shown here cannot drift from the events actually signed.
+  const mint = !!node && draft.stock > 0 && !draft.noffer && !draft.fiat
   const n = approvalCount(draft, mint, uploads)
   const units = Math.max(0, draft.stock)
   const parts = [
     ...(uploads ? [`${uploads} photo upload${uploads === 1 ? '' : 's'}`] : []),
     ...(mint ? ['1 offer'] : []),
     ...(draft.noffer ? ['0 offers — this item already has one, at this price'] : []),
+    ...(draft.fiat ? [`0 offers — priced in ${draft.fiat.currency}, so it stays cash at the table`] : []),
     '1 listing',
     `${units} availability step${units === 1 ? '' : 's'}`,
   ]
@@ -247,6 +276,29 @@ const refreshCost = () => {
 // tag. NIP-01 replaces on (kind, pubkey, d), so item one vanished from the sale, its minted offer
 // was orphaned and unwatchable, and item two silently carried item one's photo. The signer, the
 // node pointer, the price and the stock are what a seller reuses between items, so those stay.
+/**
+ * Put the price row into the currency the item actually has — M3.
+ *
+ * `#price` is DISABLED rather than merely hidden. A `required` field inside a hidden wrapper is
+ * still a constraint the form validates, and Chrome refuses to submit with "an invalid form
+ * control is not focusable" — a submit button that silently does nothing, which is worse than the
+ * refusal this feature replaces. Disabling takes it out of validation and out of the tab order in
+ * one attribute.
+ *
+ * The currency is written with textContent and comes off a listing on a relay, so it goes through
+ * `fiatCurrency` before it ever reaches here: letters only, bounded, and never a spelling of sats.
+ */
+const showFiat = (fiat: { amount: number; currency: string } | null) => {
+  fiatCode = fiat?.currency ?? null
+  $('#price-sats').hidden = !!fiat
+  $<HTMLInputElement>('#price').toggleAttribute('disabled', !!fiat)
+  $('#price-fiat').hidden = !fiat
+  $('#price-fiat-note').hidden = !fiat
+  $<HTMLInputElement>('#price-fiat-amount').toggleAttribute('disabled', !fiat)
+  $('#price-fiat-currency').textContent = fiat?.currency ?? '—'
+  $<HTMLInputElement>('#price-fiat-amount').value = fiat ? String(fiat.amount) : ''
+}
+
 const resetItem = () => {
   photos = []
   servers = []
@@ -256,6 +308,10 @@ const resetItem = () => {
     $<HTMLInputElement | HTMLTextAreaElement>(id).value = ''
   }
   $<HTMLInputElement>('#slug').toggleAttribute('readonly', false)
+  // Back to sats. Without this the next item authored in the same page load would inherit the
+  // last edited item's currency, which is the class of defect `resetItem` exists for — the
+  // second-publish-under-the-first-item's-d bug in this same function.
+  showFiat(null)
   $('#publish').textContent = 'Publish this item'
   $('#editing-note').hidden = true
   $('#cancel-edit').hidden = true
@@ -276,10 +332,21 @@ const doPublish = async (event: SubmitEvent) => {
   // taps on a phone.
   if (!draft.slug) return say('Give the item a title, or a slug.', 'bad')
   if (!draft.title) return say('Give the item a title.', 'bad')
-  if (!Number.isSafeInteger(draft.priceSats) || draft.priceSats < 0) return say('Price must be a whole number of sats.', 'bad')
+  // M3. A fiat item is validated as its own price and never as sats, and neither the sats floor
+  // nor the node's 10-sat minimum applies to it — it is not going to be invoiced at all.
+  //
+  // NOT `Number.isSafeInteger`, which is what this said for one slice: the SATS rule wearing the
+  // fiat field's label. The decision is `admin.ts` `fiatPriceReason`, out here where a test can
+  // reach it, for the same reason `noPublishSaleReason` is.
+  if (draft.fiat) {
+    const why = fiatPriceReason(draft.fiat.amount, draft.fiat.currency)
+    if (why) return say(why, 'bad')
+  } else if (!Number.isSafeInteger(draft.priceSats) || draft.priceSats < 0) {
+    return say('Price must be a whole number of sats.', 'bad')
+  }
   // Lightning.Pub hardcodes a 10-sat floor on what it will invoice (offerManager.ts:224,251 —
   // findings §13.7). Below it the node answers `code 5` and the seller never learns why.
-  if (node && draft.stock > 0 && draft.priceSats < 10) {
+  if (node && !draft.fiat && draft.stock > 0 && draft.priceSats < 10) {
     return say('A buyable item must be at least 10 sats — the node will not invoice less. Set stock to 0, or clear the node field, to list it as cash-only.', 'bad')
   }
   if (!Number.isSafeInteger(draft.stock) || draft.stock < 0 || draft.stock > 999) return say('Stock must be 0–999.', 'bad')
@@ -359,6 +426,35 @@ const refreshSaleCost = () => {
       `shown below — nostr has no edit, only replacement. Read from ${answered.length}/${RELAYS.length} relays.`
 }
 
+/**
+ * Paint item 13's confirmation, or take it away.
+ *
+ * `replaceChildren` + `textContent`, never innerHTML: the strings are `d` tags read off a relay,
+ * which is a stranger's input on a page that is about to sign something.
+ *
+ * The checkbox is cleared whenever the panel is hidden, so a tick can never survive into a later
+ * publish that the seller has not been shown. A confirmation that is still ticked from last time
+ * is not a confirmation.
+ */
+const showShrink = (dropped: string[]) => {
+  const box = $('#sale-shrink')
+  const ok = $<HTMLInputElement>('#sale-shrink-ok')
+  box.hidden = dropped.length === 0
+  if (!dropped.length) {
+    ok.checked = false
+    return
+  }
+  $('#sale-shrink-what').textContent =
+    `This would un-list ${dropped.length} item${dropped.length === 1 ? '' : 's'} that your sale lists right now:`
+  $('#sale-shrink-list').replaceChildren(
+    ...dropped.map(d => {
+      const li = document.createElement('li')
+      li.textContent = d
+      return li
+    }),
+  )
+}
+
 const doPublishSale = async (event: SubmitEvent) => {
   event.preventDefault()
   if (!signer) return
@@ -382,13 +478,34 @@ const doPublishSale = async (event: SubmitEvent) => {
     return say('That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.', 'bad')
   }
 
+  // ITEM 13'S LAST BULLET, and it sits AFTER the quorum gate on purpose. Below quorum the member
+  // list is short because a relay was slow, which is a different problem with a different answer
+  // ("Reload my items"); asking a seller to confirm un-listing items they never chose to drop
+  // would train them to tick the box. Only a list read from a majority of relays is worth
+  // comparing against.
+  const next = owned.map(o => o.item.d)
+  const dropped = droppedMembers(saleMembers, next)
+  if (dropped.length && !$<HTMLInputElement>('#sale-shrink-ok').checked) {
+    showShrink(dropped)
+    return say(
+      `Publishing this would un-list ${dropped.length} item${dropped.length === 1 ? '' : 's'}. ` +
+        `Read the box above, then tick it if you meant to.`,
+      'bad',
+    )
+  }
+
   $('#publish-sale').toggleAttribute('disabled', true)
   try {
     // EVERY member, every time. A kind 30405 is addressable, so this replaces the one on the
     // relays outright — handing it a subset silently un-lists the rest, which `orderBySale`
     // renders as strays at the foot of the storefront rather than dropping.
-    const { relaysOk } = await publishSale(signer, draft, owned.map(o => o.item.d), onStep)
+    const { relaysOk } = await publishSale(signer, draft, next, onStep)
     sale = draft
+    // The relays now list exactly what was just sent, so the next publish is measured against
+    // that and not against a list two edits old. Without this, one confirmed shrink would make
+    // every subsequent publish ask again about items that are already gone.
+    saleMembers = next
+    showShrink([])
     $('#sale-state').textContent =
       `“${draft.title}” is live on ${relaysOk}/${RELAYS.length} relays as ${draft.d}, listing ${owned.length} item(s).` +
       (draft.g ? ' Its neighbourhood is now a tappable map link on your storefront.' : '')
@@ -500,9 +617,12 @@ const renderItems = () => {
       // data: this form is sats-only and addresses this sale only.
       const why = document.createElement('span')
       why.className = 'hint'
+      // M3 removed the fiat half of this. What is left is the `d`-prefix refusal, plus a currency
+      // this form cannot carry at all — a `price` tag whose currency is not letters, which no
+      // tool of ours writes and a relay can still hand us.
       why.textContent =
-        item.price && item.price.currency !== 'sats'
-          ? `Priced in ${item.price.currency}. This form only speaks sats, and republishing it here would re-price it.`
+        item.price && !isSats(item.price.currency) && !fiatCurrency(item.price.currency)
+          ? `Priced in something this form cannot carry, so republishing it here would change what it says.`
           : `Published outside “${sale.d}”, so this form cannot address it without orphaning the original.`
       row.append(why)
     }
@@ -530,8 +650,13 @@ const loadPanel = async (withNotes = true) => {
   $('#refresh-items').toggleAttribute('disabled', true)
   try {
     $('#items-state').textContent = 'reading the relays…'
-    const loaded = await loadItems(pool, RELAYS, await signer.getPublicKey())
+    const pubkey = await signer.getPublicKey()
+    const loaded = await loadItems(pool, RELAYS, pubkey)
     owned = loaded.items
+    // What the sale on the relays lists today. A fresh read also means any warning the seller was
+    // looking at is about a comparison that no longer holds, so it goes away with the old list.
+    saleMembers = saleMemberDs(loaded.sale?.itemRefs, pubkey)
+    showShrink([])
     // Both of these gate `#publish-sale`. `answered` is which relays actually contributed an
     // event, not which were asked — see admin.ts `loadItems`.
     answered = loaded.answered
@@ -561,6 +686,8 @@ const loadPanel = async (withNotes = true) => {
     // rather than being left at whatever the last successful load said.
     panelLoaded = false
     answered = []
+    saleMembers = []
+    showShrink([])
     refreshSaleCost()
     $('#items-state').textContent = ''
     say(err instanceof Error ? err.message : String(err), 'bad')
@@ -584,7 +711,8 @@ const editItem = (own: Owned, draft: Draft, markingSold = false) => {
   $<HTMLInputElement>('#slug').value = draft.slug
   $<HTMLInputElement>('#title').value = draft.title
   $<HTMLTextAreaElement>('#summary').value = draft.summary
-  $<HTMLInputElement>('#price').value = String(draft.priceSats)
+  showFiat(draft.fiat ?? null)
+  if (!draft.fiat) $<HTMLInputElement>('#price').value = String(draft.priceSats)
   $<HTMLInputElement>('#stock').value = String(draft.stock)
   $<HTMLInputElement>('#alt').value = draft.alt
   $<HTMLInputElement>('#photo').value = ''

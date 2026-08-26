@@ -83,8 +83,14 @@ export const publish = async (
   // the buyer's stored refund pointer, which `GetUserOfferInvoices` is the only reader of
   // (findings §13.17). Enforced here rather than at the call site so there is no version of
   // this that forgets.
-  let noffer: string | undefined = draft.stock > 0 ? draft.noffer : undefined
-  if (!noffer && node && draft.stock > 0) {
+  //
+  // M3: A FIAT ITEM NEVER MINTS. `mintOffer` prices in sats, so minting for an item whose price
+  // tag reads `80 MXN` would put a payable 80-SAT offer behind it — the exact 99.99% discount the
+  // old "fiat cannot be edited at all" guard existed to prevent. Carrying the price through the
+  // form is only safe because the offer cannot follow it. Enforced here and in `approvalCount`,
+  // so the count shown and the events signed cannot drift apart.
+  let noffer: string | undefined = draft.stock > 0 && !draft.fiat ? draft.noffer : undefined
+  if (!noffer && node && draft.stock > 0 && !draft.fiat) {
     onStep({ kind: 'offer', text: 'Minting the offer on your node over CLINK Manage…' })
     const result = await mintOffer(signer, node, d, draft.priceSats)
     if (!result.ok) {

@@ -5,7 +5,7 @@
 // typed rather than parsed. That is a property of h() below, not of a sanitiser we have to
 // remember to call — which is why there is no sanitiser here.
 import { requestInvoice, type Outcome } from './buy.ts'
-import { srcset, type Item, type Money, type Sale } from './listing.ts'
+import { isSats, srcset, type Item, type Money, type Sale } from './listing.ts'
 import { isPointer, MIN_PAYABLE_SATS } from './offer.ts'
 
 // The working name, settled in slice 2. It appears twice and quietly: as the masthead when a
@@ -36,7 +36,7 @@ const h = <K extends keyof HTMLElementTagNameMap>(
 export const formatPrice = (price: Money | undefined): string | undefined => {
   if (!price) return undefined
   if (price.amount === 0) return 'Free'
-  if (/^sats?$/i.test(price.currency)) return `${price.amount.toLocaleString('en-US')} sats`
+  if (isSats(price.currency)) return `${price.amount.toLocaleString('en-US')} sats`
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
@@ -244,6 +244,7 @@ export const renderFlyerFoot = (sale: Sale | undefined, siteUrl: string): HTMLEl
 export const renderDetail = (item: Item): HTMLElement => {
   const price = formatPrice(item.price)
   const note = stockNote(item)
+  const freshness = freshnessNote(item)
   return h(
     'main',
     { class: 'detail' },
@@ -259,6 +260,11 @@ export const renderDetail = (item: Item): HTMLElement => {
         price && h('span', { class: 'price' }, price),
         note && h('span', { class: 'stock' }, note),
       ),
+      // ITEM 16, and the detail view ONLY. design.md §2.3 makes the index a scanning surface and
+      // this view the one where a buyer decides; a timestamp on all nine index rows is the same
+      // noise `stockNote` already refuses to print. The decision is made here, in front of the
+      // Buy button, which is where "is this still true" is the question being asked.
+      freshness && h('p', { class: 'freshness' }, freshness),
       // NIP-99 99.md:21 says .content is markdown. We render it as text: a markdown parser is
       // both bytes we do not have and an injection surface pointed straight at hostile input.
       // ponytail: revisit if sellers actually write markdown — a renderer that emits DOM nodes
@@ -282,12 +288,15 @@ export const renderDetail = (item: Item): HTMLElement => {
 // is therefore already testable, and was untested only because it was private. Exporting four
 // names cost nothing and bought ./render.test.ts.
 //
-// What is still untested is the markup itself: renderIndex, renderDetail and renderBuy build DOM
-// and there is no assertion in this repo about what they build. That is the honest boundary. It
-// needs jsdom (~2 MB of devDependency) or a browser, the browser is a session that already exists
-// (/docs/prompts/browser-verify-and-deploy.md), and the one bug this file has actually shipped —
-// LN_ADDRESS rejecting two-character second-level domains — was a decision, not markup, and is
-// now covered in offer.test.ts. Revisit if a markup bug ever ships.
+// ~~What is still untested is the markup itself: renderIndex, renderDetail and renderBuy build
+// DOM and there is no assertion in this repo about what they build.~~ **CLOSED BY ITEM 8,
+// 2026-08-25.** `../smoke.test.ts` loads the built page in headless chromium and asserts the
+// markup and the computed print styles. The prediction in the deleted text was that this would
+// cost jsdom (~2 MB of devDependency) or a browser session driven by a person; it cost neither.
+// Playwright was already a devDependency in `shots/` and its chromium was already on disk, and
+// the relay read is stubbed from captured signed events, so the whole thing runs offline in
+// ~1.4 s inside `npm test`. The boundary itself survives and is still the right one: decisions
+// are tested in render.test.ts, markup in smoke.test.ts.
 // design.md §1: "The Buy button is exempt from the metaphor. It must read as a modern, obviously
 // tappable control. This is the moment money moves; clarity beats the bit."
 //
@@ -389,17 +398,70 @@ export const noBuyReason = (item: Item): string | undefined => {
   // is an HTTP call to somebody else's server and /CLAUDE.md rule 1 forbids one (spec §6.1). So a
   // fiat price is a real price that this page genuinely cannot take, and saying which currency it
   // is stops the sentence reading like a bug.
-  if (!/^sats?$/i.test(price.currency)) {
+  if (!isSats(price.currency)) {
     return `Priced in ${price.currency.toUpperCase()} — cash at the table. This page pays over Lightning, in sats, and it has no way to convert.`
   }
   // Lightning.Pub will not invoice below 10 sats (offer.ts MIN_PAYABLE_SATS), so a Buy button
   // here would only ever answer `code: 5`.
   if (price.amount < MIN_PAYABLE_SATS) return 'Too small for a Lightning invoice — cash at the table.'
-  // Priced in sats, above the floor, and still nothing payable: the listing carries no usable
-  // `clink_offer`, or it carries one whose TLV 4 price disagrees with the price tag, which
-  // `buyableOffer` refuses on purpose. A buyer cannot act on the difference and does not need to;
-  // the seller-facing diagnosis is `node spike/check-admin.ts`.
+  // ITEM 17, AND IT REVERSES A JUDGEMENT SLICE 8 MADE. These two used to share one sentence, on
+  // the reasoning that "a buyer cannot act on the difference and does not need to". The first
+  // half is true and the second is not, because the two cases differ in whether the PRICE ON THE
+  // PAGE can be trusted, and that is the one thing a buyer acts on:
+  //
+  //   - a price disagreement means the number above may be wrong, so turning up with that many
+  //     pesos in your pocket is a wasted trip;
+  //   - every other way to have no offer leaves the price tag standing, so the number is right
+  //     and only the Lightning path is missing.
+  //
+  // Neither branch names a tag, a pointer or CLINK. The seller-facing diagnosis is still
+  // `node spike/check-admin.ts`, which is where the difference is actionable in the other
+  // direction.
+  //
+  // ONE HONEST GAP, RECORDED RATHER THAN GLOSSED. The sentence below is covered by
+  // render.test.ts and has NEVER RENDERED IN A BROWSER, which is the exact class of thing item 8
+  // exists to catch. It cannot be smoke-tested from the live fixture: producing a mismatched item
+  // means a signed kind 30402 whose `price` tag and `clink_offer` disagree, SimplePool verifies
+  // every event it accepts, and minting one needs a key this codebase must not hold (rule 2). The
+  // WRAPPER is proven: `renderBuy` builds the same `.buy-none` section for the fiat and free
+  // branches, and smoke.test.ts renders both, so what is unproven is this string and nothing
+  // structural. Closing it properly means a mismatched item on a real sale, which is the machine
+  // with the key. See /docs/known-defects.md.
+  if (item.priceDisagrees) {
+    return 'The price here does not match what the seller’s payment code says, so this page will not take money for it. Ask the seller what it costs — the number above may be out of date.'
+  }
   return 'Not payable on this page. Ask the seller — they may take cash, or have it listed elsewhere.'
+}
+
+/**
+ * ITEM 16. When this item's availability was last published, in the buyer's terms.
+ *
+ * Availability on a serverless storefront is only ever as fresh as the seller's watcher, and
+ * /docs/spec.md §579 calls that "the honest consequence" and says to say it out loud in the demo.
+ * Saying it only in the demo is the part this closes: the page itself presented stale stock as
+ * current, which is the one lie a static page can tell without anybody writing it.
+ *
+ * Relative rather than absolute, because the question a buyer is actually asking is "is this
+ * recent enough to drive over for", and "14:32" only answers that if you know what time it is.
+ * `Intl.RelativeTimeFormat` is in the browser already, so the phrasing costs no bytes and is not
+ * ours to get wrong.
+ *
+ * `now` is injected so this is testable without a clock; callers pass nothing.
+ *
+ * Returns undefined for a sold item, because stock only ever counts down (the pre-signed ladder,
+ * spec §7.3), so "sold" cannot go stale in the direction that costs a buyer a trip.
+ */
+const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+
+export const freshnessNote = (item: Item, now: number = Date.now()): string | undefined => {
+  if (item.sold) return undefined
+  const seconds = Math.round(item.created_at - now / 1000)
+  // A clock skewed forward would otherwise read "in 3 minutes", which is not a thing a buyer can
+  // do anything with. Treat anything at or ahead of now as current.
+  if (seconds >= -60) return 'Availability as of just now'
+  const [unit, per]: [Intl.RelativeTimeFormatUnit, number] =
+    -seconds < 3_600 ? ['minute', 60] : -seconds < 86_400 ? ['hour', 3_600] : ['day', 86_400]
+  return `Availability as of ${RELATIVE.format(Math.round(seconds / per), unit)}`
 }
 
 export const renderBuy = (item: Item): HTMLElement | false => {

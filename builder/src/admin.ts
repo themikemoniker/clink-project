@@ -29,6 +29,7 @@ import { decodeNoffer } from '../../storefront/src/offer.ts'
 import {
   LISTING_KIND,
   SALE_KIND,
+  isSats,
   orderBySale,
   parseListings,
   parseSales,
@@ -100,20 +101,94 @@ const serverOf = (url: string): string => url.slice(0, url.lastIndexOf('/'))
  * Returns null for an item this form cannot faithfully republish, and both cases are real:
  *   * A `d` outside this sale's prefix. Republishing it under `listingD(slug)` would address a
  *     DIFFERENT event, leaving the original orphaned on the relays and unowned by any ladder.
- *   * A fiat price. Sats only, everywhere in this project — there is no conversion and no
- *     oracle (/docs/spec.md §6.1) — so republishing `80 MXN` through a sats-only form would
- *     write `80 sats`, a silent 99.99% discount on an item somebody might then buy.
+ *   * A currency this form cannot carry: anything `fiatCurrency` refuses, which is a `price` tag
+ *     whose currency is not 1–12 plain letters. No tool of ours writes one and a relay can still
+ *     hand us one, and republishing it would change what the listing says.
+ *
+ * A FIAT PRICE IS NO LONGER ONE OF THEM (M3), and read the body, because this docblock said the
+ * opposite for one slice after the code stopped agreeing. It used to refuse every non-sats
+ * currency outright, on the reasoning that a sats-only form would republish `80 MXN` as `80 sats`
+ * and hand somebody a 99.99% discount. That reasoning was right about the danger and wrong that
+ * refusing forever was the only way out: the price and the currency are carried through, no
+ * offer is minted, and the item stays exactly as unpayable as it was.
  *
  * `saleD` was the spike fixture's `SALE.d` until slice 9. It is now the seller's own — see
  * ./sale.ts `saleD`, and note that this function is precisely why the sale's `d` is not a form
  * field: change it and every item the seller has stops being editable, in silence.
  */
+// Re-exported so main.ts asks ONE module about currency. admin.ts is already the seam between
+// the builder and the storefront's parser; a second import path to the same predicate is how two
+// of them drift apart, which is the defect M3 found in the first place.
+export { isSats } from '../../storefront/src/listing.ts'
+
+/**
+ * A currency this form may carry through, or null.
+ *
+ * THE ONE THING THAT MUST NOT HAPPEN is a "fiat" price that is really sats. `listingTags` writes
+ * `draft.fiat` straight into the `price` tag, and `publish.ts` mints nothing for a fiat draft — so
+ * a currency that the storefront reads as sats would produce a listing priced N sats with no
+ * offer, which is merely broken, and one round-trip later a seller could put an offer behind a
+ * number that was never sats. Refusing every spelling of sats here is what keeps the two paths
+ * from ever meeting. `isSats` is the storefront's own predicate, imported rather than restated.
+ *
+ * Otherwise: ISO 4217 is three letters, but 99.md:41 says "ISO 4217-like" and the wild is wider
+ * than that, so this bounds rather than enumerates. Letters only, 1–12 of them — enough for
+ * anything real, and short enough that a relay cannot hand the form a paragraph.
+ */
+export const fiatCurrency = (raw: string | undefined): string | null => {
+  const code = (raw ?? '').trim()
+  if (!/^[A-Za-z]{1,12}$/.test(code)) return null
+  return isSats(code) ? null : code
+}
+
+/**
+ * Why this fiat amount cannot be published, in the seller's terms, or `undefined` if it can.
+ *
+ * HERE RATHER THAN INLINE IN `main.ts` FOR THE REASON `noPublishSaleReason` IS: a check written
+ * into the submit handler is a check with no test on it, and this one was wrong for a slice
+ * without anything noticing. The first pass at M3 validated a fiat amount with
+ * `Number.isSafeInteger`, which is the SATS rule wearing the fiat field's label. A sat is whole
+ * by definition. 12.50 USD and 80.50 MXN are ordinary prices, `parsePrice` in
+ * storefront/src/listing.ts has always read them, and `records` at 80 MXN only slipped through
+ * because it happens to be round. Every fractional listing in the wild was editable and then
+ * unpublishable, and the one way out the form offered was to change what the item costs.
+ *
+ * THE BOUND IS `parsePrice`'S BOUND, deliberately: a price this form accepts has to be a price
+ * the page can read back, and the storefront refuses anything non-finite, negative, or over 1e15.
+ * `String(amount)` is what reaches the tag and `Number()` is what reads it, and those round-trip
+ * to the same value for everything in range, exponent notation included.
+ *
+ * Zero is legal and is not an oversight: `boxes` is `["price","0","MXN"]` on the live sale, and
+ * the storefront draws it as "Free". What must not reach here is a BLANK field, which reads as
+ * `Number('')` and is also 0: that is caught in the markup by `required` on `#price-fiat-amount`,
+ * because the difference between "this is free" and "I cleared the box" is not visible from the
+ * number and is not this function's to guess.
+ */
+export const fiatPriceReason = (amount: number, currency: string): string | undefined =>
+  Number.isFinite(amount) && amount >= 0 && amount <= 1e15
+    ? undefined
+    : `Give a price in ${currency}, as a number, at or above zero.`
+
 export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null => {
   const prefix = `${saleD}-`
   if (!item.d.startsWith(prefix)) return null
   const slug = item.d.slice(prefix.length)
   if (!slug) return null
-  if (item.price && item.price.currency !== 'sats') return null
+  // M3. This used to be `if (item.price && item.price.currency !== 'sats') return null`, so
+  // `records` at 80 MXN could never be edited at all. Two things were wrong with it and they are
+  // separable:
+  //
+  //   * IT COMPARED ON THE EXACT LOWERCASE STRING while storefront/src/listing.ts accepted
+  //     `/^sats?$/i`. An item priced `sat` or `SATS` was therefore BUYABLE and NOT EDITABLE.
+  //     Measured against both live sales on 2026-08-26: all 17 listings write exactly `sats` or
+  //     `MXN`, so this was latent, not live — and it is closed by construction now, because both
+  //     files call the same exported `isSats`.
+  //   * IT REFUSED FOREVER, which was right about the danger and wrong that refusing was the only
+  //     way out. A sats-only form would have republished 80 MXN as 80 sats, a silent 99.99%
+  //     discount on something somebody might then buy. Carrying the currency and the amount
+  //     through as a display price that never mints an offer is the other way to be right.
+  const fiat = item.price && !isSats(item.price.currency) ? fiatCurrency(item.price.currency) : null
+  if (item.price && !isSats(item.price.currency) && !fiat) return null
 
   const blobs = [...item.images, ...item.thumbs].flatMap(p => blobFrom(p) ?? [])
   const hero = blobs[0]
@@ -125,14 +200,18 @@ export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null
     slug,
     title: item.title,
     summary: item.summary ?? '',
-    priceSats: item.price?.amount ?? 0,
+    priceSats: fiat ? 0 : (item.price?.amount ?? 0),
+    ...(fiat ? { fiat: { amount: item.price!.amount, currency: fiat } } : {}),
     // `stock: undefined` means the seller never said, and `status` carries the answer instead
     // (storefront/src/listing.ts) — which for a yard sale means one unit, then gone.
     stock: item.stock ?? (item.sold ? 0 : 1),
     alt: imetaValues(event, 'alt')[0] ?? '',
     blobs,
     servers,
-    noffer: event.tags.find(t => t[0] === 'clink_offer')?.[1],
+    // A fiat item's `clink_offer`, if some other tool wrote one, is not reusable: `reusableOffer`
+    // measures a pointer's own TLV 4 against a SATS price, and this item has none. Dropping it
+    // here is what keeps "unpayable" true through an edit.
+    noffer: fiat ? undefined : event.tags.find(t => t[0] === 'clink_offer')?.[1],
   }
 }
 
@@ -175,8 +254,14 @@ export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null
  *
  * QUORUM IS A MAJORITY of the configured relays. Not all of them — one permanently unreachable
  * relay would then block a seller forever — and not one, which is the reading that drops items.
- * Item 13's third bullet, refusing to SHRINK a sale, deliberately stays in milestone D: shrinking
- * is also what a legitimate delete looks like, and telling those apart entangles with M3.
+ *
+ * SHRINKING IS NOT DECIDED HERE, and this paragraph used to say it was not decided anywhere.
+ * Item 13's last bullet landed as `droppedMembers` below, one function down, and the reason it is
+ * not another branch of this function is the reason this docblock gave for deferring it: a shrink
+ * is also exactly what a legitimate delete looks like, so nothing can tell a mistake from an
+ * intention. A guard that cannot tell them apart must ask rather than refuse, so it is an explicit
+ * confirmation in `main.ts` `doPublishSale` and it sits AFTER this gate. Below quorum the member
+ * list is short because a relay was slow, which has a different answer.
  */
 export const noPublishSaleReason = (state: {
   signedIn: boolean
@@ -194,6 +279,52 @@ export const noPublishSaleReason = (state: {
     return `Only ${state.answered} of ${state.relays} relays answered, so this list may be short. Press “Reload my items”.`
   }
   return undefined
+}
+
+/**
+ * The `d` of every item the sale on the relays currently lists.
+ *
+ * `itemRefs` are `30402:<pubkey>:<d>` (Gamma spec.md:221, and `orderBySale` builds them in that
+ * exact shape). A ref that is not this seller's own 30402 is SKIPPED rather than counted: the
+ * builder only ever publishes this seller's items, so a foreign ref could never be preserved and
+ * warning about one would be a warning nobody can clear. That is a known limit rather than an
+ * oversight — nothing this app writes can produce one.
+ */
+export const saleMemberDs = (itemRefs: string[] | undefined, pubkey: string): string[] => {
+  if (!itemRefs?.length || !/^[0-9a-f]{64}$/.test(pubkey)) return []
+  const prefix = `${LISTING_KIND}:${pubkey}:`
+  const out: string[] = []
+  for (const ref of itemRefs) {
+    if (typeof ref !== 'string' || !ref.startsWith(prefix)) continue
+    // Everything after the second colon, so a `d` that itself contains one survives the split.
+    const d = ref.slice(prefix.length)
+    if (d && !out.includes(d)) out.push(d)
+  }
+  return out
+}
+
+/**
+ * Which members this publish would un-list — item 13's last bullet, and it is a SET difference
+ * rather than a length comparison.
+ *
+ * The roadmap words it as "the list I am about to publish is shorter than the one on the relays",
+ * and a count is a proxy for the thing that actually costs a seller something. Swapping one item
+ * for another leaves the count identical and still un-lists a real listing, so the count would
+ * wave it through. What matters is whether a member that IS in the sale right now is missing from
+ * the list about to replace it, and that is what this returns.
+ *
+ * IT RETURNS THE `d`s, NOT A BOOLEAN, because the confirmation has to name them. "This will
+ * un-list 3 items" is a warning a seller cannot check; naming them is a warning they can.
+ *
+ * WHY THIS IS NOT A REFUSAL. Shrinking is also exactly what a legitimate delete looks like — M3's
+ * retirement works BY removing a member — so nothing here can tell a mistake from an intention.
+ * A guard that cannot tell them apart must ask rather than decide, which is why this is an
+ * explicit confirmation and not another `noPublishSaleReason` branch. Building it here is what
+ * lets M3's delete land later without tripping a rule on every legitimate use.
+ */
+export const droppedMembers = (members: string[], next: string[]): string[] => {
+  const keep = new Set(next)
+  return members.filter(d => !keep.has(d))
 }
 
 export const reusableOffer = (noffer: string | undefined, priceSats: number): string | undefined => {

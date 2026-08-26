@@ -13,7 +13,9 @@ import { test } from 'node:test'
 import { bech32 } from '@scure/base'
 import { decodeNdebit, k1For } from './ndebit.ts'
 import {
+  bip353Name,
   getJson,
+  hasBip353,
   inFlightGuard,
   isPrivateAddress,
   lnurlpUrl,
@@ -552,4 +554,95 @@ test('an oversell with no journal row but a matching payment has evidence to blo
   assert.equal(matchingPayments([op({ amount: 800, paidAtUnix: settledAt + 90 })], 1_000, settledAt).length, 0)
   // Nothing to block on is the ordinary case, and it must not read as evidence.
   assert.equal(matchingPayments([], 1_000, settledAt).length, 0)
+})
+
+// --- item 27, first bullet (2026-08-26): say the true reason ---------------------------------
+//
+// `LN_ADDRESS` cannot tell a BIP-353 address from an LNURL-pay one, so a Phoenix buyer's refund
+// pointer resolves to `https://phoenixwallet.me/.well-known/lnurlp/…` against a domain with no A
+// or AAAA record at all. The `queued` row used to name DNS, which sends a seller to debug a
+// hostname that was never wrong.
+//
+// WHAT THESE TESTS CANNOT REACH is `resolvePointer`'s branch itself: `fetchHop` is not injectable
+// (only `getJson`'s hop is), and every host a test server can bind is one `isPrivateAddress`
+// correctly refuses. That branch was driven live instead, and the transcript is in the commit —
+// `matt@mattcorallo.com`, a published BIP-353 test vector, returns the new message in 333 ms while
+// `nobodyatall@coinos.io` (a real LNURL host) does not. What is provable here is the name we build
+// and every bound on the answer, which is the half that hostile input reaches.
+
+test('a Lightning address becomes the BIP-353 name recorded on 2026-08-24, and is folded to lower case', () => {
+  assert.equal(bip353Name('matt@mattcorallo.com'), 'matt.user._bitcoin-payment.mattcorallo.com')
+  assert.equal(bip353Name('Bob@Example.COM'), 'bob.user._bitcoin-payment.example.com')
+})
+
+test('the name half must be ONE ordinary DNS label, because the query is a different zone otherwise', () => {
+  // `LN_ADDRESS`'s name half is `[^\s@]{1,64}`: it admits dots, slashes and unicode. `lnurlpUrl`
+  // survives that with `encodeURIComponent`; a DNS name has no such escape, so `a.b@host` would
+  // ask about `a.b.user._bitcoin-payment.host` — a name the address does not name. Refuse instead.
+  assert.equal(bip353Name('a.b@example.com'), null)
+  assert.equal(bip353Name('../../admin@example.com'), null)
+  assert.equal(bip353Name('bob_smith@example.com'), null)
+  assert.equal(bip353Name('-bob@example.com'), null) // a label may not start with a hyphen
+  assert.equal(bip353Name('bob-@example.com'), null)
+  assert.equal(bip353Name('b'.repeat(64) + '@example.com'), null) // over one label's 63 bytes
+  assert.equal(bip353Name('not an address'), null)
+  assert.equal(bip353Name('noffer1qszqqqqhwqpszqq'), null)
+})
+
+test('an assembled name over 253 bytes is refused rather than sent', () => {
+  const domain = `${'d'.repeat(60)}.${'e'.repeat(60)}.${'f'.repeat(60)}.${'g'.repeat(60)}.com`
+  assert.equal(`bob.user._bitcoin-payment.${domain}`.length > 253, true)
+  assert.equal(bip353Name(`bob@${domain}`), null)
+})
+
+test('a record starting with bitcoin: is a BIP-353 address, and its chunks concatenate with nothing between', async () => {
+  // Verified live 2026-08-26: `matt.user._bitcoin-payment.mattcorallo.com` arrives as 2 chunks
+  // joining to 490 bytes. RFC 1035 character-strings cap at 255, so any real record is split, and
+  // joining with a separator would put a gap inside the URI.
+  const split = [['bitcoin:bc1qztwy6xen3zdtt7z0vrgapmjtfz8acjkfp5fp7l?lno=lno1zr5qyugq', 'gskrk70kqmuq7v3dnr2']]
+  assert.equal(await hasBip353('matt@mattcorallo.com', async () => split), true)
+  assert.equal(await hasBip353('bob@example.com', async () => [['BITCOIN:?lno=x']]), true)
+  // Split MID-PREFIX, which is the only shape that fails if the chunks are joined with anything
+  // at all or if only the first is read. `['bitcoin:…', '…']` would pass either mistake.
+  assert.equal(await hasBip353('bob@example.com', async () => [['bitc', 'oin:?lno=x']]), true)
+})
+
+test('the zone\'s own rule: a record that does not start with bitcoin: is ignored', async () => {
+  // `mattcorallo.com` publishes exactly this as a second TXT record at the same name, which is
+  // the rule stated by the zone itself rather than by us.
+  const decoy = "as long as it doesn't start with bitcoin:, other records should be ignored"
+  assert.equal(await hasBip353('bob@example.com', async () => [[decoy]]), false)
+  assert.equal(await hasBip353('bob@example.com', async () => [['lno1zrxq8pjw7qjlm68mtp7e3yvxee']]), false)
+  assert.equal(await hasBip353('bob@example.com', async () => [[]]), false)
+  assert.equal(await hasBip353('bob@example.com', async () => []), false)
+})
+
+test('a DNS answer is hostile input: an oversized one is refused rather than scanned', async () => {
+  // The bound is 4 KB across the whole answer. A resolver that hands back megabytes is either
+  // compromised or being used to stall the watcher, and either way there is no payment record in
+  // there. Note the `bitcoin:` record is LAST, so a bound that is not actually enforced would
+  // reach it and return true.
+  const flood = [[ 'x'.repeat(255) ].flatMap(c => Array(20).fill(c))]
+  assert.equal(await hasBip353('bob@example.com', async () => [...flood, ['bitcoin:?lno=x']]), false)
+})
+
+test('and a resolver that answers with thousands of records is capped at sixteen', async () => {
+  const many = [...Array(64).fill(['nothing']), ['bitcoin:?lno=x']]
+  assert.equal(await hasBip353('bob@example.com', async () => many), false)
+})
+
+test('NXDOMAIN is not an error the caller has to handle, it is just "no"', async () => {
+  assert.equal(await hasBip353('bob@example.com', async () => { throw Object.assign(new Error('x'), { code: 'ENOTFOUND' }) }), false)
+  assert.equal(await hasBip353('bob@example.com', async () => 'not an array' as unknown as string[][]), false)
+})
+
+test('a resolver that never answers is bounded by a WALL CLOCK, not by its own timeout', async () => {
+  // The same distinction that made `req.setTimeout` a denial of service on this path: a resolver
+  // timeout bounds the QUERY, and what needs bounding is the PROMISE. `refundOversells` is awaited
+  // inside a tick and `inFlightGuard` DROPS the polls behind it, so an unbounded lookup here stops
+  // stock republishing for as long as a hostile resolver cares to hold the socket open.
+  const t0 = Date.now()
+  assert.equal(await hasBip353('bob@example.com', () => new Promise(() => {})), false)
+  const elapsed = Date.now() - t0
+  assert.equal(elapsed < 5_000, true, `gave up after ${elapsed} ms`)
 })

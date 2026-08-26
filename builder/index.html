@@ -107,6 +107,24 @@
             is just text.
           </p>
 
+          <!-- Item 13's last bullet. Hidden until a publish would actually drop a member, and
+               populated by main.ts `showShrink` — never innerHTML, always textContent. -->
+          <div id="sale-shrink" class="shrink" hidden>
+            <p class="warn" id="sale-shrink-what"></p>
+            <ul id="sale-shrink-list"></ul>
+            <p class="hint">
+              A kind 30405 is a <strong>replacement</strong>: publishing this list is what un-lists
+              the rest, because nostr has no “remove one item” event. Un-listing is not deleting —
+              those listings stay on the relays and your storefront still draws them, at the foot
+              of the page and out of the sale’s order. And this is exactly what deliberately
+              retiring an item looks like, which is why nobody can tell the two apart for you.
+            </p>
+            <label class="row" for="sale-shrink-ok">
+              <input type="checkbox" id="sale-shrink-ok" />
+              <span>Yes, un-list them. I meant to.</span>
+            </label>
+          </div>
+
           <p class="cost" id="sale-cost"></p>
           <button type="submit" id="publish-sale" disabled>Publish my sale</button>
           <p class="hint" id="sale-state"></p>
@@ -127,9 +145,25 @@
           <textarea id="summary" rows="2" maxlength="600" placeholder="Rewired, works, some patina on the base."></textarea>
 
           <div class="row">
-            <span>
+            <span id="price-sats">
               <label for="price">Price, in sats</label>
               <input id="price" type="number" min="0" step="1" value="1000" required />
+            </span>
+            <!-- M3. Only ever shown for an item whose listing ALREADY carries another currency.
+                 There is no way to reach it by typing: the currency is read off the item, never
+                 entered, and an item priced this way can never have a Buy button.
+
+                 `required` is not decoration. Without it a blank field reads as `Number('')`,
+                 which is 0, which passes every check below it and republishes an 80 MXN item as
+                 `["price","0","MXN"]`, and the storefront draws that as "Free, just ask when you
+                 get here". The sats field has always had it; this one did not.
+
+                 `step="any"` and not `step="1"`. Sats are whole by nature and pesos are not, so a
+                 12.50 listing under step="1" is a control the browser refuses to submit and a
+                 seller cannot fix without changing the price. -->
+            <span id="price-fiat" hidden>
+              <label for="price-fiat-amount">Price, in <span id="price-fiat-currency">—</span></label>
+              <input id="price-fiat-amount" type="number" min="0" step="any" required disabled />
             </span>
             <span>
               <label for="stock">How many</label>
@@ -140,6 +174,12 @@
             Sats only. There is no currency conversion anywhere in this app — that would need a
             price oracle, and an oracle is somebody else’s server. Price something in pesos by
             leaving the node field empty: it lists, it just has no Buy button.
+          </p>
+          <p class="warn" id="price-fiat-note" hidden>
+            This item was priced in another currency, so it keeps that price and stays cash at the
+            table — no Buy button, no offer on your node, whatever the node field says. You can
+            change the amount. You cannot change the currency here, and nothing in this app
+            converts one to the other.
           </p>
 
           <label for="photo">Photo</label>

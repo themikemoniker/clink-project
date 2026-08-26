@@ -1,0 +1,728 @@
+[
+  {
+    "content": "Free. Take them, please. They are in the garage.",
+    "created_at": 1787279459,
+    "id": "d026e0a7527bc9d3f9c1576680fd39b7d3e021869ec278285cb0b25da64d6b59",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "eda2bd4eec9d88567d59d11629093cd049f7cc9769cd6c1c01a897e83a35da6bc4d46ba2c082ea96000d09d39897a17d4a4d54a6524a0504336b2fc55894e51f",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-boxes"
+      ],
+      [
+        "title",
+        "Moving boxes, free"
+      ],
+      [
+        "price",
+        "0",
+        "MXN"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "summary",
+        "Free. Take them, please. They are in the garage."
+      ],
+      [
+        "stock",
+        "12"
+      ],
+      [
+        "status",
+        "active"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ]
+    ]
+  },
+  {
+    "content": "Gone. Sold the old way, with a status tag instead of a stock count.",
+    "created_at": 1787279459,
+    "id": "a61cebe689b72d1163381388eaa2ae52cf04962b9369866e09dfdfeacab92532",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "5c7a046bb79a7413ebc36eccd218924de9b0bc23b00e738a38ae6bd3a0c4b1fa5a2cc386d42ca0cd1fa311ea6d0d192eb3644dec0d3b372678fe5a7ea7d97224",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-mirror"
+      ],
+      [
+        "title",
+        "Full-length mirror"
+      ],
+      [
+        "price",
+        "22000",
+        "sats"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "summary",
+        "Gone. Sold the old way, with a status tag instead of a stock count."
+      ],
+      [
+        "status",
+        "sold"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ],
+      [
+        "image",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/fdde89ee41f05e0c192365778c64f0877f065d88d03f4386fbdbe43104f6d0dd.jpg",
+        "1200x900"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/02f3b837e66afee5debb356d48d30219e845e8de015d737414851db597f63d6a.jpg",
+        "480x360"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/b0ed60adc30d4f1b237a1d81eec4ae1bbeaf3c022332a02eed050af53a718391.jpg",
+        "160x120"
+      ]
+    ]
+  },
+  {
+    "content": "SOLD — leaving it up so you can see what a sold item looks like.",
+    "created_at": 1787279459,
+    "id": "74ebbbbf72ec8919101bb2337614dad37f1f4606cb3e670f7a48aab3ba6dfa62",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "6472b0b1567f8f29781607a5a7f130efd3ce90b1505bd981a070e54acd1183825f9cfa59e20ba61b03967b4e4d1c88177dbb9d4eb34f06b5f52b1610054b0271",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-table"
+      ],
+      [
+        "title",
+        "Oak dining table + 4 chairs"
+      ],
+      [
+        "price",
+        "175000",
+        "sats"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "summary",
+        "SOLD — leaving it up so you can see what a sold item looks like."
+      ],
+      [
+        "stock",
+        "0"
+      ],
+      [
+        "status",
+        "sold"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ],
+      [
+        "image",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/9086e7a648822b6412f2c0fba9bcfee1abf013b327389cb8eeaddd8c09d06198.jpg",
+        "1200x900"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/89f0ca3b24cd4e47698fd35c27878ea57ec76dcc561b674e2b90ead1c3a146bf.jpg",
+        "480x360"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/0525cdfbfa03391907643645b2ad5425c6099f1c0afa2afb0352c30df27c50b3.jpg",
+        "160x120"
+      ]
+    ]
+  },
+  {
+    "content": "Priced each, cash at the table. Mostly VG+, a few beat up — dig through the crate.",
+    "created_at": 1787279459,
+    "id": "2806643cec51a8d49a5a39eb1a2be79f6e2c2ad7d3d0ac1f7b874581b43f0157",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "59c7c15e5685ab767afb4ed1a135ba9461c608f8c04865540822dcf5ec16d055d4dee4edad0c809b8b411f1bb0b05b3a7b7004ed3833cc8c8b07ea0b762294b9",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-records"
+      ],
+      [
+        "title",
+        "Records, jazz and salsa"
+      ],
+      [
+        "price",
+        "80",
+        "MXN"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "summary",
+        "Priced each, cash at the table. Mostly VG+, a few beat up — dig through the crate."
+      ],
+      [
+        "stock",
+        "24"
+      ],
+      [
+        "status",
+        "active"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ],
+      [
+        "image",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/bef323c766d25bf249cb121d78ba98f9a8785ded08e66adfe072096822eaa6e0.jpg",
+        "1200x900"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/1423e96d17a824a86219cf6fda0f5d952ac4a4d6d95358ca7e68d4958286e3cf.jpg",
+        "480x360"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/c94463f18201fff06291139f64aea851e4d21d250c002265c7b0cc6291132dc1.jpg",
+        "160x120"
+      ]
+    ]
+  },
+  {
+    "content": "Three of these. Rewired, all work.",
+    "created_at": 1787279459,
+    "id": "c95594b7b79748d36ca520a8c46775e6bc64b3f44b85de5655ab5ae3c6334489",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "2531fd7e0e156deca8713d3421ca3ce0696a8dd92e9aee19390bc006d1d15faa1b24256e09c8097dc99fc508d200418990ba78b8fc07ccaa846b5ace8c4c9863",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-lamp"
+      ],
+      [
+        "title",
+        "Brass floor lamp"
+      ],
+      [
+        "price",
+        "30000",
+        "sats"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "summary",
+        "Three of these. Rewired, all work."
+      ],
+      [
+        "stock",
+        "3"
+      ],
+      [
+        "status",
+        "active"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ],
+      [
+        "clink_offer",
+        "noffer1qszqqqr4xqpszqqzgsmrqcekxcukxdnyvdjrxdtyv5erwcmzxvengvpcvyerydpjxgurqvecx43nve3jxgckzwfnx5enqd3kx5mxzwtxxgmkgc33vgcrsce5vfjkgwgpr9mhxue69uhhyetvv9ujumrfva58gmnfdenjuur4vgqzq0c2hedfg3hccr2zl7p7x9ne9j3e8vvjpjakahjswg6s29spt0hul9pz0s"
+      ],
+      [
+        "image",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/d70c6578967e32dedba6dc445cd9ce2110287d9f16191dd8e64265bde209a9f6.jpg",
+        "1200x900"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/9b498a45c9836f177191a039e401f8f1a4e848ded9fe1b6054f843512beb056e.jpg",
+        "480x360"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/f011908a1dc16de617742a8c0d8cceb1d1319d5c80192fb5ff46749972a52e62.jpg",
+        "160x120"
+      ]
+    ]
+  },
+  {
+    "content": "Recently serviced. New chain and bar tape.",
+    "created_at": 1787279459,
+    "id": "109b62dd87ed58a788c9ed1403eb0c07a7271e1e49e68637da344b98d02a8192",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "3aaed02cfc375db29d8ace6eafc55eaa399ea801b188d9e8ec3bd297bebce84ed9113542f42bc4fd68b8ec244fc52bf35aaa5853e0285575420c2d4c4bba20a5",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-bike"
+      ],
+      [
+        "title",
+        "Bianchi road bike, 54cm"
+      ],
+      [
+        "price",
+        "180000",
+        "sats"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "summary",
+        "Recently serviced. New chain and bar tape."
+      ],
+      [
+        "stock",
+        "1"
+      ],
+      [
+        "status",
+        "active"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ],
+      [
+        "clink_offer",
+        "noffer1qszqqq4lyqpszqqzg3jnsvejxsenyc3sxdjngdejxc6x2cfjxa3rjer9xp3n2cfc8qcnje3cxsmrxwr9vyek2d3exscryetxv4jrxwpexqckve3kvfjnvepsxc6rzdqpr9mhxue69uhhyetvv9ujumrfva58gmnfdenjuur4vgqzq0c2hedfg3hccr2zl7p7x9ne9j3e8vvjpjakahjswg6s29spt0humwtzu0"
+      ],
+      [
+        "image",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/4ab44e75c0684e586e20a6b3d2d753627c08d961a8604e879ab8bfcdb04f15fa.jpg",
+        "1200x900"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/c182d5b91734d25c5860fed67cf3ff1496dfee91da428d6d56071b2d266728c9.jpg",
+        "480x360"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/901ec831780a0eeb53232429a3969eaca73e1217abcd3417bed46a9790fce4a1.jpg",
+        "160x120"
+      ]
+    ]
+  },
+  {
+    "content": "Some sun-fade on the left arm, no tears, no smell. You bring friends and a truck.",
+    "created_at": 1787279459,
+    "id": "a98502b87cff82503c3374bd69b000ceaea222cba04c7b47811f686c8aae8cc9",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "e9df5cf5cabcd4817e2db3c38e3cc35c96013681146f07b1ec3b124afd152f910c878bfb49643f33b7fb14a6c1d15737c8485bdca74a4735a84b30adeb1eb0ec",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-couch"
+      ],
+      [
+        "title",
+        "Green velvet couch, 3-seat"
+      ],
+      [
+        "price",
+        "210000",
+        "sats"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "summary",
+        "Some sun-fade on the left arm, no tears, no smell. You bring friends and a truck."
+      ],
+      [
+        "stock",
+        "1"
+      ],
+      [
+        "status",
+        "active"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ],
+      [
+        "clink_offer",
+        "noffer1qszqqqe52qpszqqzgs6xywtpvcekxc35x4jnze3evc6rzcnp8qerzdrr8qenzdn9vsmngcmyxenrjvmzvgekxce3v4sn2er9x93rwefcvvmrzde3x9jxgdp48qexvdspr9mhxue69uhhyetvv9ujumrfva58gmnfdenjuur4vgqzq0c2hedfg3hccr2zl7p7x9ne9j3e8vvjpjakahjswg6s29spt0huk8s93d"
+      ],
+      [
+        "image",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/48fa6e0751be198f4d214ac024b76d7a874c1400cd90451762fa9d4844f8b7ad.jpg",
+        "1200x900"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/7f9939fb0a0f164c585e7fbfd88652eccbd8b8ddb04fa0761142b5ad0c69dab0.jpg",
+        "480x360"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/c19a7402b321f3b49915801d825e212290fc4293c31c27f403bd6aef3a6eaec3.jpg",
+        "160x120"
+      ]
+    ]
+  },
+  {
+    "content": "",
+    "created_at": 1787279460,
+    "id": "b0ece2fff0b1d3ec1784f49bc738c9718cf65ddbd6fd141e48bf778529837ea6",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "ef2f6dc8ceaa66f8876a2f375d0c1536e24ea81a2666853c352941c1a4cb9bd24d149a6f4ac3ca151a8b8480041adfcb6c12bdab8175e9be356258189edd9371",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-plants"
+      ],
+      [
+        "title",
+        "Houseplants, various"
+      ],
+      [
+        "price",
+        "6000",
+        "sats"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "status",
+        "sold"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ],
+      [
+        "image",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/f6c6fa2ffe6a3ca8a6c6d217e178bcb891752edc2a7732d7ea52e6440ebeb27b.jpg",
+        "1200x900"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/562dfae00929372c780c053790770e7fea4d04f028f4a87a509a3c974f923d95.jpg",
+        "480x360"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/b22fea977801c341ae410be99cd5a76d68863a3ff63fd15900ec7f395300a95b.jpg",
+        "160x120"
+      ]
+    ]
+  },
+  {
+    "content": "Three left, none of them a matching pair. All survived the move.",
+    "created_at": 1787279462,
+    "id": "0613286bbd7bd7c7ebc62484bca21901e7f98d09f0521befe5d486ef032b745d",
+    "kind": 30402,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "9ba8dc12ec6934c8f2b31d55c171f5d979a897b37488ebcdf3904a4a2204a0b58cd5389067498d0d16c33a08356b6bfde8306461a7e1595118e1bb9a0e4cb55c",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08-mugs"
+      ],
+      [
+        "title",
+        "Coffee mugs, mismatched"
+      ],
+      [
+        "price",
+        "1000",
+        "sats"
+      ],
+      [
+        "published_at",
+        "1787279459"
+      ],
+      [
+        "type",
+        "simple",
+        "physical"
+      ],
+      [
+        "summary",
+        "Three left, none of them a matching pair. All survived the move."
+      ],
+      [
+        "stock",
+        "0"
+      ],
+      [
+        "status",
+        "sold"
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "t",
+        "yardsale"
+      ],
+      [
+        "a",
+        "30405:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08"
+      ],
+      [
+        "image",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/f4f3d5a7902c2e38e6cf154e5a3593253beaed004ded0529bc67ad82f983b1fc.jpg",
+        "1200x900"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/85d0a7a6f9d0bc60c64590d41c14fa034faa910c2ecdfcbc6f146b3da7025215.jpg",
+        "480x360"
+      ],
+      [
+        "thumb",
+        "https://npub1lvvw3qfk9fmjuxll9lpxpf0lgl9sr5l60gj5xjv5scphwnxmg7sq0lalws.blossom.band/60f4607de5e9ddc7a330b8e52ec56cd0bfa8e1d7f51ca5aab0b85d62e549596a.jpg",
+        "160x120"
+      ]
+    ]
+  },
+  {
+    "content": "Saturday 23 August, 8am–2pm. Cash, or Lightning. Everything must go.",
+    "created_at": 1787279459,
+    "id": "f57554c414846be6563d4ced2b30919f13aca206abb551e7fa037d348dc646d6",
+    "kind": 30405,
+    "pubkey": "fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0",
+    "sig": "e5ebc2d78bac65f92fba441d1ffff14b92c550c11e81d0d5cd45340c3c14377d29dd3c364e07d98d855a836731a27065ddb9fbe3552d7e8a865287780438b34d",
+    "tags": [
+      [
+        "d",
+        "yardsale-2026-08"
+      ],
+      [
+        "title",
+        "Moving Sale — Colonia Americana"
+      ],
+      [
+        "summary",
+        "Saturday 23 August, 8am–2pm. Cash, or Lightning. Everything must go."
+      ],
+      [
+        "location",
+        "Colonia Americana, Guadalajara"
+      ],
+      [
+        "g",
+        "9ewmr4z"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-couch"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-bike"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-lamp"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-mugs"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-records"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-table"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-mirror"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-plants"
+      ],
+      [
+        "a",
+        "30402:fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0:yardsale-2026-08-boxes"
+      ]
+    ]
+  }
+]

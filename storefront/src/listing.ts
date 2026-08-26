@@ -71,6 +71,13 @@ export type Item = {
   thumbs: Photo[] // smaller renditions; see srcset() for the ambiguity
   location?: string
   offer?: Offer // present only when this item can actually be bought — see buyableOffer()
+  // ITEM 17. True only when the listing carried a DECODABLE `clink_offer` whose TLV 4 price
+  // disagrees with the `price` tag beside it, which `buyableOffer` refuses on purpose. It is one
+  // bit rather than a reason code because exactly one distinction changes what a buyer should do:
+  // a price disagreement means the number on the page cannot be trusted, and every other way to
+  // have no offer (no tag at all, a corrupt pointer, a sold item) leaves the price tag standing.
+  // Grouping those is deliberate; see render.ts `noBuyReason`.
+  priceDisagrees?: boolean
 }
 
 export type Sale = {
@@ -153,13 +160,47 @@ const parsePhotos = (ev: Event, name: 'image' | 'thumb'): Photo[] => {
 // TLV 4, so a listing whose tag says one thing and whose offer says another is not buyable at
 // all. buy.ts re-checks the same number against the BOLT11 the node actually returns, because
 // the tag and the TLV are both authored by the seller and only the invoice takes money.
-const buyableOffer = (raw: string | undefined, price: Money | undefined, sold: boolean): Offer | undefined => {
-  if (raw === undefined || sold) return undefined // §7.4(a): a sold item's offer should not exist
-  if (!price || !/^sats?$/i.test(price.currency)) return undefined
-  if (!Number.isSafeInteger(price.amount) || price.amount < MIN_PAYABLE_SATS) return undefined
+//
+// ITEM 17 splits the refusal in two on the way out. The caller gets the offer when there is one,
+// and otherwise one bit saying whether the reason was a price disagreement: the only refusal
+// here that makes the DISPLAYED price untrustworthy. Everything else leaves the price tag intact,
+// so a buyer can still turn up with cash for the number they read.
+/**
+ * Is this `price` tag's currency our own unit?
+ *
+ * ONE PREDICATE, EXPORTED, because there used to be two and they disagreed. This accepted
+ * `/^sats?$/i` while `builder/src/admin.ts` refused anything but the exact lowercase `sats`, so an
+ * item priced `sat` or `SATS` rendered a Buy button and could never be edited. Measured against
+ * both live sales on 2026-08-26: every one of the 17 listings writes exactly `sats` or `MXN`, so
+ * the disagreement was latent rather than live — and latent is why it survived three slices.
+ *
+ * ONE means one. `./render.ts` kept two literal copies of the regex through the first pass at
+ * this (`formatPrice` and `noBuyReason`), which left the drift surface at three rather than at
+ * zero, which is the same shape of defect one file down. Every reader in the tree calls this now, and
+ * `render.test.ts` asserts the two files agree on `SATS` rather than trusting that they do.
+ *
+ * Loose rather than strict, and that direction is deliberate. `sat`, `SATS` and `Sats` are all
+ * things a NIP-99 client that is not ours will write (99.md:41 calls the field "ISO 4217-like",
+ * which in practice means anything), and refusing them would make a correctly-priced listing
+ * unbuyable. Widening the BUILDER to match is the change that cost nothing.
+ */
+export const isSats = (currency: string): boolean => /^sats?$/i.test(currency)
+
+const buyableOffer = (
+  raw: string | undefined,
+  price: Money | undefined,
+  sold: boolean,
+): { offer?: Offer; priceDisagrees?: boolean } => {
+  if (raw === undefined || sold) return {} // §7.4(a): a sold item's offer should not exist
+  if (!price || !isSats(price.currency)) return {}
+  if (!Number.isSafeInteger(price.amount) || price.amount < MIN_PAYABLE_SATS) return {}
   const offer = decodeNoffer(raw)
-  if (!offer) return undefined
-  return offer.priceSats === undefined || offer.priceSats === price.amount ? offer : undefined
+  // A pointer we cannot decode is NOT a price disagreement. We do not know what it says, so we
+  // cannot claim the price is wrong. The honest reading is "this page has no way to charge you",
+  // which is the same thing an absent tag means.
+  if (!offer) return {}
+  if (offer.priceSats === undefined || offer.priceSats === price.amount) return { offer }
+  return { priceDisagrees: true }
 }
 
 const parseItem = (ev: Event): Item | null => {
@@ -193,7 +234,7 @@ const parseItem = (ev: Event): Item | null => {
     // Our own tag, documented in /docs/spec.md §6.1. clink-offers.md:58-83 standardises the
     // name `clink_offer` for kind 0 metadata and NIP-05; a listing-level tag is not in any
     // spec, so we reuse the standard name rather than invent a second one.
-    offer: buyableOffer(text(tagValue(ev, 'clink_offer'), 1_000), price, sold),
+    ...buyableOffer(text(tagValue(ev, 'clink_offer'), 1_000), price, sold),
   }
 }
 

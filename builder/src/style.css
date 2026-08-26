@@ -84,6 +84,17 @@ button[type="submit"] { margin-top: 1.25rem; width: 100%; background: var(--acce
 .hint, .warn, .cost { font-size: 0.85rem; color: var(--muted); margin: 0.4rem 0 0; }
 .warn { color: var(--bad); }
 
+/* Item 13's shrink confirmation. Bordered in --bad rather than tinted, because the page is
+   printed as well as read and a tint is the first thing a printer throws away. */
+.shrink {
+  margin-top: 1.25rem;
+  padding: 0.7rem 0.8rem;
+  border: 2px solid var(--bad);
+}
+.shrink ul { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.85rem; }
+.shrink label { align-items: center; margin-top: 0.7rem; font-weight: 600; }
+.shrink input[type="checkbox"] { flex: 0 0 auto; width: 1.1rem; height: 1.1rem; }
+
 .cost {
   margin-top: 1.25rem;
   padding: 0.7rem 0.8rem;

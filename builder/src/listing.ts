@@ -25,6 +25,20 @@ export type Draft = {
   title: string
   summary: string
   priceSats: number
+  /**
+   * A price this project cannot charge for, carried through unchanged — M3.
+   *
+   * `records` at 80 MXN could not be edited AT ALL before this: `draftFrom` returned null for any
+   * currency that was not sats, because a sats-only form would have republished it as 80 SATS, a
+   * silent 99.99% discount on something somebody might then buy. That guard was right about the
+   * danger and wrong that refusing forever was the only way out. When this is set it REPLACES the
+   * sats price tag, no offer is minted, and the item stays exactly as unpayable as it was.
+   *
+   * There is still no currency conversion anywhere in this project. A conversion needs a price
+   * oracle and an oracle is somebody else's server (/docs/spec.md §6.1). This carries a number
+   * and a label the seller's own listing already had; it does not know what either is worth.
+   */
+  fiat?: { amount: number; currency: string }
   stock: number
   alt: string // NIP-94 `alt`, "description for accessibility"
   noffer?: string // present once the offer is minted
@@ -104,9 +118,12 @@ export const listingTags = (
     ['d', listingD(sale.d, draft.slug)],
     ['title', draft.title],
     // 99.md:38 ["price","<number>","<currency>","<frequency>"?]. We never write frequency.
-    // Always sats: there is no fiat conversion anywhere in this project, because a conversion
-    // needs a price oracle and an oracle is somebody else's server (/docs/spec.md §6.1).
-    ['price', String(draft.priceSats), 'sats'],
+    // Sats unless the listing already carried another currency, in which case it is carried
+    // through byte for byte — M3. Still no conversion anywhere: a conversion needs a price
+    // oracle and an oracle is somebody else's server (/docs/spec.md §6.1). `draft.fiat` can only
+    // have been read off an existing listing, never typed, and `fiatCurrency` in ./admin.ts
+    // refuses to let it be a spelling of sats.
+    draft.fiat ? ['price', String(draft.fiat.amount), draft.fiat.currency] : ['price', String(draft.priceSats), 'sats'],
     ['published_at', String(now)],
     // Gamma spec.md:119-121 — the default is *digital*, and a yard sale is emphatically not.
     ['type', 'simple', 'physical'],
@@ -190,6 +207,9 @@ export const eventsToSign = (
  */
 export const approvalCount = (draft: Draft, mintOffer: boolean, uploads = draft.blobs.length): number =>
   uploads + // one kind 24242 per blob — NEVER batch them (findings §9)
-  (mintOffer ? 1 : 0) + // the kind 21003 CLINK Manage create
+  // A fiat item never mints, whatever the caller asked for. The number this shows and the number
+  // publish.ts actually signs have to be the same one, and enforcing it in both places rather
+  // than trusting the call sites is the cheaper half of "unpayable" being a property.
+  (mintOffer && !draft.fiat ? 1 : 0) + // the kind 21003 CLINK Manage create
   1 + // the listing
   unitsOf(String(draft.stock)) // the ladder

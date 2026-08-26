@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
+Last updated: **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
 
 **READ THIS PARAGRAPH BEFORE ACTING ON ANYTHING BELOW.** Milestone A landed as ten commits
 (`ac87512`..`a934056`) and then a review of that branch found **five defects it had introduced**,
@@ -45,9 +45,71 @@ was pre-existing rather than milestone A's: **a BIP-353 address is the same `use
 an LNURL one**, so a Phoenix buyer's refund pointer is accepted at buy time and is useless at
 refund time. That is **roadmap item 27**, and it has a trap in it — see below.
 
-### Before item 6 runs
+### THE SECOND MACHINE: read this before you plan anything (added 2026-08-25)
 
-Item 6 is the demo beat and it is one command, but four things first and two of them are decisions:
+**Everything below about a node, a grant, an account balance and a sold-out `mugs` is true of ONE
+machine, and this file does not say which.** The project was stood up on a second machine on
+2026-08-25 from a fresh clone, and on that machine most of this document describes hardware that
+is not reachable. If you are reading this in a new session, establish which machine you are on
+**first**. The one-command test is `curl -s http://127.0.0.1:1776/api/health`.
+
+**What the second machine has.** Node v24.6.0, npm 11.5.1. All three packages install and pass
+from a cold clone. Playwright's chromium (v1234, Chrome for Testing 151.0.7922.34) was already in
+`~/Library/Caches/ms-playwright`, so item 8 cost no browser download. The four public relays and
+the four Blossom servers are reachable, so **every read-only path works here**: the live storefront
+renders, `check-admin.ts` passes, `check-deploy.ts` passes.
+
+**What it does not have, and cannot get without a person.** No Lightning.Pub (nothing answers
+`127.0.0.1:1776`), no LND, no `lncli`. **None of the gitignored state exists**: `spike/.dev-key`,
+`.offers.json`, `.ladder.json`, `.refund-key`, `.nmanage`, `.ndebit`, `.refunds.json`, and there
+is no other clone on the disk to copy them from. The seller key is not in a NIP-07 extension in
+this browser profile. `.dev-key` is the seller identity and the 9,000 sats; it exists on the other
+machine and its backup is on one disk (see "The one thing milestone A could not close").
+
+**Therefore, unreachable from here, and it is not a short list:**
+
+| | why |
+|---|---|
+| **Item 6**, pay one real refund | Needs the node, the live 8,000/day debit grant, `.refund-key`, and the one remaining oversell on `mugs`. All four are on the other machine. The gates in the header above (re-cap the frequency cap, decide about the kill switch, run the watcher from a terminal) are decisions **for that machine** and cannot be taken here |
+| **Item 7's publish and deploy half** | Needs the seller key in a signer. nos2x on the other machine holds it; this browser profile has no NIP-07 extension at all |
+| Everything in `/spike` that signs or spends | `mint-offers.ts`, `seed-listings.ts`, `watch-sales.ts`, `check-buy.ts`, `check-manage.ts`, `authorize-manage.ts`, `authorize-refunds.ts`, `check-refund.ts`, `sales-report.ts`, `deploy-nsite.ts`, `export-key-qr.ts`. Each throws on a missing key file, or needs the node, or both |
+| `shots/npm run capture` | The Buy screenshot sends a real kind 21001 and needs the node up |
+| Any correction to what is ON the relays | Republishing is signing. See the geohash row in `/docs/known-defects.md`: a defect found here that **cannot be fixed here** |
+
+**Reachable from here, and proven on 2026-08-25:** all three test suites, both builds, both size
+budgets, both dev servers, `check-admin.ts`, `check-deploy.ts`, item 7's **render-only** half, and
+item 8 in full. That is enough to keep the roadmap moving without the hardware; it is not enough
+to close milestone B, which is by definition about things that have executed on real hardware.
+
+### What the second machine has now closed (2026-08-26)
+
+Four roadmap items, one commit each, none of which needed a key: **18**, **27's first bullet**,
+**13's last bullet** and **M3's fiat half**. Test counts moved 75 / 70 / 42 -> **75 / 88 / 51**,
+all green, `tsc` clean in both apps. Reasoning is in spec §9.3; the short version:
+
+- **The nsite gateway does not lapse.** `max-age=3600` is what it tells clients, not how long it
+  holds. The live site's manifest was replaced 2026-08-21T18:11:43Z and the gateway was serving the
+  pre-replacement build **4d 9h later**, 106x the window, on both nsites. `check-deploy.ts` §4 now
+  prints the freshness headers it actually receives (`age`: **not sent**; `last-modified`: the
+  **blob's**, not the cache's; `etag`: the content hash) and says `WAIT IT OUT` or `WAITING IS NOT
+  THE FIX`. No client-side escape hatch exists; two are probed on every stale run. Runbook §8.
+- **A `queued` refund row stops blaming DNS** when the buyer handed over a BIP-353 address.
+  Bounded as hostile input; returns a boolean; never touches `payDebit`.
+- **Publishing a shorter sale now has to be confirmed**, by name, per dropped item. This is what
+  **unblocks M3's delete** for the machine that has the key — the collision the ledger named is
+  now a path rather than a wall.
+- **`records` at 80 MXN is editable** and still unpayable. And the currency comparison the item
+  asked about: the builder's `!== 'sats'` and the storefront's `/^sats?$/i` really did disagree,
+  so an item priced `sat` or `SATS` was buyable and uneditable — but **measured against both live
+  sales, all 17 listings write exactly `sats` or `MXN`**, so it was latent. One exported predicate
+  now, called from both.
+
+**Still needs the machine with the node and the keys:** M3's delete (a re-publish), item 27's buy
+side (a decision first — see the roadmap), paying a BOLT12 offer at all (UNVERIFIED), and a real
+Phoenix address to prove the BIP-353 branch against `phoenixwallet.me` rather than against a
+published test vector.
+
+### Before item 6 runs
 
 1. **The pointer must be an LNURL-pay address.** `mugs` is sold out 3/3, so there is exactly
    **one** oversell available and no way to make another without restocking. Pointing it at a
@@ -154,7 +216,7 @@ now a deliberate boundary rather than an accident.
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **9,000 sats** across **4 settled invoices** (`plants` 6,000, `mugs` 3×1,000), measured 2026-08-23 by `node spike/sales-report.ts` — 8,946 of it payable after the Pub's fee. Up from 8,000/3 as of 2026-08-21: `mugs`' third unit settled that evening. `sales-report.ts` prints it (`GetUserInfo`), so the number stops being a note here — **but only for this seller; the script has no `--key` and cannot report the second one** |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
 | Blossom | **four** servers, verified. `blossom.primal.net` answers a blob with a **302 to `r2a.primal.net/…/<hash>.txt`** — `fetch` follows it and `check-deploy.ts` passes, but a bare `curl` without `-L` returns 0 bytes and reads like a missing mirror. `blossom.band` now refuses the site's JS and HTML on content-type sniffing (it still holds the photos) and falls out of the kind 10063 list on its own — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
-| Storefront bundle | **32.01 KB gzip JS** + 2.12 CSS + 2.4 HTML cold, + 3.91 KB QR chunk on Buy. Budget raised to 33 in slice 9, with reasoning — spec §9 |
+| Storefront bundle | **32,140 bytes gzip JS** (32.14 KB) + 2,214 CSS + 2.4 HTML cold, + 3,915 QR chunk on Buy. Measured 2026-08-27 after M3's fiat half and the review that followed it, up 6 bytes from 32,134 (one exported currency predicate, spec §9.3; it cost 7 while `render.ts` still carried two literal copies of the regex it replaced, and 6 once they were deleted). Budget raised to 33 in slice 9, with reasoning: spec §9 and §9.2. **860 bytes of headroom left**, so the next render slice measures before it writes |
 | Builder bundle | **59.49 KB gzip cold** (+2.12 for slice 9), + a built storefront in `public/site` (~99 KB raw) |
 
 Four items are buyable; the rest deliberately are not:
@@ -179,14 +241,16 @@ Nothing here needs a build step; Node 24 runs the `.ts` files directly.
 ```bash
 # storefront
 cd storefront
-npm test            # 58 tests, node --test, no framework
+npm test            # 76 tests, node --test, no framework. 71 unit + 5 headless (smoke.test.ts,
+                    # item 8). The smoke run builds, serves dist/ and drives chromium; it needs
+                    # NO relay, node or key. The relay read is stubbed from smoke-fixture.json
 npm run build       # tsc --noEmit && vite build
 npm run size        # raw + gzip per asset
 npm run dev         # http://localhost:5173
 
 # the money path, against the running node
 cd spike
-npm test                               # 27 tests, node --test — the ladder and the refund journal
+npm test                               # 51 tests, node --test — the ladder and the refund journal
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
 node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
                                        # --pay REFUSES without --pointer as of slice 8: a settled
