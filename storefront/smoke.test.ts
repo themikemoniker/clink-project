@@ -166,6 +166,37 @@ test('a buyable item renders the Buy form, and the refund pointer is a required 
   await page.close()
 })
 
+test('item 16: the detail view dates its own availability, and the index does not', async () => {
+  // The markup half of item 16. render.test.ts asserts the sentence; this asserts it reaches the
+  // page, which is the failure mode item 8 exists for. Matched rather than compared: the fixture
+  // events carry a real created_at, so the phrase drifts with the calendar by design.
+  const { page, errors } = await open('#/item/yardsale-2026-08-lamp')
+  const line = page.locator('p.freshness')
+  await line.waitFor({ timeout: 15_000 })
+  assert.match((await line.innerText()).trim(), /^Availability as of /)
+
+  // Paper freezes a relative phrase and makes it false, so it is print-hidden (style.css).
+  await page.emulateMedia({ media: 'print' })
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('p.freshness')!).display), 'none')
+  await page.close()
+
+  // design.md §2.3: the index is a scanning surface. Nine dated rows is the noise stockNote
+  // already refuses to print, so the disclosure lives only where the buyer decides.
+  const index = await open()
+  assert.equal(await index.page.locator('p.freshness').count(), 0)
+  assert.deepEqual(errors, [])
+  await index.page.close()
+})
+
+test('item 16: a sold item is not dated, because sold cannot go stale toward available', async () => {
+  // `mugs` is sold out 3/3 on the live sale, so this is asserted against real relay data rather
+  // than a constructed case. Stock only counts down (the pre-signed ladder, spec §7.3).
+  const { page } = await open('#/item/yardsale-2026-08-mugs')
+  await page.locator('article.item.sold').waitFor({ timeout: 15_000 })
+  assert.equal(await page.locator('p.freshness').count(), 0)
+  await page.close()
+})
+
 test('the print stylesheet takes the Buy panel off the paper', async () => {
   // style.css:443, `@media print { .buy { display: none } }`. A flyer taped to a lamppost cannot
   // submit a form, and this block had never run in a browser before item 8.

@@ -246,7 +246,7 @@ made, not duration.
 | **B** | Nothing on the critical path is unexecuted | ~~8~~, 6, 7 | ⚑ (**8 done 2026-08-25**); 6 and 7 both need the machine with the node and the key |
 | **C** | A sale you can change from your phone | M1, 11, M2, M3 | |
 | **D** | Runs unattended for a weekend | 12, **13 (refuse-to-shrink only)**, 14 | |
-| **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26, **27** | ⚑ — 27's first bullet is liftable earlier |
+| **E** | A stranger can set it up | ~~16~~, 15, 17, 18, 19, 26, **27** | ⚑ (**16 done 2026-08-25**, and 17's `noBuyReason` half with it); 27's first bullet is liftable earlier |
 | **F** | The seller can see their own business | M4, M5 | liftable earlier |
 | **G** | A shop rather than one weekend | M6, M7, M8 | |
 | **∥** | Upstream — runs alongside, gates nothing | 20, 21, 22 | ⚑ |
@@ -735,21 +735,51 @@ both things a paired wallet *can* speak.
   set from the wallet UI rather than over the raw RPC.
 - If it does not: file it upstream and keep the script, documented as the one terminal step.
 
-**16. Show staleness instead of hiding it**
+**~~16. Show staleness instead of hiding it~~ LANDED 2026-08-25**
 Availability is only as fresh as the watcher, and that is inherent to a serverless storefront
-rather than a bug. Right now the page presents stale stock as current.
-- Render "availability as of <listing `created_at`>" on the item.
-- Say it out loud in the demo too. Disclosed staleness is a design property; undisclosed
+rather than a bug. The page used to present stale stock as current; it now dates it.
+- `render.ts` `freshnessNote` renders "Availability as of 5 days ago" on the item, from the
+  listing's own `created_at`. Relative rather than absolute, because the question a buyer is
+  asking is "is this recent enough to drive over for", and "14:32" only answers that if you
+  already know the time. `Intl.RelativeTimeFormat` is a browser global, so the phrasing costs no
+  bytes and the plurals are not ours to get wrong. `now` is injected, so it tests without a clock.
+- **Detail view only.** design.md §2.3 makes the index a scanning surface, and a timestamp on all
+  nine rows is the same noise `stockNote` already refuses to print. The disclosure sits in front
+  of the Buy button, which is where "is this still true" is the question being asked.
+- **A sold item is not dated.** Stock only ever counts down (the pre-signed ladder, spec §7.3),
+  so sold cannot go stale in the direction that costs a buyer a trip. Dating it would imply it
+  might come back.
+- **Print-hidden**, and that is the sharper half of the same idea: a relative phrase is frozen
+  the moment it is on paper, and therefore false. The flyer foot already carries the honest
+  version, which is that the list changes during the sale and the URL is where it changes.
+- Still worth saying out loud in the demo. Disclosed staleness is a design property; undisclosed
   staleness is a lie the page tells.
 
-**17. Remove the buyer's dead ends**
+**17. Remove the buyer's dead ends.** **The `noBuyReason` half LANDED 2026-08-25**
 ~~Wrap the Buy form's `requestInvoice` so a rejection re-enables the form and explains itself.~~
 **That bullet was item 5's, scheduled twice** (`docs/roadmap-review-findings.md` §18), and item 5
 closed it in milestone A on 2026-08-24. What is left is the half that was always separate:
-- Distinguish "this item has no offer" from "this item's offer disagrees with its price tag" —
-  `noBuyReason` currently collapses both into one unhelpful sentence.
+- ~~Distinguish "this item has no offer" from "this item's offer disagrees with its price tag" —
+  `noBuyReason` currently collapses both into one unhelpful sentence.~~ **DONE.** `listing.ts`
+  `buyableOffer` now reports one bit, `priceDisagrees`, and `noBuyReason` branches on it.
+  - **This reversed a judgement slice 8 made in writing.** Its test said the two were "reached two
+    ways a buyer cannot tell apart **and does not need to**". The first half is still true; the
+    second was wrong, and the reason is specific: the two cases differ in whether **the price on
+    the page can be trusted**, which is the one thing a buyer acts on. A disagreement means the
+    number above may be wrong and driving over with that much cash is a wasted trip. Every other
+    way to have no offer leaves the price tag standing.
+  - **One bit, not a reason code**, because exactly one distinction changes buyer behaviour. A
+    pointer we cannot decode is grouped with an absent one deliberately: we do not know what it
+    says, so we cannot accuse the price of being wrong. Sold, fiat and below-floor items are
+    refused before any price is compared, so they can never set it.
+  - **The new sentence is unit-tested and has never rendered**, which is worth naming given what
+    item 8 is for. A mismatched item needs a signed 30402 whose price tag and `clink_offer`
+    disagree; SimplePool verifies every event, and minting one needs a key (rule 2). The wrapper
+    markup is proven via the fiat and free branches, which use the identical path. Ledger row in
+    `docs/known-defects.md`.
 - **Item 27 is the same class and is worse**, because that dead end is only reached *after* the
   buyer has paid: a BIP-353 refund pointer is accepted at buy time and is useless at refund time.
+  **Still open**, and the nearest thing to this slice on the list.
 
 **18. Make redeploying safe**
 The nsite gateway sends `max-age=3600` and serves the previous build until it lapses. The current

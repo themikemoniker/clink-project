@@ -11,11 +11,17 @@
 // SCOPE, stated rather than implied. This file tests what render.ts DECIDES — which copy a
 // decline gets, whether a stock line earns its space, how a number reads to a person in a
 // driveway. It does not test what render.ts BUILDS: no assertion here says renderDetail emits a
-// <main>. That half is the browser session (/docs/prompts/browser-verify-and-deploy.md).
+// <main>.
+//
+// ~~That half is the browser session (/docs/prompts/browser-verify-and-deploy.md).~~ **That half
+// is ../smoke.test.ts as of item 8 (2026-08-25)**, which loads the built page in headless
+// chromium and asserts the markup and the computed print styles. The boundary is unchanged and
+// is still worth keeping (decisions here, markup there) but it is no longer a boundary with
+// nothing on the other side of it.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Item } from './listing.ts'
-import { declineText, formatPrice, geoUri, missingItemNote, noBuyReason, sats, stockNote } from './render.ts'
+import { declineText, formatPrice, freshnessNote, geoUri, missingItemNote, noBuyReason, sats, stockNote } from './render.ts'
 
 const item = (over: Partial<Item> = {}): Item => ({
   id: 'a'.repeat(64),
@@ -149,11 +155,74 @@ test('a price under the node’s 10-sat floor is cash, not a Buy button that alw
 })
 
 test('a sats-priced item with no usable offer points at the seller, not at our data model', () => {
-  // Reached two ways a buyer cannot tell apart and does not need to: no `clink_offer` tag at all,
-  // or one whose TLV 4 price disagrees with the price tag (listing.ts `buyableOffer` refuses it).
+  // ITEM 17 EDITED THIS TEST, and the old comment is worth keeping because it is the judgement
+  // that got reversed: "reached two ways a buyer cannot tell apart AND DOES NOT NEED TO". The
+  // first half still holds. The second did not survive contact with the roadmap, so the two ways
+  // now have their own assertions below. This one keeps the case where the price tag stands.
   const text = noBuyReason(item({ price: { amount: 1000, currency: 'sats' } }))!
   assert.match(text, /ask the seller/i)
   assert.doesNotMatch(text, /offer|noffer|CLINK|tag/i)
+})
+
+// --- item 17 ---------------------------------------------------------------------------------
+
+test('a price the seller’s own offer disagrees with says so, because the number is the thing a buyer acts on', () => {
+  const text = noBuyReason(item({ price: { amount: 1000, currency: 'sats' }, priceDisagrees: true }))!
+  // The whole point: warn that the displayed price cannot be trusted, and say what to do instead.
+  assert.match(text, /out of date/i)
+  assert.match(text, /ask the seller/i)
+  // Same rule as every other branch. A buyer does not know what a noffer or a TLV is, and
+  // "payment code" is a thing they have physically scanned.
+  assert.doesNotMatch(text, /noffer|CLINK|TLV|tag\b/i)
+})
+
+test('the two ways to have no offer are now different sentences', () => {
+  const price = { amount: 1000, currency: 'sats' }
+  assert.notEqual(noBuyReason(item({ price })), noBuyReason(item({ price, priceDisagrees: true })))
+})
+
+test('a disagreeing price is still silent on a sold item, and never outranks cash', () => {
+  // `sold` wins over everything, as it already did. And a fiat or below-floor item is refused by
+  // `buyableOffer` before the price is ever compared, so `priceDisagrees` cannot reach those
+  // branches from real data. If it ever does, the cash sentence is still the right answer.
+  assert.equal(noBuyReason(item({ sold: true, priceDisagrees: true })), undefined)
+  assert.match(
+    noBuyReason(item({ price: { amount: 80, currency: 'MXN' }, priceDisagrees: true }))!,
+    /cash at the table/i,
+  )
+})
+
+// --- item 16 ---------------------------------------------------------------------------------
+
+// spec.md §579: "availability is only as fresh as the seller's watcher. A page loaded while the
+// watcher is down shows stale stock." These assert that the page now says so itself.
+const NOW = 1_787_000_000_000 // ms, matching the fixture's created_at of 1_787_000_000 s
+
+test('availability is dated in terms a buyer can act on', () => {
+  const at = (secondsAgo: number) => freshnessNote(item({ created_at: 1_787_000_000 - secondsAgo }), NOW)
+  assert.equal(at(0), 'Availability as of just now')
+  assert.equal(at(30), 'Availability as of just now')
+  assert.equal(at(15 * 60), 'Availability as of 15 minutes ago')
+  assert.equal(at(3 * 3_600), 'Availability as of 3 hours ago')
+  assert.equal(at(2 * 86_400), 'Availability as of 2 days ago')
+})
+
+test('an hour and a day are read in the larger unit, because “90 minutes ago” is not how anyone speaks', () => {
+  const at = (secondsAgo: number) => freshnessNote(item({ created_at: 1_787_000_000 - secondsAgo }), NOW)
+  assert.equal(at(3_600), 'Availability as of 1 hour ago')
+  assert.equal(at(86_400), 'Availability as of yesterday')
+})
+
+test('a clock running ahead of the relay reads as current, not as the future', () => {
+  // A listing stamped after our own clock is a skew, not a prophecy. "in 3 minutes" is not a
+  // thing a buyer can do anything with.
+  assert.equal(freshnessNote(item({ created_at: 1_787_000_600 }), NOW), 'Availability as of just now')
+})
+
+test('a sold item is not dated, because sold cannot go stale in the direction that costs a trip', () => {
+  // Stock only ever counts down (the pre-signed ladder, spec §7.3), so a sold item cannot quietly
+  // become available again. Dating it would imply it might.
+  assert.equal(freshnessNote(item({ sold: true, created_at: 1_787_000_000 - 86_400 }), NOW), undefined)
 })
 
 test('an item with no price at all still gets a next step', () => {

@@ -1038,6 +1038,48 @@ storefront's `@media print { .buy }` block fails its third. All three were rever
 suites re-run green. A smoke test nobody has watched fail is a smoke test that asserts nothing,
 and that is the same mistake as markup nobody has watched render.
 
+### 9.2 What items 16 and 17 cost, and the one number that moved (2026-08-25)
+
+Both are storefront render work and both landed against item 8's harness, which is the first time
+a slice in this project has been able to watch its own markup paint before claiming it works.
+
+**The budget moved and it is the third time, so it is written down like the other two.** The
+storefront's cold JS went **31,883 -> 32,134 bytes gzip**, +251 bytes, against the 33 KB budget
+raised in slice 9. CSS went 2,195 -> 2,214. Where the 251 bytes went: the two new sentences are
+most of it, `freshnessNote`'s unit selection is ~80 bytes, and `Intl.RelativeTimeFormat` is a
+browser global and costs **nothing**, which is the reason the phrasing is relative rather than a
+hand-rolled absolute format. Headroom left against 33,000 is 866 bytes. That is now small enough
+that the next render slice should measure before it writes, not after.
+
+**Item 16's three decisions, none of which the roadmap bullet made for us.**
+- **Relative, not absolute.** The buyer's real question is "is this fresh enough to drive over
+  for". `14:32` answers that only for someone who knows what time it is.
+- **Detail view only.** design.md §2.3 makes the index a scanning surface; nine dated rows is the
+  same noise `stockNote` already declines to print.
+- **Print-hidden**, which is the inverse of the item's own thesis and follows from it. A relative
+  phrase is frozen the moment it is printed, and a frozen "as of 2 hours ago" is a lie of exactly
+  the kind item 16 exists to stop. The flyer foot already says the true thing.
+- A sold item is not dated: stock only counts down (§7.3), so sold cannot go stale toward
+  available, and dating it would imply it might.
+
+**Item 17 reversed a judgement slice 8 wrote into a test**, and the reversal is the interesting
+part. The old test asserted the two no-offer cases were "reached two ways a buyer cannot tell
+apart **and does not need to**". The first clause holds. The second does not, because the cases
+differ in whether the **displayed price** can be trusted, and that is the only thing a buyer acts
+on. `buyableOffer` now returns `{ offer }` or `{ priceDisagrees: true }` instead of collapsing
+everything to `undefined`.
+
+It is **one bit rather than a reason code**, deliberately. A pointer we cannot decode is grouped
+with an absent one, because we do not know what it says and therefore cannot accuse the price of
+being wrong. Sold, fiat and below-floor items are refused before any price comparison happens, so
+they can never set it. `listing.test.ts` asserts all five of those non-cases by name.
+
+**And the slice left one thing unproven, which it says out loud.** The new sentence is
+unit-tested and has never rendered, because reaching it needs a signed listing whose price tag and
+`clink_offer` disagree, and minting one needs a key (rule 2). The wrapper markup is proven through
+the fiat and free branches. Ledger row in `/docs/known-defects.md`. Recording that gap rather than
+rounding it up to "done" is the habit item 8 was bought to install.
+
 ---
 
 ## 10. Build plan — vertical slices

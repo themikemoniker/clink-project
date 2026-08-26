@@ -234,6 +234,49 @@ test('an unparseable clink_offer tag leaves the item unbuyable, never half-parse
   assert.equal(one(base('y', [['price', '6000', 'sats']]))!.offer, undefined)
 })
 
+// --- item 17: which KIND of unbuyable ---------------------------------------------------------
+//
+// `buyableOffer` refuses for several reasons and used to return the same `undefined` for all of
+// them. Exactly one of those reasons makes the DISPLAYED PRICE untrustworthy, and that is the one
+// a buyer acts on, so it is now carried out as a single bit. render.ts `noBuyReason` is the only
+// reader; these assertions are about which listings set it.
+
+test('a price the offer disagrees with is flagged, in both directions', () => {
+  const at = (amount: string) => one(base('x', [['price', amount, 'sats'], ['clink_offer', OFFER_6000]]))!
+  assert.equal(at('5999').priceDisagrees, true)
+  assert.equal(at('60000').priceDisagrees, true)
+  // Agreement is not a disagreement, and neither is a buyable item.
+  assert.equal(at('6000').priceDisagrees, undefined)
+  assert.equal(at('6000').offer?.priceSats, 6000)
+})
+
+test('every other way to be unbuyable leaves the price tag standing', () => {
+  // The distinction the bit exists to make. None of these say anything about the price being
+  // wrong, so none of them may claim it is: a buyer can still turn up with cash for that number.
+  const with_ = (tags: string[][]) => one(base('x', tags))!
+  assert.equal(with_([['price', '6000', 'sats']]).priceDisagrees, undefined, 'no clink_offer tag')
+  assert.equal(
+    with_([['price', '6000', 'sats'], ['clink_offer', 'not-an-offer']]).priceDisagrees,
+    undefined,
+    'a pointer we cannot decode says nothing about the price, so it must not accuse it',
+  )
+  assert.equal(
+    with_([['price', '6000', 'sats'], ['clink_offer', OFFER_6000], ['status', 'sold']]).priceDisagrees,
+    undefined,
+    'sold outranks it, as it outranks every other reason',
+  )
+  assert.equal(
+    with_([['price', '120', 'MXN'], ['clink_offer', OFFER_6000]]).priceDisagrees,
+    undefined,
+    'fiat is refused before any price is compared, so 120 MXN vs 6000 sats is not a disagreement',
+  )
+  assert.equal(
+    with_([['price', '9', 'sats'], ['clink_offer', OFFER_6000]]).priceDisagrees,
+    undefined,
+    'below the node floor, refused before the comparison for the same reason',
+  )
+})
+
 // --- who the page belongs to ------------------------------------------------------------------
 // Slice 5: the seller is read from the address the page is served at rather than compiled in.
 // Whoever controls the hostname controls whose signatures this page accepts, so a wrong label

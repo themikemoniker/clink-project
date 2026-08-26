@@ -176,6 +176,21 @@ content against the fixture, so it passes on this defect, and did.
 
 ---
 
+## Added by items 16 and 17 (2026-08-25)
+
+One row. It is small, it is honest, and it is the same shape as the thing item 8 exists to
+prevent, which is why it is written down rather than waved past.
+
+| what breaks | where | what it costs a user | why it is deferred | what fixing it looks like |
+|---|---|---|---|---|
+| **Item 17's new price-disagreement sentence has never rendered.** `noBuyReason`'s `priceDisagrees` branch is covered by three tests in `render.test.ts` and by nothing in a browser. It cannot be reached from the smoke fixture: producing a mismatched item means a **signed** kind 30402 whose `price` tag and `clink_offer` TLV 4 disagree, `SimplePool` verifies every event it accepts, and minting one needs a private key this codebase must not hold (rule 2). Verified 2026-08-25 that no item on the live sale is in this state, so the branch is unreachable from real data too. | `storefront/src/render.ts` `noBuyReason`, the `item.priceDisagrees` branch | Nothing today, and that is the point of the row rather than a reason to skip it. If the string is malformed, or the `.buy-none` section renders it wrongly, the first person to find out is a buyer standing in front of a price that is wrong. | The **wrapper** is proven: `renderBuy` builds the identical `.buy-none` section for the fiat and free branches, and `smoke.test.ts` renders both against live relay data. So what is unproven is one string in a branch whose structure is tested, which is a much smaller claim than "unrendered markup". Closing it properly needs a mismatched item on a real sale, and publishing one is signing. | On the machine with the key: publish a throwaway 30402 whose `price` tag disagrees with its `clink_offer`, load it, look at the sentence, then take it down. Roughly the cost of one `seed-listings.ts` run against a scratch `d`. Alternatively capture that event once into `smoke-fixture.json` and the branch becomes permanently smoke-tested, at the cost of a fixture item that is deliberately broken. |
+
+**Worth keeping either way:** this is the first row in this ledger whose fix is cheap, whose cost
+today is zero, and which exists only because the project decided that "tested" and "has rendered"
+are different claims. Item 8 is what makes that distinction sayable.
+
+---
+
 ## Documentation drift
 
 A different kind of debt, listed so the eventual restructure has a target. **Nothing here was

@@ -189,6 +189,15 @@ body {
 
 .where { color: var(--ink-soft); font-size: 0.9rem; }
 
+/* Item 16. Disclosed staleness is a design property; undisclosed staleness is a lie the page
+   tells. It is quiet on purpose: this is a caveat on the stock line above it, not a warning, and
+   an alarming colour here would make the normal case look broken. */
+.freshness {
+  color: var(--ink-soft);
+  font: 0.8rem/1.4 var(--sans);
+  margin: 0.35rem 0 0;
+}
+
 .empty { color: var(--ink-soft); padding: 2rem 0; }
 
 /* Slice 9. "You scanned a sticker for something that is not here." It sits inside the items
@@ -223,7 +232,11 @@ body {
 
   /* Interactive chrome has no meaning on paper. `.missing` is about a URL somebody typed or
      scanned, which the sheet of paper in your hand did not. */
-  .back, .byline, .missing { display: none; }
+  /* `.freshness` joins them as of item 16, for the same reason and a sharper one: it is phrased
+     relative to now ("as of 2 hours ago"), and the moment it is on paper it is frozen and
+     therefore false. The flyer foot already carries the honest version, which is that this list
+     changes during the sale and the URL is where it changes. */
+  .back, .byline, .missing, .freshness { display: none; }
 
   /* The neighbourhood still prints; the link under it does not, because paper cannot open a
      map app and an underline that does nothing is just an underline. */
