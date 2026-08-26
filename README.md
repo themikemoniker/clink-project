@@ -577,14 +577,16 @@ refundable 1/1, settled 2026-08-21T22:13:28Z` — hours after those two lines we
 **Editing a live sale already works** — slice 6 shipped it: edit any item, restock, mark sold,
 private notes, photos preserved without re-uploading a byte, and the offer reused rather than
 re-minted so a save does not strand a payable pointer on the node. Items 3 and 13 harden that
-path. What none of them fix is M1, which is the reason editing *feels* broken even though it
-works.
+path. What none of them fixed was M1, which was the reason editing *felt* broken even though it
+worked. **M1 landed 2026-08-26**, so that sentence is now about what remains: 11 and M2.
 
-**Why this comes before the unattended work.** Milestone A already fixes the known money-loss
+**Why this came before the unattended work.** Milestone A already fixes the known money-loss
 defects, so D protects against *unknown* bad days — a process dying, a relay lagging. Those are
 rarer than "the seller needs to restock the mugs", which happens continuously during a live sale
-and today costs a file copy and a daemon restart every single time. M1 also reshapes items 11 and
-12, so building D first means building parts of it twice.
+and cost a file copy and a daemon restart every single time until M1. M1 also reshaped items 11
+and 12, so building D first would have meant building parts of it twice. That argument is now
+spent rather than wrong: the reshaping happened, and what it left for 11 and 12 is recorded on
+each of them below.
 
 **~~M1. The ladder has to travel over a relay, not a USB stick~~** **DONE 2026-08-26.** One kind
 30078 per item, `d: lamppost-ladder-<listing d>`, NIP-44 encrypted from the seller to a new
@@ -632,7 +634,8 @@ watcher to every item that device never published.
 - This removes the copy, the restart, and the single-browser dependence in one change. It does
   not remove item 11 — it changes what item 11 is for. See the note there.
 
-**11. Close the ladder-staleness hole on the write side** *(needs M1, and shrinks because of it)*
+**11. Close the ladder-staleness hole on the write side** *(**unblocked 2026-08-26**: M1 is done,
+and 11 shrank exactly as predicted)*
 The availability ladder is cut from one version of the listings. Edit a price, a title or a photo
 without re-cutting it, and the watcher republishes the old text over the new with a newer
 `created_at` — and a relay answers `OK` to a replaceable event it does not store, so this fails
@@ -642,19 +645,37 @@ an edit made while the watcher is running.
 - Have the watcher re-check staleness per tick, not only at startup, and stop publishing rungs
   for an item whose live listing has moved ahead of them.
 - Fail loudly to the operator instead of continuing quietly.
-- **M1 makes the remedy automatic but not the detection.** Once the ladder arrives over a relay,
-  a stale one heals itself on the next edit instead of stranding the seller — but the watcher
-  still needs to notice, for the cases M1 does not cover: the relay did not deliver, or the
-  seller edited from a device whose publish failed. Build the check; it is just no longer the
-  only thing standing between an edit and a silent oversell.
+- **M1 made the remedy automatic but not the detection, and that is exactly how it landed.** A
+  stale ladder now heals itself on the next edit instead of stranding the seller, and the
+  watcher's own STALE LADDER message says "publish the item again from the builder" rather than
+  "download `.ladder.json` and restart" (`watch-sales.ts:358-361`). The detection is still missing,
+  for the cases M1 does not cover: the relay did not deliver, or the seller edited from a device
+  whose publish failed. Build the check; it is just no longer the only thing standing between an
+  edit and a silent oversell.
+- **M1 added one case to build, which did not exist before it.** The watcher now accepts a
+  replacement ladder from a live subscription (`watch-sales.ts:793`) and does **not** re-run
+  `isStale` on it. That is defensible today, because a ladder arriving over a relay was cut from
+  the listing published in the same run, but it is an assumption rather than a check, and it is
+  the one path where a stale ladder can now enter a *running* watcher. Per-tick staleness closes
+  it along with everything else in this item.
+- **What M1 did NOT do, against the first bullet above:** the ladder still carries no stamp of
+  the listing version it was cut from. `isStale` still infers it by comparing rung `created_at`
+  against the live listing, which is why it can only run where a live listing exists.
 
-**M2. Make the seller's state recoverable** *(needs M1)*
-After M1 the ladder survives losing a laptop. The manage pointer still does not: `.nmanage` is
+**M2. Make the seller's state recoverable** *(**unblocked 2026-08-26**: M1 is done)*
+After M1 the ladder survives losing a laptop, and as of 2026-08-26 it demonstrably does. The manage pointer still does not: `.nmanage` is
 pasted per browser and stored in `localStorage`, so a seller on a new device is back at a terminal.
-- **This needs a decision before it needs code.** `docs/status.md`'s traps say the account pointer
-  is "seller's browser only, never a relay, never a log" — an event NIP-44 encrypted to the
-  seller's own key is arguably not "a relay" in the sense that rule means, but it is a relay in
-  the sense that a rule can be read literally. Settle it explicitly and write the reasoning down.
+- **This needs a decision before it needs code, and M1 did not take it.** `docs/status.md`'s traps
+  say the account pointer is "seller's browser only, never a relay, never a log" — an event NIP-44
+  encrypted to the seller's own key is arguably not "a relay" in the sense that rule means, but it
+  is a relay in the sense that a rule can be read literally. Settle it explicitly and write the
+  reasoning down.
+- **M1 is evidence for that decision but not an answer to it.** M1 put the availability ladder,
+  which reveals the seller's lowest stock on every item, into an encrypted 30078 on public relays.
+  So the shape is now proven and the precedent exists. What it does not settle is whether the
+  *account pointer* is the same kind of secret: the ladder is encrypted to a key that owns nothing
+  and spends nothing, whereas `.nmanage` addresses the account itself. Cite M1 when taking this
+  decision; do not treat it as having taken it.
 - If yes: it rides in the same encrypted 30078 as the notes, and a new device is a bunker
   connection and nothing else.
 - If no: say so in the UI, and make re-pasting the pointer a first-class step rather than an
@@ -707,6 +728,11 @@ If it dies, stock goes stale and oversells stop being refunded, and nothing anyw
 - A heartbeat line on every tick so `lpub-log`-style tailing shows liveness.
 - Exit non-zero and loudly on the conditions that must not be papered over: a stale ladder, a
   missing journal, a revoked grant.
+- **M1 added two conditions this has to know about** (2026-08-26). The watcher now prints a
+  startup ladder census and warns loudly when ladder events from the seller arrive and do not
+  decrypt, which means the builder is encrypting to a different `.watcher-key` than this process
+  holds. Both are currently log lines, not exit codes. Supervision should decide which of them a
+  restart can fix (neither) and surface them rather than restarting into the same state.
 - Do not build a monitoring service. A supervisor and a log line is the whole of it.
 
 **~~13. Make publishing robust against a slow relay~~ CLOSED 2026-08-26** *(two bullets moved to A and landed there 2026-08-24; the third landed here)*
