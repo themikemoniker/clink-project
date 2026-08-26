@@ -283,3 +283,57 @@ like.** Under `--refunds` it reads the node's outgoing payments before the first
 - [ ] Refund path tested with a real oversell
 - [ ] A backup archive taken today, and off this machine (§5)
 - [ ] `admin.connect` not on screen, not in any open terminal, not in the slides
+
+---
+
+## 8. Redeploying, and the sticker ordering (item 18, 2026-08-26)
+
+**Verify a deploy against the relays and Blossom, never by opening the URL.** The gateway is a
+cache in front of both and it is the last thing to change — see `/docs/spike-findings.md` §7.
+
+```
+node spike/check-deploy.ts <npub>                 # relays, Blossom, then the gateway. No key
+node spike/check-deploy.ts <npub> --skip-gateway  # only what is actually true
+```
+
+§4 now prints the gateway's own freshness headers and turns them into one verdict, so "did my
+deploy land" has one answer instead of three. How to read it:
+
+| line | what it means |
+|---|---|
+| `cache-control` | printed as sent. `public, max-age=3600` as of 2026-08-26 |
+| `age` | **not sent by nsite.lol.** So the gateway does not tell you how much of its window is left, and §4 falls back to the manifest's own age |
+| `last-modified` | the **blob's** mtime, not the cache entry's. The Blossom origin returns the identical value for the same hash, so it dates the build, not the cache |
+| `etag` | the sha256 of the **decompressed** bytes, weak-tagged (`W/"…"`) when gzip is negotiated. §4 asserts this every run |
+| `HOW LONG IS LEFT` | `WAIT IT OUT` while the manifest is younger than `max-age`; `WAITING IS NOT THE FIX` once it is older and the gateway is still stale |
+
+**The cheap manual check**, because the ETag is the content hash:
+
+```
+curl -sI https://<npub>.nsite.lol/index.html | grep -i etag   # compare to the manifest path tag
+```
+
+**There is no cache-busting escape hatch, and this is measured rather than assumed.** `check-deploy`
+probes two on every stale run and both failed on 2026-08-26 against the live site: a query string
+(`/index.html?nocache=<version>`) and the request header `cache-control: no-cache` (with `pragma:
+no-cache`) each returned the same stale bytes. The stale copy is on the gateway's side and is not
+addressable from a client. Findings §7 recorded the same thing at 70 minutes; this is the same
+answer at four days.
+
+**`max-age=3600` is not a deadline, and the README's item 18 says otherwise.** Measured
+2026-08-26: the live site's manifest was replaced 2026-08-21T18:11:43Z and the gateway was still
+serving the pre-replacement `index.html` **4d 9h later**, which is 106× the advertised window.
+Sections 1 and 2 passed throughout, so the deploy itself had landed. What the mechanism is —
+a long-lived internal cache, a pinned older manifest, a relay set that missed the new one — is
+**UNVERIFIED**; what is measured is that waiting does not clear it and nothing a client sends does
+either. So "budget an hour" is optimistic. Budget on the blobs.
+
+**Print stickers AFTER deploying, never before.** The sheet's QRs encode
+`https://<npub>.nsite.lol/#/item/<d>` (`builder/src/stickers.ts`), so a sheet printed before the
+site has ever been deployed is a page of codes that lead nowhere, and the paper cannot be
+recalled. The builder already says this on screen next to the sheet
+(`builder/src/main.ts:434`). The URL itself is stable across *re*-deploys — it is derived from the
+pubkey — so this binds on the first deploy, not on every one.
+
+**And do not redeploy on the day of the sale.** Not because of an hour, but because the window
+above has no measured upper bound.

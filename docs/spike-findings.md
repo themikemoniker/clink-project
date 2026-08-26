@@ -637,6 +637,43 @@ our manifest is well-formed.
       the gateway was still serving the previous `/index.html`, and the tool said so in those
       words. ⇒ **Do not redeploy on demo day**, or budget an hour before the URL reflects it.
 
+      **Re-measured 2026-08-26, item 18, and the "budget an hour" advice does not survive it.**
+      The live site's kind 15128 was replaced at `2026-08-21T18:11:43Z`; **4d 9h later the
+      gateway was still serving the pre-replacement `index.html`** (`00145a56e12e…`, the build
+      whose blob mtime is `Thu, 20 Aug 2026 23:49:11 GMT`), while sections 1 and 2 of
+      `check-deploy.ts` passed the whole time. That is **106x the advertised `max-age=3600`**.
+      So `max-age` is not a deadline and the previous note's "budget an hour before the URL
+      reflects it" is optimistic. The mechanism is **UNVERIFIED** — a long-lived internal cache,
+      a manifest pinned at fetch time, or a relay set that missed the replacement all fit.
+
+      Four headers, read off the live response rather than assumed:
+
+      | header | what nsite.lol actually sends |
+      |---|---|
+      | `cache-control` | `public, max-age=3600` |
+      | `age` | **not sent at all.** So the gateway does not expose how much of its window is left, and nothing client-side can compute it |
+      | `last-modified` | the **Blossom blob's** mtime, not the cache entry's — `cdn.hzrd149.com` returns the identical value for the same hash, so it dates the build and says nothing about the cache |
+      | `etag` | the sha256 of the **decompressed** bytes, ie. the manifest's own `path` tag. Identity gives `"<sha>"`, gzip gives `W/"<sha>"` — same digest, weak validator. A quote-strip that does not also strip `W/` reports a false mismatch |
+
+      The ETag being the content hash is the useful half: `curl -sI <url>` answers "is the
+      gateway current" with no body. `check-deploy.ts` §4 asserts it every run rather than
+      trusting it.
+
+      **No escape hatch exists, and both candidates were probed rather than reasoned about.**
+      Against the live stale `/index.html` on 2026-08-26: a query string
+      (`?nocache=419f1c8929ec`) returned `00145a56e12e…`, and the request headers
+      `cache-control: no-cache` + `pragma: no-cache` returned `00145a56e12e…`. Same stale bytes
+      both ways. `check-deploy.ts` §4 now runs both probes whenever it finds a stale path, so the
+      claim stays measured instead of ageing into a note.
+
+      **One thing seen while chasing this and not chased further:** the current kind 15128
+      answered from `relay.damus.io`, `nos.lol` and `purplepag.es`, and **not** from
+      `relay.nostr.band` or `relay.primal.net` (both in `SALE_RELAYS`), nor from `nostr.wine` or
+      `relay.snort.social`. `check-deploy.ts` §1 queries the pool as a set and so cannot show
+      this. Whether it explains the gateway's behaviour is **UNVERIFIED** — the gateway's relay
+      set is not ours to see. Reporting per-relay coverage in §1 is a candidate item, not
+      built here.
+
 **Blob hosting was the real constraint, and slice 5 removed it.** Details in §9; summary here
 because it changes what the project can claim.
 
