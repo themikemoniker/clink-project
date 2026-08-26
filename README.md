@@ -243,7 +243,7 @@ made, not duration.
 | | When it is done you can say | Tasks | |
 |---|---|---|---|
 | **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
-| **B** | Nothing on the critical path is unexecuted | 6, 7, 8 | ⚑ — **6 is now unblocked** |
+| **B** | Nothing on the critical path is unexecuted | ~~8~~, 6, 7 | ⚑ (**8 done 2026-08-25**); 6 and 7 both need the machine with the node and the key |
 | **C** | A sale you can change from your phone | M1, 11, M2, M3 | |
 | **D** | Runs unattended for a weekend | 12, **13 (refuse-to-shrink only)**, 14 | |
 | **E** | A stranger can set it up | 15, 16, 17, 18, 19, 26, **27** | ⚑ — 27's first bullet is liftable earlier |
@@ -507,14 +507,44 @@ is the script for one sitting that covers all of it.
   across the publish sequence and record that instead — it is per-site and remembered, not granted.
 - Publish one item, press Deploy, print a sticker sheet, tap a `geo:` link on a phone.
 - Count the actual signature prompts and compare against the predicted 1.
+- **The render-only half is DONE, 2026-08-25, on the machine with no key.** Item 8's harness
+  drives it for free, so what is left here is genuinely only the publish/deploy/sign half.
+  Verified painting against the live sale's events: `noBuyReason` on the fiat item ("Priced in
+  MXN — cash at the table…") and on the free one ("Free — just ask when you get here."),
+  `missingItemNote` on a deep link to a `d` that is not in the sale, the `geo:` link, the
+  `@media print` block in both apps, and the sticker sheet's element and `hidden` state. A
+  sold-out item correctly renders no `.buy` at all. **Five of the six surfaces this item calls
+  "never rendered" have now rendered**; the sticker sheet has still never been *printed* with
+  content in it, because building one needs a signer.
+- **And the `geo:` tap is the one that failed.** It resolves to 20.6261, -103.3930, which is 5.9 km
+  from Colonia Americana, because the corrected geohash was never published. Do not tap it on
+  a phone expecting a pass; republish first.
 
-**8. A smoke test so unrendered markup cannot accumulate again** *(needs 7)*
-There are 58 + 58 unit tests and none of them touch the DOM, which is exactly how five slices of
-markup reached a demo unrendered. Playwright is already installed in `shots/` — reuse it.
-- One headless run per app: load the page, assert the Buy form renders and its required field is
-  present, assert the print stylesheet hides `<main>`.
-- Wire it into `npm test` so it is not a thing anyone remembers to do.
-- Resist building a page-object framework. Two files, a handful of assertions.
+**~~8. A smoke test so unrendered markup cannot accumulate again~~ LANDED 2026-08-25**, and it
+did **not** need item 7 first, which is the part worth keeping. It was written on a second machine
+with no node, no keys and no signer (`docs/status.md`, "THE SECOND MACHINE"), because the DOM is
+not the money path. The two are only coupled in the sentence that said item 8 "needs 7".
+- `storefront/smoke.test.ts` and `builder/smoke.test.ts`, two files, six assertions, wired into
+  `npm test` (`node --test src/*.test.ts smoke.test.ts`) and into `tsconfig.json`'s `include` so
+  `tsc --noEmit` type-checks them. Suites are now **64** in the storefront (61 + 3) and **70** in
+  the builder (67 + 3). No page-object framework, and the run costs ~1.4 s per app.
+- `playwright@1.62.1` as a devDependency in both apps, pinned to the version `shots/` already
+  resolves so the chromium binary is shared and nothing downloads. **Zero bundle cost**: the
+  storefront's cold JS is 31,883 bytes gzip before and after. Reasoning in spec §9.1.
+- **No relay, node or key at test time.** `storefront/smoke-fixture.json` is the real signed kind
+  30402/30405 events read off the four public relays once, replayed through a `window.WebSocket`
+  stub, because `SimplePool` verifies every event and signing a fixture here would put a private
+  key in the codebase against rule 2.
+- **The roadmap bullet above was half wrong and the code said so.** `body > main { display: none }`
+  is the *builder's* print rule; the storefront must print its `<main>` (that is the flyer) and
+  hides `.buy` instead. Each app is asserted against the rule it actually has.
+- Each assertion was **watched failing** before it was trusted: delete `required`, flip
+  `body > main` to `block`, drop the storefront's `@media print { .buy }`. One failure each,
+  all reverted.
+- **It found a defect on its first run**, which is the argument for the whole item: the live sale's
+  `geo:` link points **5.9 km** from the sale. Slice 9 corrected the geohash in `spike/fixture.ts`
+  and never republished, so the relays still serve `9ewmr4z`. See `docs/known-defects.md`, "Added
+  by item 8". **Fixing it is a republish and therefore item 7's machine, not this one.**
 
 **~~23. One real payment into the second seller's sub-account~~ — ALREADY DONE, and nothing knew.**
 This was written on 2026-08-23 as an open item, on the strength of

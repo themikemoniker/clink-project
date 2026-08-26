@@ -972,6 +972,72 @@ above is where it said it.
 - `nsyte` or `nsite-cli` for deploy during development; in-app deploy for the product
 - Watcher: small Node process, no framework
 
+### 9.1 The test stack, and the one dev dependency item 8 added (2026-08-25)
+
+Eleven `node --test` suites across the three packages, no framework, no runner config, no
+assertion library. That stays. What item 8 changed is that **two new ones open a browser**,
+because none of the 170 existing assertions could: `render.test.ts` says so in its own header ("no assertion here says `renderDetail` emits a
+`<main>`"), and five slices of markup reached a demo unrendered in exactly that gap.
+
+**`playwright@1.62.1`, devDependency, added to `/storefront` and `/builder`.** The justification
+rule in `/CLAUDE.md` is about the bundle, and this costs the bundle nothing: it is a
+devDependency, it is never imported by `src/`, and the storefront's cold JS measured **31,883
+bytes gzip before and after**. Three things made it the right call rather than a new stack:
+
+- **It was already a dependency of this repo**, in `shots/`, where it renders the submission PDF.
+  The roadmap's instruction was "reuse it, do not add a second browser automation stack", and the
+  alternative, jsdom, is not a browser and cannot answer the question item 8 asks. Both
+  assertions that matter are about **computed style under `@media print`**, which needs a real
+  engine with a real cascade. jsdom does not implement layout or `getComputedStyle` for print.
+- **It cost no download.** `playwright@1.62.1` wants chromium v1234 (Chrome for Testing
+  151.0.7922.34), which was already in `~/Library/Caches/ms-playwright` from `shots/`. Pinning the
+  exact version `shots/package-lock.json` resolves is what keeps that true. A floating range that
+  drifts to a new revision means a second multi-hundred-MB binary per app.
+- **Three packages own the dep rather than one**, which looks like duplication and is not: each
+  directory is its own npm package with no monorepo tooling (README, "Repo layout"), so a test in
+  `/storefront` can only import what `/storefront` declares. The alternative was putting the
+  product's regression tests in `shots/`, which is explicitly throwaway.
+
+**The tests are `smoke.test.ts` at each package root, and they are wired into `npm test`**
+(`node --test src/*.test.ts smoke.test.ts`) so nobody has to remember them. Both are also in
+`tsconfig.json`'s `include`, so `npm run build`'s `tsc --noEmit` type-checks them. An untyped
+test file drifts silently, which is the same class of problem item 8 exists to close.
+
+**How they get data without a relay, a node or a key, which was the whole design problem.**
+`SimplePool` verifies the signature of every event it accepts (`nostr-tools/lib/esm/index.js`,
+`this.verifyEvent(event, this.url)` in `_onmessage`), so hand-written fixture events are dropped
+before they reach the page and a fixture must be genuinely signed. Signing one in the test suite
+would mean a private key in this codebase, which **rule 2 forbids**. The way out is that the
+signatures already exist in public: `storefront/smoke-fixture.json` is the real kind 30402/30405
+events, read off the four public relays on 2026-08-25 with their real signatures, replayed in the
+browser by a ~30-line `window.WebSocket` stub that answers a `REQ` with every event and then
+`EOSE`. No key, no network at test time, ~1.4 s per app. The assertions are structural, so stock
+counts drifting on the relays does not break them; re-capture with a plain relay read if the sale
+is ever re-cut.
+
+**What these tests deliberately do not assert**, stated so nobody reads more into a green run:
+nothing submits the Buy form, so no kind 21001 is ever sent and the money path is untouched.
+Nothing asserts copy: that is `render.test.ts`'s job and duplicating it here would make both
+brittle. Nothing screenshots or compares pixels; there is no visual-regression baseline and
+adding one is not on any slice. And **nothing checks the relays against the repo**, which is the
+gap that let the live-geohash defect survive (`/docs/known-defects.md`, "Added by item 8"):
+every test in this project reads the repo, and the repo was right while the relays were wrong.
+
+**One correction to the roadmap's own wording, found by reading the code.** Item 8 says "assert
+the print stylesheet hides `<main>`". That is true of the **builder** (`builder/src/style.css`,
+`body > main { display: none }`, where everything in `<main>` is a tool and only the sticker
+sheet belongs on paper). It is false of the **storefront**, where `<main>` is the item grid and
+printing the sale is the entire point of the flyer (design.md §3); its print rule hides `.buy`,
+`.back`, `.byline` and `.missing` instead. Each app is now asserted against the rule it actually
+has.
+
+**Both tests were verified to fail before they were trusted.** Deleting `required` from
+`render.ts`'s refund-pointer field fails the storefront's form assertion; flipping
+`body > main` to `display: block` fails the builder's print assertion; and removing the
+storefront's `@media print { .buy }` block fails its third. All three were reverted and both
+suites re-run green. A smoke test nobody has watched fail is a smoke test that asserts nothing,
+and that is the same mistake as markup nobody has watched render.
+
 ---
 
 ## 10. Build plan — vertical slices

@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src", "vite.config.ts", "../storefront/src", "../spike/ladder.ts", "../spike/fixture.ts"]
+  "include": ["src", "vite.config.ts", "smoke.test.ts", "../storefront/src", "../spike/ladder.ts", "../spike/fixture.ts"]
 }

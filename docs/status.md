@@ -45,9 +45,43 @@ was pre-existing rather than milestone A's: **a BIP-353 address is the same `use
 an LNURL one**, so a Phoenix buyer's refund pointer is accepted at buy time and is useless at
 refund time. That is **roadmap item 27**, and it has a trap in it — see below.
 
-### Before item 6 runs
+### THE SECOND MACHINE: read this before you plan anything (added 2026-08-25)
 
-Item 6 is the demo beat and it is one command, but four things first and two of them are decisions:
+**Everything below about a node, a grant, an account balance and a sold-out `mugs` is true of ONE
+machine, and this file does not say which.** The project was stood up on a second machine on
+2026-08-25 from a fresh clone, and on that machine most of this document describes hardware that
+is not reachable. If you are reading this in a new session, establish which machine you are on
+**first**. The one-command test is `curl -s http://127.0.0.1:1776/api/health`.
+
+**What the second machine has.** Node v24.6.0, npm 11.5.1. All three packages install and pass
+from a cold clone. Playwright's chromium (v1234, Chrome for Testing 151.0.7922.34) was already in
+`~/Library/Caches/ms-playwright`, so item 8 cost no browser download. The four public relays and
+the four Blossom servers are reachable, so **every read-only path works here**: the live storefront
+renders, `check-admin.ts` passes, `check-deploy.ts` passes.
+
+**What it does not have, and cannot get without a person.** No Lightning.Pub (nothing answers
+`127.0.0.1:1776`), no LND, no `lncli`. **None of the gitignored state exists**: `spike/.dev-key`,
+`.offers.json`, `.ladder.json`, `.refund-key`, `.nmanage`, `.ndebit`, `.refunds.json`, and there
+is no other clone on the disk to copy them from. The seller key is not in a NIP-07 extension in
+this browser profile. `.dev-key` is the seller identity and the 9,000 sats; it exists on the other
+machine and its backup is on one disk (see "The one thing milestone A could not close").
+
+**Therefore, unreachable from here, and it is not a short list:**
+
+| | why |
+|---|---|
+| **Item 6**, pay one real refund | Needs the node, the live 8,000/day debit grant, `.refund-key`, and the one remaining oversell on `mugs`. All four are on the other machine. The gates in the header above (re-cap the frequency cap, decide about the kill switch, run the watcher from a terminal) are decisions **for that machine** and cannot be taken here |
+| **Item 7's publish and deploy half** | Needs the seller key in a signer. nos2x on the other machine holds it; this browser profile has no NIP-07 extension at all |
+| Everything in `/spike` that signs or spends | `mint-offers.ts`, `seed-listings.ts`, `watch-sales.ts`, `check-buy.ts`, `check-manage.ts`, `authorize-manage.ts`, `authorize-refunds.ts`, `check-refund.ts`, `sales-report.ts`, `deploy-nsite.ts`, `export-key-qr.ts`. Each throws on a missing key file, or needs the node, or both |
+| `shots/npm run capture` | The Buy screenshot sends a real kind 21001 and needs the node up |
+| Any correction to what is ON the relays | Republishing is signing. See the geohash row in `/docs/known-defects.md`: a defect found here that **cannot be fixed here** |
+
+**Reachable from here, and proven on 2026-08-25:** all three test suites, both builds, both size
+budgets, both dev servers, `check-admin.ts`, `check-deploy.ts`, item 7's **render-only** half, and
+item 8 in full. That is enough to keep the roadmap moving without the hardware; it is not enough
+to close milestone B, which is by definition about things that have executed on real hardware.
+
+### Before item 6 runs
 
 1. **The pointer must be an LNURL-pay address.** `mugs` is sold out 3/3, so there is exactly
    **one** oversell available and no way to make another without restocking. Pointing it at a
@@ -179,14 +213,16 @@ Nothing here needs a build step; Node 24 runs the `.ts` files directly.
 ```bash
 # storefront
 cd storefront
-npm test            # 58 tests, node --test, no framework
+npm test            # 64 tests, node --test, no framework. 61 unit + 3 headless (smoke.test.ts,
+                    # item 8). The smoke run builds, serves dist/ and drives chromium; it needs
+                    # NO relay, node or key. The relay read is stubbed from smoke-fixture.json
 npm run build       # tsc --noEmit && vite build
 npm run size        # raw + gzip per asset
 npm run dev         # http://localhost:5173
 
 # the money path, against the running node
 cd spike
-npm test                               # 27 tests, node --test — the ladder and the refund journal
+npm test                               # 42 tests, node --test — the ladder and the refund journal
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
 node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
                                        # --pay REFUSES without --pointer as of slice 8: a settled

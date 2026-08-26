@@ -158,6 +158,24 @@ address a test server can bind is one `isPrivateAddress` correctly refuses.
 
 ---
 
+## Added by item 8 (2026-08-25)
+
+One row, and it is the first defect in this ledger that was found by a test rather than by
+reading. It is also the first that **cannot be fixed on the machine that found it**: the fix is
+a republish, and republishing is signing.
+
+| what breaks | where | what it costs a user | why it is deferred | what fixing it looks like |
+|---|---|---|---|---|
+| **The `geo:` link on the LIVE sale points 5.9 km away from the sale.** Slice 9 found the fixture's geohash had been wrong since slice 1 and corrected `spike/fixture.ts` `g` from `9ewmr4z` to `9ewmxg9`, **and never republished.** The kind 30405 on all four public relays still carries `9ewmr4z`, `created_at` 2026-08-21T02:30:59Z, which decodes to 20.6261, -103.3930 against Colonia Americana's 20.6742, -103.3683. Verified 2026-08-25 by decoding the `g` tag off a live relay read and by rendering the page: `<a class="where-link" href="geo:20.6261,-103.3930">Colonia Americana, Guadalajara</a>`. The repo is right and the relays are wrong, which is the opposite of the failure slice 9's note describes and is why nobody caught it: `spike/fixture.ts` reads as fixed, and every test that reads the fixture agrees. | the kind 30405 `yardsale-2026-08` on the four relays, against `spike/fixture.ts:47` | A buyer who taps the neighbourhood link on the live storefront (the exact gesture roadmap item 7 exists to perform) is sent to a point 5.9 km southwest of the sale. On the day, that is a person who does not arrive. The `location` tag beside it still reads correctly, so the page is self-contradicting rather than merely wrong. | The fix is `node seed-listings.ts`, which signs with `.dev-key` and publishes to four public relays. Neither the key nor the authority to publish exists on the machine that found this (see `/docs/status.md`, "THE SECOND MACHINE"), and this session was scoped to nothing that signs. | `node seed-listings.ts` on the machine with the key, then re-read the `g` tag to confirm. **Note the trap:** that script also re-cuts `.ladder.json`, so it is not a casual run. Do it deliberately, with the watcher stopped, and check `check-admin.ts` §4 afterwards. Cheaper alternative if a full re-seed is unwanted: republish the kind 30405 alone, since the geohash lives on the sale event and not on any 30402. |
+
+**The general lesson, which is worth more than the row.** A corrected constant in the repo and a
+stale event on a relay are indistinguishable to every test in this project, because all of them
+read the repo. The relays are the deployment target and nothing verifies them against the source.
+`check-deploy.ts` compares Blossom and the gateway against the **manifest**, not the listing
+content against the fixture, so it passes on this defect, and did.
+
+---
+
 ## Documentation drift
 
 A different kind of debt, listed so the eventual restructure has a target. **Nothing here was
