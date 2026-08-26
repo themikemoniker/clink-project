@@ -28,6 +28,9 @@
 // An item with no `stock` tag is one unit — that is what "for sale, then gone" means, and it
 // is how storefront/src/listing.ts already reads it (`stock: undefined` = "the seller did not
 // say", with `status` carrying the sold/not-sold answer).
+// `Event` is a type-only import, erased at build time, so it costs the bundle nothing.
+import type { Event } from 'nostr-tools/pure'
+
 export const unitsOf = (stock: string | undefined): number =>
   stock === undefined ? 1 : Number(stock)
 
@@ -94,3 +97,125 @@ export const nofferOf = (
   fallback?: string,
 ): string | undefined =>
   rung.noffer ?? rung.steps.flatMap(step => step.tags).find(t => t[0] === 'clink_offer')?.[1] ?? fallback
+
+
+// ---------------------------------------------------------------------------------------------
+// M1: the ladder travels over a relay instead of a USB stick.
+//
+// Everything in this block is the half both sides share and neither side needs a key for. The
+// builder encrypts, the watcher decrypts, and the two have to agree on where the event lives, how
+// big a payload is allowed to be, and which ladder wins when both a relay and a file have one.
+//
+// It changes the TRANSPORT and nothing else. `stepFor` in watch-sales.ts still re-verifies every
+// rung's signature before publishing it, on the standing rule that nothing is published on the
+// strength of where it was loaded from, so arriving over a relay buys a rung no authority that
+// arriving in a file did not.
+
+/** NIP-78 addressable application data, the same kind builder/src/notes.ts already uses. */
+export const LADDER_KIND = 30078
+
+// The ladder `d` mirrors the item's own `d` rather than being a name of its own, so that the pair
+// is legible on a relay and so that two sales by one seller cannot collide: NIP-01 replaces on
+// (kind, pubkey, d), and a shared `d` would mean the second sale silently overwrote the first.
+//
+// The prefix is clear of both neighbours on this kind. CLINK Beacon reserves `clink-*` on kind
+// 30078 (`clink-beacon.md:195`, via /docs/clink-notes.md §6) and the running Lightning.Pub still
+// publishes its own beacon under the legacy `d = "Lightning.Pub"` (`nostrPool.ts:53`), while
+// `lamppost-shop` is taken by the private notes (builder/src/notes.ts:25).
+//
+// One argument, not two, and deliberately: the composed listing `d` is what both callers already
+// hold. The builder has `listingD(sale.d, draft.slug)` at publish.ts:61 and the ladder file is
+// keyed by the same string (seed-listings.ts:250). Taking (saleD, slug) here would put a second
+// copy of the `${saleD}-${slug}` join rule in this file, where it could drift away from the one
+// in builder/src/sale.ts:77 that decides what the listing is actually called.
+export const ladderD = (listingD: string): string => `lamppost-ladder-${listingD}`
+
+// Bounds on a payload that decrypted, because "it decrypted" only proves the seller encrypted it,
+// not that what came back is what went in. Same discipline as `parseNotes` in
+// builder/src/notes.ts: cap the plaintext, cap the entry count, never throw.
+//
+// 65,535 is NIP-44's plaintext ceiling and therefore the real cap here, not a round number chosen
+// for looking like one. It is also why M1 is one event per item: measured 2026-08-26, the whole
+// Mérida shop with photos is 57,741 bytes, 88.1% of this, and breaks at about nine items, while
+// the fattest single item in it is 19,906 bytes, 30% of this.
+export const MAX_LADDER_PLAINTEXT = 65_535
+// A rung per unit, and the per-item ceiling is roughly 46 units of a photo-carrying item
+// (/README.md, M1). This is the "no yard sale has this many" bound, not a protocol limit.
+export const MAX_RUNGS = 256
+
+/** One item's ladder: what `builder/src/publish.ts:44` writes and `watch-sales.ts` publishes. */
+export type Rung = { units: number; noffer?: string; steps: Event[] }
+
+/**
+ * Bounded parse of a decrypted ladder payload. Never throws; a corrupt one reads as no ladder.
+ *
+ * This is the one genuinely new surface M1 adds. Everything else on the path is already checked:
+ * the query filters on the seller's own pubkey and nostr-tools verifies the signature, so only
+ * the seller's events arrive, and NIP-44 decryption with (watcher private, seller public) only
+ * succeeds if the seller encrypted it. What is left is the JSON inside, which is why it is
+ * bounded here and re-verified again downstream.
+ *
+ * Steps are checked for shape and not for validity, on purpose. A step is an event only once its
+ * signature verifies, and that is `stepFor`'s job at the moment of publishing, against the live
+ * listing. Verifying here as well would be the same work done twice and would still not be the
+ * check that matters, because the ladder can go stale between arriving and being used.
+ */
+export const parseRung = (plaintext: string): Rung | undefined => {
+  if (typeof plaintext !== 'string' || plaintext.length > MAX_LADDER_PLAINTEXT) return undefined
+  let value: unknown
+  try {
+    value = JSON.parse(plaintext)
+  } catch {
+    return undefined
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const { units, noffer, steps } = value as Record<string, unknown>
+  if (typeof units !== 'number' || !Number.isInteger(units) || units < 0) return undefined
+  if (!Array.isArray(steps) || steps.length > MAX_RUNGS) return undefined
+  if (steps.some(s => !s || typeof s !== 'object' || Array.isArray(s))) return undefined
+  if (noffer !== undefined && typeof noffer !== 'string') return undefined
+  return { units, ...(noffer === undefined ? {} : { noffer }), steps: steps as Event[] }
+}
+
+/** Where the ladder the watcher is about to use actually came from. */
+export type LadderChoice = { rung?: Rung; source: 'relay' | 'file' | 'none'; warn?: string }
+
+/**
+ * Which ladder wins for one item, given what the relays said and what is on disk.
+ *
+ * Pure, and separate from the subscription, so that every branch is testable without a relay.
+ *
+ * The relay wins whenever it produced a ladder, because that is what the seller published most
+ * recently and the file is whatever they last carried across by hand. The file stays as the
+ * cold-start fallback rather than being deleted: it is what makes a first run work before the
+ * seller has ever published a ladder, and what keeps a sale running when the relays are down.
+ *
+ * A FAILED read and an ABSENT ladder are deliberately different branches even though both fall
+ * back to the file. watch-sales.ts:204 already binds the rule: "the relay is down" must not read
+ * as "your ladder is stale". Their remedies differ, so their sentences differ. Waiting fixes one;
+ * only re-publishing fixes the other.
+ */
+export const chooseLadder = (
+  relay: Rung | undefined,
+  file: Rung | undefined,
+  relayFailed: boolean,
+): LadderChoice => {
+  // One relay answering is enough to know what the seller last published. That three others timed
+  // out does not make it less true, so a relay ladder wins even from a partly broken read.
+  if (relay) return { rung: relay, source: 'relay' }
+  if (file)
+    return {
+      rung: file,
+      source: 'file',
+      warn: relayFailed
+        ? 'could not read a ladder from the relays, so this is the file on disk and it may be ' +
+          'older than what the seller last published'
+        : undefined,
+    }
+  return {
+    source: 'none',
+    warn: relayFailed
+      ? 'no ladder: the relays could not be read and there is none on disk either'
+      : 'no ladder on the relays and none on disk, so this item is not watched',
+  }
+}

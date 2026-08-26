@@ -9,7 +9,19 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools/pure'
 import { parseListings } from '../storefront/src/listing.ts'
-import { atStock, isStale, nofferOf, targetStock, unitsOf } from './ladder.ts'
+import {
+  atStock,
+  chooseLadder,
+  isStale,
+  LADDER_KIND,
+  ladderD,
+  MAX_LADDER_PLAINTEXT,
+  MAX_RUNGS,
+  nofferOf,
+  parseRung,
+  targetStock,
+  unitsOf,
+} from './ladder.ts'
 
 const sk = generateSecretKey()
 const PK = getPublicKey(sk)
@@ -142,4 +154,98 @@ test('a one-of-a-kind item is watchable, which is the case inference used to los
   // The file wins over the tag: an edit that re-priced the item re-minted the offer, and the
   // freshly cut ladder is the one that knows which offer the new listing actually points at.
   assert.equal(nofferOf({ noffer: ON_FILE, steps: three }), ON_FILE)
+})
+
+// ---------------------------------------------------------------------------------------------
+// M1: the ladder travels over a relay instead of a USB stick.
+//
+// Everything below is the keyless half — the part both the builder (which encrypts) and the
+// watcher (which decrypts) have to agree on, and none of it touches a private key. The transport
+// is the only thing changing; `stepFor` in watch-sales.ts still re-verifies every rung before it
+// publishes one, so these tests are about addressing, bounds and precedence, not about trust.
+
+test('the ladder event is addressed to match the listing it belongs to', () => {
+  // The ladder `d` mirrors the item's own `d` so the pair is obvious on a relay, and so two sales
+  // by the same seller cannot land on one another: NIP-01 replaces on (kind, pubkey, d), so a
+  // colliding `d` would silently overwrite the other sale's ladder.
+  assert.equal(ladderD('yardsale-2026-08-lamp'), 'lamppost-ladder-yardsale-2026-08-lamp')
+  assert.notEqual(ladderD('a'), ladderD('b'))
+
+  // The prefix is clear of both neighbours on this kind. CLINK Beacon reserves `clink-*`
+  // (`clink-beacon.md:195`, via /docs/clink-notes.md §6) and the running Lightning.Pub still
+  // publishes a legacy `d = "Lightning.Pub"` (`nostrPool.ts:53`); notes.ts takes `lamppost-shop`.
+  assert.equal(ladderD('x').startsWith('clink-'), false)
+  assert.notEqual(ladderD('x'), 'lamppost-shop') // builder/src/notes.ts:25
+  assert.equal(LADDER_KIND, 30078, 'NIP-78 addressable application data, same kind as the notes')
+})
+
+test('a ladder payload that did not come from us reads as no ladder, and never throws', () => {
+  // The decrypted plaintext is the one genuinely new attack surface M1 adds: everything else on
+  // the path is signature-verified before we look at it. Same bounds discipline as `parseNotes`
+  // in builder/src/notes.ts, and the same contract — a corrupt payload is "no ladder", not an
+  // exception that takes the watcher down mid-sale.
+  const good = { units: 3, noffer: 'noffer1abc', steps: [{ created_at: 1 }, { created_at: 2 }] }
+  assert.deepEqual(parseRung(JSON.stringify(good)), good, 'a payload we wrote round-trips whole')
+
+  assert.equal(parseRung('not json at all'), undefined)
+  assert.equal(parseRung(''), undefined)
+  assert.equal(parseRung('null'), undefined)
+  assert.equal(parseRung('[]'), undefined, 'an array is not a rung')
+  assert.equal(parseRung('"a string"'), undefined)
+  assert.equal(parseRung('{}'), undefined, 'no units and no steps is not a rung')
+  assert.equal(parseRung(JSON.stringify({ units: 3 })), undefined, 'units without steps')
+  assert.equal(parseRung(JSON.stringify({ steps: [] })), undefined, 'steps without units')
+  assert.equal(parseRung(JSON.stringify({ units: 'three', steps: [] })), undefined)
+  assert.equal(parseRung(JSON.stringify({ units: -1, steps: [{}] })), undefined, 'negative units')
+  assert.equal(parseRung(JSON.stringify({ units: 1, steps: {} })), undefined, 'steps must be a list')
+  assert.equal(parseRung(JSON.stringify({ units: 1, steps: ['not an event'] })), undefined)
+  assert.equal(parseRung(JSON.stringify({ units: 1, steps: [{}], noffer: 42 })), undefined)
+
+  // Bounded by size and by count, so a relay cannot hand us something that costs more to reject
+  // than to accept. The fattest real item in the Mérida sale is 19,906 bytes.
+  assert.equal(parseRung('x'.repeat(MAX_LADDER_PLAINTEXT + 1)), undefined, 'oversized plaintext')
+  const tooMany = { units: 1, steps: Array.from({ length: MAX_RUNGS + 1 }, () => ({ created_at: 1 })) }
+  assert.equal(parseRung(JSON.stringify(tooMany)), undefined, 'more rungs than any yard sale has')
+})
+
+test('precedence: the relay wins when it decrypts, the file is the cold-start fallback', () => {
+  // The four branches of the decision, and the reason the middle two are not one branch:
+  // watch-sales.ts:204 already binds the rule this must not break — "the relay is down" must not
+  // read as "your ladder is stale". A failed read and an absent ladder are different sentences
+  // because their remedies are different: one is waiting, the other is publishing.
+  const RELAY = { units: 3, steps: [{ created_at: 9 }] }
+  const FILE = { units: 2, steps: [{ created_at: 1 }] }
+
+  const fromRelay = chooseLadder(RELAY, FILE, false)
+  assert.equal(fromRelay.rung, RELAY, 'a ladder that decrypted outranks the file on disk')
+  assert.equal(fromRelay.source, 'relay')
+  assert.equal(fromRelay.warn, undefined)
+
+  // A relay that answered with nothing is the ordinary cold start: the seller has not published
+  // a ladder over a relay yet, and the file they copied across is still exactly right.
+  const coldStart = chooseLadder(undefined, FILE, false)
+  assert.equal(coldStart.rung, FILE)
+  assert.equal(coldStart.source, 'file')
+  assert.equal(coldStart.warn, undefined, 'no relay ladder yet is not a fault worth shouting about')
+
+  // A relay we could not read is a fault, and the file we fall back to may be older than what the
+  // seller last published. Watching it is still better than not watching, but it is not silent.
+  const failedOver = chooseLadder(undefined, FILE, true)
+  assert.equal(failedOver.rung, FILE)
+  assert.equal(failedOver.source, 'file')
+  assert.match(String(failedOver.warn), /relay/i, 'and it says which half failed')
+
+  const nothing = chooseLadder(undefined, undefined, false)
+  assert.equal(nothing.rung, undefined)
+  assert.equal(nothing.source, 'none')
+  assert.match(String(nothing.warn), /ladder/i, 'an unwatched item has to be named, not skipped')
+
+  const nothingAfterFailure = chooseLadder(undefined, undefined, true)
+  assert.equal(nothingAfterFailure.source, 'none')
+  assert.match(String(nothingAfterFailure.warn), /relay/i)
+
+  // A relay ladder still wins even when the read was partially broken: one relay answering is
+  // enough to know what the seller last published, and three others timing out does not make it
+  // less true.
+  assert.equal(chooseLadder(RELAY, FILE, true).source, 'relay')
 })
