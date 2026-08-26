@@ -41,6 +41,7 @@ import { buildSheet, stickerItems } from './stickers.ts'
 import { loadNotes, saveNotes, MAX_NOTE, type Notes } from './notes.ts'
 import { approvalCount, normaliseSlug, type Draft } from './listing.ts'
 import { decodeNmanage, type ManagePointer } from './manage.ts'
+import { watcherPubkey, WATCHER_KEY } from './ladder-relay.ts'
 import { BLOSSOM, resize, upload } from './photos.ts'
 import { deploy, DEFAULT_GATEWAY, loadStorefront, siteUrl, storefrontPaths, type DeployStep } from './deploy.ts'
 import { downloadLadder, ladderFile, publish, publishSale, RELAYS, type LadderFile, type Step } from './publish.ts'
@@ -61,6 +62,8 @@ const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)
 
 let signer: Signer | null = null
 let node: ManagePointer | null = null
+// M1: the watcher's pubkey, pasted once. Null means the ladder is still a downloaded file.
+let watcher: string | null = null
 let photos: PhotoBlob[] = []
 // The servers that actually stored EVERY rendition, straight from upload(). Not the BLOSSOM
 // constant: `imeta fallback` means "in case `url` fails" (NIP-94, via listing.ts `imetaTag`), so
@@ -221,6 +224,36 @@ const setNode = (raw: string, remember: boolean) => {
   refreshCost()
 }
 
+// --- watcher (M1) -----------------------------------------------------------------------------
+// Pasted, not discovered, and that is the security property rather than a shortcut. The builder
+// has to know which pubkey to trust BEFORE it encrypts: encrypting to an attacker's key would
+// hand them the lowest stock on every item in the sale. Generating the key here is out under
+// /CLAUDE.md rule 2, so the watcher generates it, prints its npub on first run, and a human
+// carries it once. The same shape `.nmanage` already has.
+const setWatcher = (raw: string, remember: boolean) => {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    watcher = null
+    $('#watcher-state').textContent =
+      'No watcher key — the ladder stays a file you download and copy across by hand.'
+    refreshCost()
+    return
+  }
+  const pk = watcherPubkey(trimmed)
+  if (!pk) {
+    watcher = null
+    $('#watcher-state').textContent =
+      'That is not an npub. Run `node spike/watch-sales.ts` once and paste the npub it prints.'
+    refreshCost()
+    return
+  }
+  watcher = pk
+  $('#watcher-state').textContent =
+    `Watcher ${pk.slice(0, 8)}… Ladders publish encrypted to this key, so no file has to move.`
+  if (remember) localStorage.setItem(WATCHER_KEY, trimmed)
+  refreshCost()
+}
+
 // --- the draft --------------------------------------------------------------------------------
 const readDraft = (): Draft => {
   const draft: Draft = {
@@ -256,7 +289,7 @@ const refreshCost = () => {
   // M3: never for a fiat item. `approvalCount` and publish.ts enforce the same thing, so the
   // number shown here cannot drift from the events actually signed.
   const mint = !!node && draft.stock > 0 && !draft.noffer && !draft.fiat
-  const n = approvalCount(draft, mint, uploads)
+  const n = approvalCount(draft, mint, !!watcher, uploads)
   const units = Math.max(0, draft.stock)
   const parts = [
     ...(uploads ? [`${uploads} photo upload${uploads === 1 ? '' : 's'}`] : []),
@@ -265,6 +298,9 @@ const refreshCost = () => {
     ...(draft.fiat ? [`0 offers — priced in ${draft.fiat.currency}, so it stays cash at the table`] : []),
     '1 listing',
     `${units} availability step${units === 1 ? '' : 's'}`,
+    // M1: one more signature, and only when there is a watcher to encrypt it to. The encryption
+    // itself is not a signature and is not counted.
+    ...(watcher ? ['1 encrypted ladder for your watcher'] : []),
   ]
   $('#cost').textContent =
     `${n} signature${n === 1 ? '' : 's'}: ${parts.join(' + ')}. ` +
@@ -354,7 +390,7 @@ const doPublish = async (event: SubmitEvent) => {
   $('#publish').toggleAttribute('disabled', true)
   try {
     const wasEdit = editing?.d === saleListingD(sale.d, draft.slug)
-    const result = await publish(signer, node, draft, sale, onStep)
+    const result = await publish(signer, node, draft, sale, onStep, watcher)
     ladder = { ...ladder, [result.d]: result.ladder[result.d]! }
     saveLadder()
     resetItem()
@@ -362,11 +398,21 @@ const doPublish = async (event: SubmitEvent) => {
     $('#result-text').textContent =
       `${draft.title} is live on ${result.relaysOk}/${RELAYS.length} relays as ${result.d}` +
       (result.noffer ? ', with a Buy button.' : ', cash at the table.')
+    // M1. Three outcomes, and they are deliberately three different sentences. The old
+    // instruction survives verbatim for a seller with no watcher key, because for them nothing
+    // has changed. The edit warning follows the FILE path in both cases where it is still true,
+    // and disappears on the relay path, because that is the whole point: the ladder the watcher
+    // is holding has just been replaced by this one.
+    const editWarning = wasEdit
+      ? ' You just edited an item, so this is not optional: the rungs your watcher is holding were cut from the OLD listing and are now older than what is on the relays, which means it would publish them and the relay would ignore it. It would keep reporting success while the item stayed on sale after it sold. Restarting the watcher on this file is what closes that.'
+      : ''
+    const items = `${Object.keys(ladder).length} item(s) in this ladder.`
     $('#ladder-note').textContent =
-      `${Object.keys(ladder).length} item(s) in this ladder. Save it as .ladder.json next to watch-sales.ts, then restart the watcher.` +
-      (wasEdit
-        ? ' You just edited an item, so this is not optional: the rungs your watcher is holding were cut from the OLD listing and are now older than what is on the relays, which means it would publish them and the relay would ignore it. It would keep reporting success while the item stayed on sale after it sold. Restarting the watcher on this file is what closes that.'
-        : '')
+      result.ladderRelaysOk === undefined
+        ? `${items} Save it as .ladder.json next to watch-sales.ts, then restart the watcher.${editWarning}`
+        : result.ladderRelaysOk > 0
+          ? `${items} Sent encrypted to your watcher on ${result.ladderRelaysOk}/${RELAYS.length} relays, so there is no file to copy and nothing to restart. The download stays here as a backup.`
+          : `${items} The ladder could NOT be sent to your watcher: no relay accepted it. The item is published and really for sale, but your watcher has not been told about it. Save it as .ladder.json next to watch-sales.ts and restart the watcher, or publish again once the relays answer.${editWarning}`
     void loadPanel(false)
   } catch (err) {
     say(err instanceof Error ? err.message : String(err), 'bad')
@@ -835,6 +881,7 @@ $('#disconnect').addEventListener('click', () => {
   say('Disconnected.', 'ok')
 })
 $('#node-input').addEventListener('change', e => setNode((e.target as HTMLInputElement).value, true))
+$('#watcher-input').addEventListener('change', e => setWatcher((e.target as HTMLInputElement).value, true))
 $('#photo').addEventListener('change', e => void onPhoto(e.target as HTMLInputElement))
 $('#item').addEventListener('submit', e => void doPublish(e as SubmitEvent))
 for (const id of ['#price', '#stock', '#title']) $(id).addEventListener('input', refreshCost)
@@ -861,6 +908,11 @@ const saved = localStorage.getItem(NODE_KEY)
 if (saved) {
   $<HTMLInputElement>('#node-input').value = saved
   setNode(saved, false)
+}
+const savedWatcher = localStorage.getItem(WATCHER_KEY)
+if (savedWatcher) {
+  $<HTMLInputElement>('#watcher-input').value = savedWatcher
+  setWatcher(savedWatcher, false)
 }
 showSigner()
 showSale()

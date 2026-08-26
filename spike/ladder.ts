@@ -124,7 +124,7 @@ export const LADDER_KIND = 30078
 // `lamppost-shop` is taken by the private notes (builder/src/notes.ts:25).
 //
 // One argument, not two, and deliberately: the composed listing `d` is what both callers already
-// hold. The builder has `listingD(sale.d, draft.slug)` at publish.ts:61 and the ladder file is
+// hold. The builder has `listingD(sale.d, draft.slug)` at publish.ts:65 and the ladder file is
 // keyed by the same string (seed-listings.ts:250). Taking (saleD, slug) here would put a second
 // copy of the `${saleD}-${slug}` join rule in this file, where it could drift away from the one
 // in builder/src/sale.ts:77 that decides what the listing is actually called.
@@ -143,7 +143,7 @@ export const MAX_LADDER_PLAINTEXT = 65_535
 // (/README.md, M1). This is the "no yard sale has this many" bound, not a protocol limit.
 export const MAX_RUNGS = 256
 
-/** One item's ladder: what `builder/src/publish.ts:44` writes and `watch-sales.ts` publishes. */
+/** One item's ladder: what `builder/src/publish.ts:47` writes and `watch-sales.ts` publishes. */
 export type Rung = { units: number; noffer?: string; steps: Event[] }
 
 /**

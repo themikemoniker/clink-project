@@ -205,11 +205,22 @@ export const eventsToSign = (
  * uploads nothing — the blobs are already on Blossom and slice 6's `admin.ts` rebuilds their
  * descriptors from the URLs — so it passes 0 and the count stops over-stating the cost by three.
  */
-export const approvalCount = (draft: Draft, mintOffer: boolean, uploads = draft.blobs.length): number =>
+export const approvalCount = (
+  draft: Draft,
+  mintOffer: boolean,
+  toWatcher: boolean,
+  uploads = draft.blobs.length,
+): number =>
   uploads + // one kind 24242 per blob — NEVER batch them (findings §9)
   // A fiat item never mints, whatever the caller asked for. The number this shows and the number
   // publish.ts actually signs have to be the same one, and enforcing it in both places rather
   // than trusting the call sites is the cheaper half of "unpayable" being a property.
   (mintOffer && !draft.fiat ? 1 : 0) + // the kind 21003 CLINK Manage create
   1 + // the listing
-  unitsOf(String(draft.stock)) // the ladder
+  unitsOf(String(draft.stock)) + // the ladder
+  // M1: and the ladder now travels as its own encrypted kind 30078, one per item, so it is one
+  // more signature whenever a watcher is configured to receive it. Required rather than defaulted
+  // so a call site that has not thought about it cannot silently under-count. The encryption is
+  // not counted: this number is rendered as "N signatures", so it means signEvent calls, and
+  // `nip44_encrypt` is a separate signer method that signs nothing.
+  (toWatcher ? 1 : 0)

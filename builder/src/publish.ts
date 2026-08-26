@@ -4,12 +4,13 @@
 //
 // No key here either — everything that signs goes through the Signer.
 import { SimplePool } from 'nostr-tools/pool'
-import type { Event } from 'nostr-tools/pure'
+import type { Event, VerifiedEvent } from 'nostr-tools/pure'
 import { SALE_RELAYS } from '../../spike/fixture.ts'
 import { parseListings, parseSales } from '../../storefront/src/listing.ts'
 import { unitsOf } from '../../spike/ladder.ts'
 import { mintOffer, type ManagePointer } from './manage.ts'
 import { eventsToSign, type Draft } from './listing.ts'
+import { ladderEvent, publishLadder } from './ladder-relay.ts'
 import { listingD, saleTemplate, type SaleDraft } from './sale.ts'
 import type { Signer } from './signer.ts'
 
@@ -28,6 +29,8 @@ export type Published = {
   listing: Event
   ladder: LadderFile
   relaysOk: number
+  /** How many relays took the encrypted ladder, or undefined when no watcher is configured. */
+  ladderRelaysOk?: number
 }
 
 // EXACTLY the shape /spike/watch-sales.ts reads: { [d]: { units, noffer?, steps[] } }, steps[i]
@@ -56,6 +59,7 @@ export const publish = async (
   draft: Draft,
   sale: SaleDraft,
   onStep: (step: Step) => void,
+  watcher: string | null = null,
 ): Promise<Published> => {
   const pubkey = await signer.getPublicKey()
   const d = listingD(sale.d, draft.slug)
@@ -154,6 +158,21 @@ export const publish = async (
     if (rung.sold !== (target === 0)) throw new Error(`Availability step ${i + 1} disagrees about being sold. Nothing was published.`)
   }
 
+  // --- 3b. sign the ladder for the watcher (M1) --------------------------------------------
+  // Signed HERE, after verification and before a single event has been published, so that every
+  // approval the seller was quoted is asked for in one run. Signing it after the listing went out
+  // would mean a decline at the last prompt left the item live on the relays with no ladder
+  // anywhere, which is the exact half-published state step 3 exists to prevent.
+  //
+  // It is skipped entirely when no watcher pubkey is configured, and `approvalCount` is passed
+  // the same condition, so the number shown to the seller cannot drift from the events signed.
+  const rung = { units: unitsOf(String(draft.stock)), noffer, steps }
+  let ladderEv: VerifiedEvent | undefined
+  if (watcher) {
+    onStep({ kind: 'sign', text: 'Signing the ladder for your watcher…', done: 0, total: 1 })
+    ladderEv = await ladderEvent(signer, watcher, d, rung)
+  }
+
   // --- 4. publish the listing (and only the listing) ---------------------------------------
   // The rungs are NOT published. Publishing the stock-0 rung would mark the item sold
   // immediately: NIP-01 keeps the newest event per (kind, pubkey, d) and the rungs carry later
@@ -165,8 +184,19 @@ export const publish = async (
       .publish(RELAYS, listing)
       .map(p => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8_000))])),
   )
-  pool.close(RELAYS)
   const relaysOk = results.filter(r => r.status === 'fulfilled').length
+
+  // --- 5. send the ladder (M1) --------------------------------------------------------------
+  // A ladder that does not land is NOT a failed publish. The listing is already on the relays and
+  // the item is really for sale, so throwing here would tell the seller a true thing in a way
+  // that reads as false. The file remains, the watcher's precedence still falls back to it, and
+  // main.ts says which of the two happened.
+  let ladderRelaysOk: number | undefined
+  if (ladderEv) {
+    onStep({ kind: 'publish', text: 'Sending the ladder to your watcher…' })
+    ladderRelaysOk = await publishLadder(pool, ladderEv, RELAYS).catch(() => 0)
+  }
+  pool.close(RELAYS)
   if (relaysOk === 0) throw new Error('No relay accepted the listing. It is signed but nobody can see it — try again.')
 
   onStep({ kind: 'done', text: `Published to ${relaysOk}/${RELAYS.length} relays.` })
@@ -176,7 +206,8 @@ export const publish = async (
     noffer,
     listing,
     relaysOk,
-    ladder: { [d]: { units: unitsOf(String(draft.stock)), noffer, steps } },
+    ladderRelaysOk,
+    ladder: { [d]: rung },
   }
 }
 
