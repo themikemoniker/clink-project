@@ -244,17 +244,19 @@ made, not duration.
 |---|---|---|---|
 | **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
 | **B** | Nothing on the critical path is unexecuted | ~~8~~, 6, 7 | ⚑ (**8 done 2026-08-25**); 6 and 7 both need the machine with the node and the key |
-| **C** | A sale you can change from your phone | M1, 11, M2, M3 | |
-| **D** | Runs unattended for a weekend | 12, **13 (refuse-to-shrink only)**, 14 | |
-| **E** | A stranger can set it up | ~~16~~, 15, 17, 18, 19, 26, **27** | ⚑ (**16 done 2026-08-25**, and 17's `noBuyReason` half with it); 27's first bullet is liftable earlier |
+| **C** | A sale you can change from your phone | M1, 11, M2, **M3 (delete only)** | **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
+| **D** | Runs unattended for a weekend | ~~13~~, 12, 14 | **13 closed 2026-08-26**, its last bullet with it |
+| **E** | A stranger can set it up | ~~16~~, ~~18~~, 15, 17, 19, 26, **27 (buy side only)** | ⚑ (**16 done 2026-08-25**, and 17's `noBuyReason` half with it; **18 done 2026-08-26**, and its premise was wrong); **27's first bullet done 2026-08-26** — what is left of 27 is a decision, not a fix |
 | **F** | The seller can see their own business | M4, M5 | liftable earlier |
 | **G** | A shop rather than one weekend | M6, M7, M8 | |
 | **∥** | Upstream — runs alongside, gates nothing | 20, 21, 22 | ⚑ |
 
-**Item 13 appears in two rows on purpose.** It was mis-placed: it is the same button as item 3's
-second defect, so its *quorum* and *show-the-count* bullets belong in A and landed there on
-2026-08-24, while its *refuse-to-shrink* bullet stays in D because shrinking is also what a
-legitimate delete looks like. Task IDs are stable, so it keeps its number in both places rather
+**Item 13 appeared in two rows on purpose, and both are now closed.** It was mis-placed: it is the
+same button as item 3's second defect, so its *quorum* and *show-the-count* bullets belonged in A
+and landed there on 2026-08-24, while its *refuse-to-shrink* bullet stayed in D because shrinking
+is also what a legitimate delete looks like. That last bullet **landed 2026-08-26**, and the way it
+resolved the entanglement is worth keeping: a guard that cannot tell a mistake from an intention
+must **ask** rather than decide. Task IDs are stable, so it kept its number in both places rather
 than being split into a 13a and a 13b. `docs/roadmap-review-findings.md` §13.
 
 ### Milestone A — Safe to point at a real node — **CLOSED 2026-08-24, with one ⚑ step still open**
@@ -476,7 +478,9 @@ proves is the *payment*, not the resolution.
 - **The pointer must be an LNURL-pay address, and Phoenix is not one.** A BIP-353 address
   (`…@phoenixwallet.me`) is the same `user@domain` shape and resolves to nothing this path can
   use — item 27, measured 2026-08-24. Wallet of Satoshi, Alby, Coinos, Blink or an `noffer` all
-  work. Getting this wrong burns the oversell on a refund that cannot complete.
+  work. Getting this wrong burns the oversell on a refund that cannot complete. **Since 2026-08-26
+  it at least fails legibly** — the `queued` row names BIP-353 instead of DNS — but a legible
+  failure still burns the one oversell there is, so this instruction is unchanged.
 - `mugs` is already **sold out 3/3**, and a depleted offer stays payable (findings §13.17) — so
   a single `node check-buy.ts yardsale-2026-08-mugs --pay --pointer <a wallet you control>` **is**
   the oversell. No restocking, no second payment. 1,000 sats.
@@ -692,7 +696,7 @@ If it dies, stock goes stale and oversells stop being refunded, and nothing anyw
   missing journal, a revoked grant.
 - Do not build a monitoring service. A supervisor and a log line is the whole of it.
 
-**13. Make publishing robust against a slow relay** *(two bullets moved to A and landed there)*
+**~~13. Make publishing robust against a slow relay~~ CLOSED 2026-08-26** *(two bullets moved to A and landed there 2026-08-24; the third landed here)*
 A kind 30405 is a replacement, so `publishSale` must send every member every time — and the
 member list it is handed is whatever four relays returned on the last "Load my items". One slow
 relay and pressing "Publish my sale" quietly un-lists real items.
@@ -844,7 +848,7 @@ question in `docs/prompts/browser-verify-and-deploy.md` since then and nothing h
   move now, before anything else prints or publishes that URL.
 - Either answer is fine. Leaving it unanswered while the URL spreads is the one that is not.
 
-**27. A Phoenix buyer cannot be refunded, and nothing says so until after the sale**
+**27. A Phoenix buyer cannot be refunded** ~~, and nothing says so until after the sale~~ **— the seller is told now (2026-08-26); the BUYER still is not, and that half is a decision**
 `LN_ADDRESS.test()` cannot tell a BIP-353 address from an LNURL-pay one — they are the same
 `user@domain` shape — so `resolvePointer` builds a `/.well-known/lnurlp/…` URL for a host that
 serves no HTTPS at all. **Measured 2026-08-24**: `phoenixwallet.me` has NS records on Route 53 and
