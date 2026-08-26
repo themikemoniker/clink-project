@@ -15,6 +15,7 @@ import {
   isStale,
   LADDER_KIND,
   ladderD,
+  listingDOf,
   MAX_LADDER_PLAINTEXT,
   MAX_RUNGS,
   nofferOf,
@@ -248,4 +249,22 @@ test('precedence: the relay wins when it decrypts, the file is the cold-start fa
   // enough to know what the seller last published, and three others timing out does not make it
   // less true.
   assert.equal(chooseLadder(RELAY, FILE, true).source, 'relay')
+})
+
+test('a ladder d maps back to the item it belongs to, and other 30078s are not ours', () => {
+  // The watcher cannot ask for ladders by name: it does not know what the seller has published
+  // until it reads them, which is the point of M1. So it subscribes to the seller's 30078s and
+  // sorts them out here, which makes this the function that decides what counts as one of ours.
+  assert.equal(listingDOf(ladderD('yardsale-2026-08-lamp')), 'yardsale-2026-08-lamp')
+  assert.equal(listingDOf(ladderD('a-b-c')), 'a-b-c', 'an item d with its own dashes survives')
+
+  // Kind 30078 is shared ground and the seller's own key writes to it. `lamppost-shop` is the
+  // private notes (builder/src/notes.ts:25) and would decrypt for the SELLER but not for us; the
+  // reserved `clink-*` names belong to CLINK Beacon. Reading any of them as a ladder would be
+  // this watcher inventing an item that does not exist.
+  assert.equal(listingDOf('lamppost-shop'), undefined)
+  assert.equal(listingDOf('clink-node'), undefined)
+  assert.equal(listingDOf('Lightning.Pub'), undefined)
+  assert.equal(listingDOf(''), undefined)
+  assert.equal(listingDOf('lamppost-ladder-'), undefined, 'the prefix alone names no item')
 })

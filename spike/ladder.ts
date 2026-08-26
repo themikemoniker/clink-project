@@ -128,7 +128,26 @@ export const LADDER_KIND = 30078
 // keyed by the same string (seed-listings.ts:250). Taking (saleD, slug) here would put a second
 // copy of the `${saleD}-${slug}` join rule in this file, where it could drift away from the one
 // in builder/src/sale.ts:77 that decides what the listing is actually called.
-export const ladderD = (listingD: string): string => `lamppost-ladder-${listingD}`
+const LADDER_D_PREFIX = 'lamppost-ladder-'
+export const ladderD = (listingD: string): string => `${LADDER_D_PREFIX}${listingD}`
+
+/**
+ * The inverse: which item is this 30078 the ladder for, if it is one at all.
+ *
+ * The watcher cannot ask for ladders by name, because it does not know what the seller has
+ * published until it has read them, and not knowing is the point of M1. So it subscribes to the
+ * seller's 30078s and sorts them out with this, which makes this the function that decides what
+ * counts as ours.
+ *
+ * Kind 30078 is shared ground and the seller's own key writes to it: `lamppost-shop` is the
+ * private notes, and `clink-*` is reserved by CLINK Beacon. Reading one of those as a ladder
+ * would be the watcher inventing an item the seller never listed, so anything that is not exactly
+ * our prefix followed by a non-empty name is not ours.
+ */
+export const listingDOf = (d: string): string | undefined =>
+  d.startsWith(LADDER_D_PREFIX) && d.length > LADDER_D_PREFIX.length
+    ? d.slice(LADDER_D_PREFIX.length)
+    : undefined
 
 // Bounds on a payload that decrypted, because "it decrypted" only proves the seller encrypted it,
 // not that what came back is what went in. Same discipline as `parseNotes` in
