@@ -244,7 +244,7 @@ made, not duration.
 |---|---|---|---|
 | **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
 | **B** | Nothing on the critical path is unexecuted | ~~8~~, 6, 7 | ⚑ (**8 done 2026-08-25**); 6 and 7 both need the machine with the node and the key |
-| **C** | A sale you can change from your phone | M1, 11, M2, **M3 (delete only)** | **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
+| **C** | A sale you can change from your phone | ~~M1~~, 11, M2, **M3 (delete only)** | **M1 done 2026-08-26** (relay round trip proved under throwaway keys; publishing as the real seller needs the key). **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
 | **D** | Runs unattended for a weekend | ~~13~~, 12, 14 | **13 closed 2026-08-26**, its last bullet with it |
 | **E** | A stranger can set it up | ~~16~~, ~~18~~, 15, 17, 19, 26, **27 (buy side only)** | ⚑ (**16 done 2026-08-25**, and 17's `noBuyReason` half with it; **18 done 2026-08-26**, and its premise was wrong); **27's first bullet done 2026-08-26** — what is left of 27 is a decision, not a fix |
 | **F** | The seller can see their own business | M4, M5 | liftable earlier |
@@ -367,7 +367,7 @@ confirmed and deliberately not fixed, none left in limbo.
 - ~~`refund.ts:257`~~ and ~~`refund.ts:221`~~ **— both reproduced, both fixed. See item 4.**
 - ~~`builder/index.html:206`~~ **Fixed (`63eb718`).** The copy now says what `sales-report.ts`
   actually prints: a refundable **count**, never a pointer.
-- ~~`spike/watch-sales.ts:327`~~ **— CONFIRMED at `:369`, and this roadmap's reading of it was
+- ~~`spike/watch-sales.ts:468`~~ **— CONFIRMED at `:369`, and this roadmap's reading of it was
   wrong.** The bullet said the MUST binds only when TLV 3 is present, "so a `k1` sent without one
   is not obviously forbidden". `docs/clink-notes.md` §3.3, quoting `clink-debits.md:163-172`, has
   two bullets, and the second is *"Absent ⇒ the wallet MUST NOT invent one."* Our `.ndebit` carries
@@ -577,17 +577,31 @@ refundable 1/1, settled 2026-08-21T22:13:28Z` — hours after those two lines we
 **Editing a live sale already works** — slice 6 shipped it: edit any item, restock, mark sold,
 private notes, photos preserved without re-uploading a byte, and the offer reused rather than
 re-minted so a save does not strand a payable pointer on the node. Items 3 and 13 harden that
-path. What none of them fix is M1, which is the reason editing *feels* broken even though it
-works.
+path. What none of them fixed was M1, which was the reason editing *felt* broken even though it
+worked. **M1 landed 2026-08-26**, so that sentence is now about what remains: 11 and M2.
 
-**Why this comes before the unattended work.** Milestone A already fixes the known money-loss
+**Why this came before the unattended work.** Milestone A already fixes the known money-loss
 defects, so D protects against *unknown* bad days — a process dying, a relay lagging. Those are
 rarer than "the seller needs to restock the mugs", which happens continuously during a live sale
-and today costs a file copy and a daemon restart every single time. M1 also reshapes items 11 and
-12, so building D first means building parts of it twice.
+and cost a file copy and a daemon restart every single time until M1. M1 also reshaped items 11
+and 12, so building D first would have meant building parts of it twice. That argument is now
+spent rather than wrong: the reshaping happened, and what it left for 11 and 12 is recorded on
+each of them below.
 
-**M1. The ladder has to travel over a relay, not a USB stick**
-Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:366`: *"Save it as
+**~~M1. The ladder has to travel over a relay, not a USB stick~~** **DONE 2026-08-26.** One kind
+30078 per item, `d: lamppost-ladder-<listing d>`, NIP-44 encrypted from the seller to a new
+`spike/.watcher-key` that owns nothing, spends nothing and signs nothing. The builder learns that
+key by paste; the watcher mints it, prints its npub, and `node watch-sales.ts --watcher-key`
+prints it without needing a node. Precedence is per item and the file is kept as the cold-start
+fallback. The watcher SUBSCRIBES, so an edit needs no restart either. It cost no new signer
+permission and exactly one more signature, which `approvalCount` now takes as a required argument.
+Full reasoning and the two new measurements are in /docs/spec.md §9.4; the real four-relay round
+trip is `node spike/check-ladder-relay.ts`, which needs no seller key. Still unproven until the
+keyed machine runs it: publishing a ladder as the real seller and the live watcher picking it up
+mid-sale. What follows is the problem statement as it stood.
+
+Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:366` (the line as it
+stood before M1; the sentence now survives only as the no-watcher fallback at `main.ts:412`): *"Save it as
 `.ladder.json` next to `watch-sales.ts`, then restart the watcher."* The seller downloads a file
 from their browser, copies it onto the machine running the daemon, and restarts a process. Miss
 the step and either `isStale` refuses to watch the item, or the watcher publishes rungs the relay
@@ -600,7 +614,7 @@ watcher to every item that device never published.
   30078 — but **encrypt to the watcher's pubkey, not to the seller's own key.** `notes.ts` is
   encrypt-to-self because only the seller's browser ever reads it; here the *watcher* has to
   decrypt, and only a holder of the seller's private key can open a self-encrypted payload. It
-  holds one today (`watch-sales.ts:115` reads `.dev-key`) purely because the fixture seller and
+  holds one today (`watch-sales.ts:148` reads `.dev-key`) purely because the fixture seller and
   the node account are one identity — a coincidence spec §12 says should be a separate key "where
   possible". Encrypting to self would turn that coincidence into a requirement. The shape is
   `notes.ts`'s; the recipient is not.
@@ -620,7 +634,8 @@ watcher to every item that device never published.
 - This removes the copy, the restart, and the single-browser dependence in one change. It does
   not remove item 11 — it changes what item 11 is for. See the note there.
 
-**11. Close the ladder-staleness hole on the write side** *(needs M1, and shrinks because of it)*
+**11. Close the ladder-staleness hole on the write side** *(**unblocked 2026-08-26**: M1 is done,
+and 11 shrank exactly as predicted)*
 The availability ladder is cut from one version of the listings. Edit a price, a title or a photo
 without re-cutting it, and the watcher republishes the old text over the new with a newer
 `created_at` — and a relay answers `OK` to a replaceable event it does not store, so this fails
@@ -630,19 +645,37 @@ an edit made while the watcher is running.
 - Have the watcher re-check staleness per tick, not only at startup, and stop publishing rungs
   for an item whose live listing has moved ahead of them.
 - Fail loudly to the operator instead of continuing quietly.
-- **M1 makes the remedy automatic but not the detection.** Once the ladder arrives over a relay,
-  a stale one heals itself on the next edit instead of stranding the seller — but the watcher
-  still needs to notice, for the cases M1 does not cover: the relay did not deliver, or the
-  seller edited from a device whose publish failed. Build the check; it is just no longer the
-  only thing standing between an edit and a silent oversell.
+- **M1 made the remedy automatic but not the detection, and that is exactly how it landed.** A
+  stale ladder now heals itself on the next edit instead of stranding the seller, and the
+  watcher's own STALE LADDER message says "publish the item again from the builder" rather than
+  "download `.ladder.json` and restart" (`watch-sales.ts:358-361`). The detection is still missing,
+  for the cases M1 does not cover: the relay did not deliver, or the seller edited from a device
+  whose publish failed. Build the check; it is just no longer the only thing standing between an
+  edit and a silent oversell.
+- **M1 added one case to build, which did not exist before it.** The watcher now accepts a
+  replacement ladder from a live subscription (`watch-sales.ts:793`) and does **not** re-run
+  `isStale` on it. That is defensible today, because a ladder arriving over a relay was cut from
+  the listing published in the same run, but it is an assumption rather than a check, and it is
+  the one path where a stale ladder can now enter a *running* watcher. Per-tick staleness closes
+  it along with everything else in this item.
+- **What M1 did NOT do, against the first bullet above:** the ladder still carries no stamp of
+  the listing version it was cut from. `isStale` still infers it by comparing rung `created_at`
+  against the live listing, which is why it can only run where a live listing exists.
 
-**M2. Make the seller's state recoverable** *(needs M1)*
-After M1 the ladder survives losing a laptop. The manage pointer still does not: `.nmanage` is
+**M2. Make the seller's state recoverable** *(**unblocked 2026-08-26**: M1 is done)*
+After M1 the ladder survives losing a laptop, and as of 2026-08-26 it demonstrably does. The manage pointer still does not: `.nmanage` is
 pasted per browser and stored in `localStorage`, so a seller on a new device is back at a terminal.
-- **This needs a decision before it needs code.** `docs/status.md`'s traps say the account pointer
-  is "seller's browser only, never a relay, never a log" — an event NIP-44 encrypted to the
-  seller's own key is arguably not "a relay" in the sense that rule means, but it is a relay in
-  the sense that a rule can be read literally. Settle it explicitly and write the reasoning down.
+- **This needs a decision before it needs code, and M1 did not take it.** `docs/status.md`'s traps
+  say the account pointer is "seller's browser only, never a relay, never a log" — an event NIP-44
+  encrypted to the seller's own key is arguably not "a relay" in the sense that rule means, but it
+  is a relay in the sense that a rule can be read literally. Settle it explicitly and write the
+  reasoning down.
+- **M1 is evidence for that decision but not an answer to it.** M1 put the availability ladder,
+  which reveals the seller's lowest stock on every item, into an encrypted 30078 on public relays.
+  So the shape is now proven and the precedent exists. What it does not settle is whether the
+  *account pointer* is the same kind of secret: the ladder is encrypted to a key that owns nothing
+  and spends nothing, whereas `.nmanage` addresses the account itself. Cite M1 when taking this
+  decision; do not treat it as having taken it.
 - If yes: it rides in the same encrypted 30078 as the notes, and a new device is a bunker
   connection and nothing else.
 - If no: say so in the UI, and make re-pasting the pointer a first-class step rather than an
@@ -695,6 +728,11 @@ If it dies, stock goes stale and oversells stop being refunded, and nothing anyw
 - A heartbeat line on every tick so `lpub-log`-style tailing shows liveness.
 - Exit non-zero and loudly on the conditions that must not be papered over: a stale ladder, a
   missing journal, a revoked grant.
+- **M1 added two conditions this has to know about** (2026-08-26). The watcher now prints a
+  startup ladder census and warns loudly when ladder events from the seller arrive and do not
+  decrypt, which means the builder is encrypting to a different `.watcher-key` than this process
+  holds. Both are currently log lines, not exit codes. Supervision should decide which of them a
+  restart can fix (neither) and surface them rather than restarting into the same state.
 - Do not build a monitoring service. A supervisor and a log line is the whole of it.
 
 **~~13. Make publishing robust against a slow relay~~ CLOSED 2026-08-26** *(two bullets moved to A and landed there 2026-08-24; the third landed here)*
@@ -900,7 +938,7 @@ that can call `GetUserOfferInvoices`, and the watcher can publish.
   publishes it as a kind 30078 under **a third key** — not `.dev-key` and not `.refund-key`. The
   browser subscribes and decrypts.
 - **The "watcher holds no signing key" line is already false, and knowing that is what makes this
-  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:115`) and signs kind
+  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:148`) and signs kind
   21000 with it (`pub-rpc.ts:97-99`). So the ledger's stated reason for keeping the refund journal
   off a relay — "the watcher holds no signing key by design, so it cannot publish a record of what
   it did" — is wrong on the facts. What slice 3 actually guarantees is narrower: the watcher signs

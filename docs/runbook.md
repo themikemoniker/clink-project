@@ -141,7 +141,8 @@ backup is actually for.
 | **Gone forever** | `.builder-key`, `.deploy-test-key` | A kind 15128 root site is **one per pubkey** (`5A.md:16`, findings §13.22), so losing `.builder-key` loses the builder's nsite URL permanently. The old blobs stay on Blossom and become unreachable. | Nothing. A new key is a new URL. Neither holds funds, which is the only reason this is survivable. |
 | **Gone forever, and it holds money** | `.dev-key`, `.merida-key` | The seller identity, the storefront's npub, the authority behind every published listing and the ladder's signatures — and the Lightning.Pub account that holds the sats. | Nothing. |
 | **Redo the work** | `.refund-key` + `.ndebit` | A new refund key needs the whole three-step authorisation dance (findings §13.27). The live grant expires **2026-09-20**. | `node authorize-refunds.ts`, at the desk, with the node up. |
-| **Redo the work** | `.ladder.json`, `.merida-key.ladder.json` | The pre-signed availability rungs. Without them the watcher has nothing to publish and stock goes stale. | `node seed-listings.ts` re-cuts it — and the watcher must then be restarted, and re-seeding republishes every listing. |
+| **Redo the work** | `.ladder.json`, `.merida-key.ladder.json` | The pre-signed availability rungs. Without them the watcher falls back to whatever the relays hold. | `node seed-listings.ts` re-cuts it, and re-seeding republishes every listing. **Since M1 (2026-08-26) this file is the fallback, not the source**: an item published from the builder with the watcher's npub pasted in sends its ladder over a relay, and the watcher picks it up with no file and no restart. |
+| **Re-paste** | `.watcher-key`, `.merida-key.watcher-key` | M1's decryption key. Losing it does not lose money or identity: the watcher mints a fresh one on next start. But the builder is still encrypting to the OLD one, so every ladder published before then stops decrypting. | `node watch-sales.ts --watcher-key` prints the new npub; paste it into the builder and re-publish the affected items. The watcher says loudly how many ladders failed to decrypt, so this does not go unnoticed. |
 | **Redo the work** | `.offers.json`, `.merida-key.offers.json`, `.nmanage`, `.merida-key.nmanage` | Which offer belongs to which item, and the Manage grant pointer. | `node mint-offers.ts` (idempotent, reuses by label) and `node authorize-manage.ts`. |
 | **Recreated by nothing** | `.refunds.json` | The **only** durable record of which oversells have been refunded. The node has no "already refunded" field and CLINK's `k1` is in memory with a five-minute TTL (findings §13.28). Losing it can pay a buyer twice. | Nothing recreates it. Item 9's startup reconcile is the mitigation and it is a prompt, not a recovery: `--refunds` now **refuses to start** when this file is absent and the node reports outgoing payments. |
 
@@ -157,7 +158,7 @@ cloud storage that syncs.
 
 ```bash
 cd spike
-tar -czf ~/lamppost-backup-$(date +%F).tar.gz   .builder-key .deploy-test-key .dev-key .merida-key .refund-key   .nmanage .merida-key.nmanage .ndebit   .offers.json .merida-key.offers.json   .ladder.json .merida-key.ladder.json   $(ls .refunds.json .merida-key.refunds.json 2>/dev/null)
+tar -czf ~/lamppost-backup-$(date +%F).tar.gz   .builder-key .deploy-test-key .dev-key .merida-key .refund-key .watcher-key .merida-key.watcher-key   .nmanage .merida-key.nmanage .ndebit   .offers.json .merida-key.offers.json   .ladder.json .merida-key.ladder.json   $(ls .refunds.json .merida-key.refunds.json 2>/dev/null)
 chmod 600 ~/lamppost-backup-$(date +%F).tar.gz
 ```
 

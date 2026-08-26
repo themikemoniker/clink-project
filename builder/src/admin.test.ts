@@ -244,8 +244,8 @@ test('units sold is derived from public information, and is unknown without a la
 
 test('an edit that keeps its photos does not pay for uploads it will not make', () => {
   const d = draft()
-  assert.equal(approvalCount(d, true), 3 + 1 + 1 + 3) // new item: 3 uploads, offer, listing, ladder
-  assert.equal(approvalCount(d, false, 0), 1 + 3) // edit, price unchanged: listing + ladder only
+  assert.equal(approvalCount(d, true, false), 3 + 1 + 1 + 3) // new item: 3 uploads, offer, listing, ladder
+  assert.equal(approvalCount(d, false, false, 0), 1 + 3) // edit, price unchanged: listing + ladder only
 })
 
 // --- private notes -----------------------------------------------------------------------------
@@ -543,9 +543,9 @@ test('the round trip is through Number, so trailing zeros are the one thing not 
 test('editing a fiat item cannot make it buyable, whatever the seller has configured', () => {
   const fiat = draft({ priceSats: 0, fiat: { amount: 80, currency: 'MXN' }, stock: 3 })
   // `mintOffer: true` is the caller saying "there is a node and stock". It still counts zero.
-  assert.equal(approvalCount(fiat, true, 0), approvalCount(fiat, false, 0))
+  assert.equal(approvalCount(fiat, true, false, 0), approvalCount(fiat, false, false, 0))
   // Which is exactly one less than the same item priced in sats would cost.
-  assert.equal(approvalCount(draft({ stock: 3 }), true, 0), approvalCount(fiat, true, 0) + 1)
+  assert.equal(approvalCount(draft({ stock: 3 }), true, false, 0), approvalCount(fiat, true, false, 0) + 1)
   // And no listing it publishes carries a payable pointer.
   const { event } = publishedAs({ ...fiat, noffer: REAL_NOFFER })
   assert.equal(

@@ -45,17 +45,17 @@
 //
 // Usage: node watch-sales.ts [--key <file>] [--nprofile <path|nprofile1…>] [--relays wss://a,wss://b] [--once]
 //                            [--refunds]
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SimplePool, getPublicKey, type Event } from 'nostr-tools'
-import { hexToBytes } from '@noble/hashes/utils.js'
+import { SimplePool, generateSecretKey, getPublicKey, nip19, nip44, type Event } from 'nostr-tools'
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { decodeNoffer } from '../storefront/src/offer.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
-import { isStale, nofferOf, targetStock } from './ladder.ts'
+import { chooseLadder, isStale, LADDER_KIND, listingDOf, nofferOf, parseRung, targetStock } from './ladder.ts'
 import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
 import {
   inFlightGuard,
@@ -88,6 +88,7 @@ const LADDER_FILE = suffixed('.ladder.json')
 const REFUND_KEY_FILE = suffixed('.refund-key')
 const NDEBIT_FILE = suffixed('.ndebit')
 const JOURNAL_FILE = suffixed('.refunds.json')
+const WATCHER_KEY_FILE = suffixed('.watcher-key')
 
 // ponytail: fixed 5s poll. A yard sale settles a handful of invoices an hour and this is the
 // seller's own node's relay; if that ever stops being true, the upgrade is the live feed as a
@@ -108,9 +109,41 @@ const REFUNDS = process.argv.includes('--refunds')
 const RETRY_AFTER_S = 6 * 60
 const RELAYS = arg('relays', SALE_RELAYS.join(',')).split(',')
 
+// --- M1: the key ladders are encrypted TO -----------------------------------------------------
+//
+// KEY HANDLING NOTICE. This is the third key this process touches and by far the smallest, and it
+// is deliberately not either of the other two.
+//
+//   * NOT .dev-key. That is the seller's identity and owns the node account. Encrypting ladders
+//     to it would mean the watcher needs the seller's private key to open them, which turns
+//     today's coincidence (the fixture seller and the node account are one identity) into a
+//     permanent requirement. /docs/spec.md §12 says these should be separate keys where possible.
+//   * NOT .refund-key. That is the spend credential under a node-enforced cap, and the TWO KEYS
+//     block above is explicit that the watcher's keys are deliberately different.
+//
+// MINTED HERE and never by the builder: /CLAUDE.md rule 2 says a private key is generated where
+// it is used, and the builder is a browser that must never hold one. gitignored, chmod 600.
+//
+// WHAT IT CAN DO: decrypt availability ladders that the seller published for it. That is all. It
+// owns nothing, spends nothing, signs nothing, and appears in no published event. A stolen copy
+// reveals the seller's stock, which is worth hiding, and confers no authority at all.
+//
+// It prints BEFORE the checks below on purpose. A seller setting this up for the first time needs
+// the npub to paste into the builder, and needing a running node to be told it would be a
+// bootstrap that never starts. `--watcher-key` prints it and exits, for the same reason.
+if (!existsSync(WATCHER_KEY_FILE)) {
+  writeFileSync(WATCHER_KEY_FILE, bytesToHex(generateSecretKey()), { mode: 0o600 })
+  console.log(`# minted ${WATCHER_KEY_FILE} — a new watcher key. Ladders already published to an`)
+  console.log(`#   OLDER watcher key cannot be read with it; re-publish those items from the builder.`)
+}
+const watcherSk = hexToBytes(readFileSync(WATCHER_KEY_FILE, 'utf8').trim())
+const WATCHER = getPublicKey(watcherSk)
+console.log(`# watcher key ${nip19.npubEncode(WATCHER)}`)
+console.log(`#   paste that into the builder's "Watcher key" box to stop copying .ladder.json by hand`)
+if (process.argv.includes('--watcher-key')) process.exit(0)
+
 if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — pass --key <file>, or run seed-listings.ts first`)
 if (!existsSync(OFFERS_FILE)) throw new Error(`no ${OFFERS_FILE} — run mint-offers.ts first`)
-if (!existsSync(LADDER_FILE)) throw new Error(`no ${LADDER_FILE} — run seed-listings.ts first`)
 
 const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const SELLER = getPublicKey(sk)
@@ -139,21 +172,12 @@ if (REFUNDS) {
 type Minted = { noffer: string; price_sats: number }
 type Rung = { units: number; noffer?: string; steps: Event[] }
 const minted: Record<string, Minted> = JSON.parse(readFileSync(OFFERS_FILE, 'utf8'))
-const ladder: Record<string, Rung> = JSON.parse(readFileSync(LADDER_FILE, 'utf8'))
-
-// The offer id comes out of the ladder file itself, not a separate config, so the thing we watch
-// is by construction the thing a buyer would pay. Three sources in descending authority, and the
-// reasoning — including which one used to lose every one-of-a-kind item — is in ./ladder.ts.
-let watching = Object.entries(ladder).flatMap(([d, rung]) => {
-  const noffer = nofferOf(rung, minted[d]?.noffer)
-  const offer = noffer && decodeNoffer(noffer)
-  if (!offer) {
-    console.log(`# ${d}: no decodable offer in its ladder or ${OFFERS_FILE} — not watching`)
-    return []
-  }
-  return [{ d, rung, offerId: offer.offer }]
-})
-if (watching.length === 0) throw new Error('nothing to watch — run mint-offers.ts then seed-listings.ts')
+// M1: the file is now the FALLBACK, not the source. It is still read first because reading it
+// costs nothing and because it is what makes a cold start work before the seller has ever
+// published a ladder over a relay. It is no longer required to exist, and it is not deleted.
+const fileLadder: Record<string, Rung> = existsSync(LADDER_FILE)
+  ? JSON.parse(readFileSync(LADDER_FILE, 'utf8'))
+  : {}
 
 // WHY THIS DOES NOT DELETE A DEPLETED ITEM'S OFFER, against /docs/spec.md §7.4(a).
 // §7.4(a) makes "delete the offer on depletion" v1's strict mode, and it is one RPC from here —
@@ -187,6 +211,127 @@ console.log(
 
 const pool = new SimplePool()
 
+// --- M1: WHERE THE LADDER COMES FROM ----------------------------------------------------------
+//
+// It used to come from a file the seller downloaded in a browser, carried to this machine, and
+// restarted this process to load. Every edit cost that, and restock is an edit. Miss the step and
+// either `isStale` below refuses to watch the item, or this process publishes rungs the relay
+// silently drops and the item stays on sale after it sold.
+//
+// Now it arrives as one encrypted kind 30078 per item, authored by the seller and NIP-44
+// encrypted to the watcher key above. Three things make that safe to act on, and the third is the
+// one that was already here:
+//
+//   1. The filter is `authors: [SELLER]` and nostr-tools verifies signatures, so only the
+//      seller's own events arrive at all.
+//   2. Decryption with (watcher private, seller public) succeeds only if the seller encrypted it.
+//   3. `stepFor` below re-verifies every rung against the live listing before publishing it,
+//      under "Never publish an event on the strength of where it was loaded from". So arriving
+//      over a relay buys a rung no authority that arriving in a file did not.
+//
+// What that leaves genuinely new is the JSON inside, which `parseRung` bounds.
+const readRelayLadders = async (): Promise<{ ladders: Map<string, Rung>; failed: boolean; undecryptable: number }> => {
+  const ladders = new Map<string, Rung>()
+  const at = new Map<string, number>()
+  let undecryptable = 0
+  let events: Event[]
+  try {
+    events = await pool.querySync(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER] })
+  } catch {
+    // "The relays could not be read" and "the seller has published no ladder" are different
+    // facts with different remedies, and this is the only place that can still tell them apart.
+    return { ladders, failed: true, undecryptable }
+  }
+  for (const ev of events) {
+    const d = ev.tags.find(t => t[0] === 'd')?.[1]
+    const item = d === undefined ? undefined : listingDOf(d)
+    // Kind 30078 is shared ground. The seller's own private notes live on it and would NOT
+    // decrypt to this key, so skipping by `d` first keeps them out of the undecryptable count
+    // where they would look like a key mismatch.
+    if (!item) continue
+    let rung: Rung | undefined
+    try {
+      rung = parseRung(nip44.decrypt(ev.content, nip44.getConversationKey(watcherSk, SELLER)))
+    } catch {
+      rung = undefined
+    }
+    if (!rung) {
+      undecryptable++
+      continue
+    }
+    // NIP-01 keeps one event per (kind, pubkey, d), but relays disagree about which, so take the
+    // newest of whatever came back rather than the first, exactly as `loadNotes` does. The
+    // timestamps are kept beside the ladders rather than stamped onto them: the rung is the
+    // payload the builder sent and it goes on to be the thing this process publishes from, so
+    // nothing that is merely bookkeeping belongs inside it.
+    if (ev.created_at >= (at.get(item) ?? 0)) {
+      at.set(item, ev.created_at)
+      ladders.set(item, rung)
+    }
+  }
+  return { ladders, failed: false, undecryptable }
+}
+
+const relay = await readRelayLadders()
+if (relay.failed) {
+  console.log(`# COULD NOT READ LADDERS FROM ${RELAYS.length} RELAYS. Falling back to ${LADDER_FILE}.`)
+} else if (relay.undecryptable > 0) {
+  // The likeliest cause by far, and it is silent otherwise: this process minted a fresh
+  // .watcher-key (a new clone, a deleted file) while the builder is still encrypting to the old
+  // one. It reads as "no ladder on the relays" and would quietly fall back to a stale file.
+  console.log(
+    `# ${relay.undecryptable} ladder event(s) from this seller DID NOT DECRYPT with this watcher ` +
+      `key. The builder is almost certainly publishing to a different key: paste the npub above ` +
+      `into it and re-publish those items.`,
+  )
+}
+
+// Per item, and the file is kept rather than deleted. `chooseLadder` is pure and tested for every
+// branch, including the one where the relay read failed, because that branch is the one that must
+// not read as "your ladder is stale" (see below).
+const ladder: Record<string, Rung> = {}
+const unwatched: string[] = []
+// The item set is the union of THREE sources, not two. Building it from the two ladder sources
+// alone would make "neither" unreachable by construction: an item can only be missing a ladder if
+// something else already told us it exists. `.offers.json` is that something else, and an item
+// with a minted offer and no ladder anywhere is precisely the one worth naming, because it is
+// payable and unwatched, which is how a sold item stays on sale.
+for (const d of new Set([...relay.ladders.keys(), ...Object.keys(fileLadder), ...Object.keys(minted)])) {
+  const chosen = chooseLadder(relay.ladders.get(d), fileLadder[d], relay.failed)
+  if (chosen.warn) console.log(`# ${d}: ${chosen.warn}`)
+  if (chosen.rung) ladder[d] = chosen.rung
+  else unwatched.push(d)
+}
+const fromRelay = Object.keys(ladder).filter(d => relay.ladders.has(d)).length
+console.log(
+  `# ladders: ${fromRelay} from the relays, ${Object.keys(ladder).length - fromRelay} from ` +
+    `${LADDER_FILE}${unwatched.length ? `, ${unwatched.length} with none at all (${unwatched.join(' ')})` : ''}`,
+)
+
+// The offer id comes out of the ladder itself, not a separate config, so the thing we watch is by
+// construction the thing a buyer would pay. Three sources in descending authority, and the
+// reasoning — including which one used to lose every one-of-a-kind item — is in ./ladder.ts.
+const withOffer = (entries: [string, Rung][]) =>
+  entries.flatMap(([d, rung]) => {
+    const noffer = nofferOf(rung, minted[d]?.noffer)
+    const offer = noffer && decodeNoffer(noffer)
+    if (!offer) {
+      console.log(`# ${d}: no decodable offer in its ladder or ${OFFERS_FILE} — not watching`)
+      return []
+    }
+    return [{ d, rung, offerId: offer.offer }]
+  })
+
+let watching = withOffer(Object.entries(ladder))
+if (watching.length === 0) {
+  throw new Error(
+    `nothing to watch — no ladder arrived from the relays and ${LADDER_FILE} has none either. ` +
+      `Publish an item from the builder with this watcher's npub pasted in, or run mint-offers.ts ` +
+      `then seed-listings.ts.`,
+  )
+}
+
+
 // IS THIS LADDER STILL THE LADDER FOR THESE LISTINGS? Slice 6 made this question real, and the
 // failure it prevents is silent, which is the worst kind on the money path.
 //
@@ -212,8 +357,8 @@ for (const { d } of stale) {
   console.log(
     `# ${d}: STALE LADDER — the listing on the relays is newer than every rung here, so this ` +
       `item was edited after its ladder was cut. Publishing a rung would be a silent no-op and ` +
-      `the item would stay on sale after it sold. Download .ladder.json from the builder again ` +
-      `and restart. NOT WATCHING.`,
+      `the item would stay on sale after it sold. Publish the item again from the builder with ` +
+      `this watcher's npub pasted in and the new ladder arrives here by itself. NOT WATCHING.`,
   )
 }
 watching = watching.filter(w => !stale.includes(w))
@@ -635,6 +780,46 @@ if (ONCE) {
   close()
   process.exit(0)
 }
+// --- M1: RE-CHECK ON EVERY UPDATE, NOT ONLY AT STARTUP ----------------------------------------
+//
+// This is the half that removes the RESTART, and the restart is half of what M1 is for. Reading
+// the ladders once at startup would still leave the seller stopping and starting this process
+// after every edit; they would just no longer be carrying a file to it first.
+//
+// A ladder that arrives here has been re-cut by the builder from the listing it was published
+// with, so it supersedes whatever this process was holding for that item. It is NOT trusted any
+// further than the startup read was: same decrypt, same bounded parse, same `stepFor`
+// verification against the live listing before any rung is published.
+pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: Math.floor(Date.now() / 1000) }, {
+  onevent: (ev: Event) => {
+    const d = ev.tags.find(t => t[0] === 'd')?.[1]
+    const item = d === undefined ? undefined : listingDOf(d)
+    if (!item) return // the seller's private notes share this kind; they are not ours to read
+    let rung: Rung | undefined
+    try {
+      rung = parseRung(nip44.decrypt(ev.content, nip44.getConversationKey(watcherSk, SELLER)))
+    } catch {
+      rung = undefined
+    }
+    if (!rung) {
+      console.log(`# ${item}: a ladder arrived that did not decrypt or did not parse. IGNORED, still watching what we had.`)
+      return
+    }
+    const [next] = withOffer([[item, rung]])
+    if (!next) return // withOffer already said why
+    const had = watching.find(w => w.d === item)
+    watching = [...watching.filter(w => w.d !== item), next]
+    // The publish loop is driven by this count CHANGING, so a stale entry here would sit on a new
+    // ladder until the item next sold. Dropping it makes the next tick recompute from the node.
+    lastSold.delete(item)
+    console.log(
+      `# ${item}: NEW LADDER over the relay, ${next.rung.units} unit(s). ` +
+        (had ? 'Replaces the one held for it.' : 'Now watching it.') +
+        ' No file, no restart.',
+    )
+  },
+})
+
 console.log(`# polling every ${POLL_MS / 1000}s — ctrl-c to stop`)
 // GUARDED. A refunding tick outlives POLL_MS by design and the second one used to pay the same
 // buyer again — ./refund.ts `inFlightGuard` for the whole chain. A skipped poll costs nothing:

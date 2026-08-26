@@ -111,8 +111,8 @@ test('an item is 1 + units signatures, and the count shown matches the events si
   const d = draft({ stock: 3 })
   strictEqual(eventsToSign(d, pk, NOW, SALE).length, 4) // listing + 3 rungs
   // 2 blobs + 1 offer + 1 listing + 3 rungs
-  strictEqual(approvalCount(d, true), 7)
-  strictEqual(approvalCount(d, false), 6)
+  strictEqual(approvalCount(d, true, false), 7)
+  strictEqual(approvalCount(d, false, false), 6)
   strictEqual(eventsToSign(draft({ stock: 0 }), pk, NOW, SALE).length, 1) // sold: no future states
 })
 
@@ -197,4 +197,35 @@ test('a sale with no location and no geohash writes neither tag', () => {
   strictEqual(tags.filter(t => t[0] === 'g').length, 0)
   // The `a` tag is not optional the same way: an item with no collection is a stray.
   strictEqual(tags.filter(t => t[0] === 'a').length, 1)
+})
+
+test('the count says the ladder event out loud, because it is a signature the seller will be asked for', () => {
+  // M1 adds one signature per item: the ladder now goes out as its own encrypted kind 30078
+  // instead of being downloaded as a file. The number shown before the seller starts and the
+  // events actually signed have to be one number. This is the same defect class the 2026-08-26
+  // review caught on the fiat path, where the count and the publish disagreed about minting.
+  //
+  // `toWatcher` is a required argument rather than one defaulting to false, so that a call site
+  // that has not thought about it cannot silently under-count. Under-counting is the harmful
+  // direction: a seller told six and asked for seven has already stopped trusting the number.
+  const d = draft({ stock: 3 })
+  strictEqual(approvalCount(d, true, false), 7, 'no watcher configured: nothing to encrypt to')
+  strictEqual(approvalCount(d, true, true), 8, '2 blobs + 1 offer + 1 listing + 3 rungs + 1 ladder')
+  strictEqual(approvalCount(d, false, true), 7)
+  strictEqual(approvalCount(d, false, true, 0), 5, 'an edit that keeps its photos: listing + 3 rungs + ladder')
+
+  // One per item, not one per rung, and not one for the whole shop. A sold-out item has no future
+  // states left to sign and still has a ladder to send.
+  const sold = draft({ stock: 0 })
+  strictEqual(
+    approvalCount(sold, false, true, 0) - approvalCount(sold, false, false, 0),
+    1,
+    'the ladder is a single event however many rungs are in it',
+  )
+
+  // The encryption is NOT counted. main.ts renders this as "N signatures" and tells the seller
+  // their signer should ask once per kind, so the number means signEvent calls. `nip44_encrypt`
+  // is a separate signer method and not a signature, and both perms have been in PERMS since
+  // slice 4 (signer.ts:41, :49) so neither costs a second bunker approval.
+  strictEqual(approvalCount(d, true, true) - approvalCount(d, true, false), 1, 'one, not two')
 })

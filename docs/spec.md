@@ -1153,6 +1153,86 @@ been a money-path change made to fix a builder bug.
 
 ---
 
+### 9.4 M1: the ladder travels over a relay instead of a USB stick (2026-08-26)
+
+Built on the second machine, with no node, no LND, no keys and no NIP-07 signer. Nothing in this
+session signed as the seller, published to the real sale, or spent anything.
+
+**What it removes.** Every edit, and restock is an edit, used to end at `builder/src/main.ts`
+telling the seller to save `.ladder.json` next to `watch-sales.ts` and restart the watcher. Miss
+the step and either `isStale` refuses to watch the item, or the watcher publishes rungs the relay
+silently drops and the item stays on sale after it sold, reporting success the whole time. The
+file copy, the restart and the single-browser dependence are all gone. The file is NOT deleted: it
+is the cold-start fallback and what keeps a sale running when the relays are down, and that
+instruction survives verbatim at `main.ts:412` for a seller who has pasted no watcher key, and at
+`:415` when a ladder was signed but no relay accepted it.
+
+**The shape.** One kind 30078 per item, `d: lamppost-ladder-<listing d>`, authored by the seller,
+NIP-44 encrypted from the seller's key to a new third key. The payload is the existing
+`LadderFile` entry unchanged, so the same bytes are on the relay as in the file and both paths
+share one parser.
+
+**The third key, and why it is a third key.** `spike/.watcher-key`, minted by the watcher and
+never by the builder (rule 2), chmod 600. Not `.dev-key`: encrypting to the seller would mean the
+watcher needs the seller's private key to open the ladder, which turns today's coincidence (the
+fixture seller and the node account are one identity) into a permanent requirement, against §12.
+Not `.refund-key`: that is the spend credential under a node-enforced cap. The new key owns
+nothing, spends nothing and signs nothing. A stolen copy reveals stock and confers no authority.
+
+**Paste, not discovery, and that is the security property.** The builder must know which pubkey to
+trust *before* it encrypts, because encrypting to an attacker's key hands them the lowest stock on
+every item. There is no signature to check on a pasted key, so `watcherPubkey` refuses anything
+that is not a public key, including an nsec, which decodes perfectly well and is the one paste
+error that would put a private key in that field.
+
+**The trust chain is three layers and the third already existed.** The filter is `authors:
+[SELLER]` and nostr-tools verifies signatures; NIP-44 decryption succeeds only if the seller
+encrypted it; and `stepFor` still re-verifies every rung against the live listing before
+publishing it. Changing the transport therefore bought a rung no authority that arriving in a file
+did not, and cost no new trust work at the publish moment. The one genuinely new surface is the
+JSON inside, which `parseRung` bounds the way `parseNotes` bounds the notes.
+
+**It costs no new signer permission and exactly one more signature.** `nip44_encrypt`
+(`signer.ts:41`) and `sign_event:30078` (`signer.ts:49`) have been in `PERMS` since slice 4. The
++1 was settled by reading rather than by measuring: `main.ts` renders the number as "N signatures"
+and tells the seller their signer should ask once per kind, so it counts `signEvent` calls, and
+`nip44_encrypt` is a separate signer method that signs nothing. `approvalCount` takes `toWatcher`
+as a REQUIRED argument, because a default of false is exactly the "trusting call sites" that the
+fiat-path defect of 2026-08-26 was. Making it required made tsc name all six call sites.
+
+**Ordering.** The ladder is signed after the builder's own verification and BEFORE anything is
+published, so every approval the seller was quoted is asked for in one run. Signing it after the
+listing went out would let a decline at the last prompt leave the item live on the relays with no
+ladder anywhere. A ladder that fails to publish is reported, not thrown: the listing is already up
+and the item is really for sale.
+
+**Two measurements this session adds.**
+
+1. *The relay sees ciphertext, not plaintext.* Measured by `check-ladder-relay.ts` on 2026-08-26:
+   37,351 plaintext bytes became **54,704 on the wire**, about 1.46x, which is base64 over NIP-44
+   padding to 40,960. Extrapolated to the 65,535-byte plaintext ceiling that is roughly 87,500
+   bytes on the wire, still under the 131,072 measured on nos.lol on 2026-08-23. So the NIP-44
+   plaintext ceiling remains the binding cap, not a relay's event size, and one event per item
+   still holds with room.
+2. *Per item, the ceiling is not close.* Regenerated from the committed `merida-fixture.ts`: the
+   whole shop with photos is 57,741 bytes, 88.1% of the ceiling, breaking at about nine items,
+   while the fattest single item, `jabon`, is **19,906 bytes, 30%** of it. Roughly 3.3x headroom
+   on the worst real item is what makes per-item the cheap answer rather than the careful one.
+
+**A failure mode this introduced, and closed.** A fresh clone mints a new `.watcher-key` while the
+builder is still encrypting to the old one. Without handling, that reads as "no ladder on the
+relays" and quietly falls back to a stale file. The watcher now counts ladder events from the
+seller that did not decrypt and says so loudly, skipping the notes on the same kind by `d` first
+so they never land in that count. This is the same shape as `authorize-refunds.ts:118`, where a
+key minted on a fresh clone made the kill switch lie.
+
+**What is still unproven, and needs the keyed machine.** Publishing a ladder as the real seller,
+and the live watcher picking it up mid-sale. Everything else was proven here: `npm test` covers
+the addressing, the bounds and every branch of precedence offline, and `check-ladder-relay.ts`
+proves the real four-relay round trip, the encryption, the query, and a live subscription being
+pushed a re-published ladder, all under throwaway keys.
+
+
 ## 10. Build plan — vertical slices
 
 Each slice ends in something demoable. If you stall at slice 4, slices 1–3 are still a demo.

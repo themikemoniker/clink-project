@@ -69,6 +69,17 @@
           paste the line it writes. This pointer addresses your account, so it stays in this
           browser — it is never published and never sent anywhere but your own node.
         </p>
+
+        <label for="watcher-input">Watcher key</label>
+        <input id="watcher-input" type="text" placeholder="npub1…" autocomplete="off" spellcheck="false" />
+        <p class="hint" id="watcher-state">No watcher key yet: the ladder stays a file you download and copy across by hand.</p>
+        <p class="hint">
+          Run <code>node spike/watch-sales.ts</code> once on that same machine and paste the npub
+          it prints. Your availability ladder then publishes encrypted to that key, so editing an
+          item no longer means downloading a file, copying it across, and restarting the watcher.
+          The key can only decrypt ladders: it owns nothing, spends nothing and signs nothing, and
+          it is not your seller key.
+        </p>
       </section>
 
       <!-- 3. the sale ------------------------------------------------------------------ -->
