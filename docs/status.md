@@ -91,6 +91,13 @@ needed a key: **18**, **27's first bullet**, **13's last bullet** and **M3's fia
 review of all four. Test counts moved 75 / 70 / 42 -> 76 / 94 / 51 -> **76 / 98 / 55**, all green,
 `tsc` clean in both apps, storefront cold JS unchanged at **32,140 bytes gzip**.
 
+**Which relay is down changes, so do not chase it.** On 2026-08-25 `relay.damus.io` was
+answering 503 on the WebSocket handshake. On **2026-08-26** damus was fine and
+**`relay.nostr.band` was timing out on connect instead**, for events of every size from 200 bytes
+to 80 KB, so it is availability and not an event size limit. `check-ladder-relay.ts` reports
+3/4 either way and still passes: the design needs one relay to answer, not four. Expect some
+relay to be unreachable on any given day and treat 4/4 as the surprise.
+
 **M1** ends the file copy and the daemon restart: the availability ladder now travels as one
 NIP-44 encrypted kind 30078 per item, to a new `spike/.watcher-key` that owns nothing, spends
 nothing and signs nothing, and the watcher subscribes rather than reading a file at startup. The

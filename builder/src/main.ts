@@ -235,7 +235,7 @@ const setWatcher = (raw: string, remember: boolean) => {
   if (!trimmed) {
     watcher = null
     $('#watcher-state').textContent =
-      'No watcher key — the ladder stays a file you download and copy across by hand.'
+      'No watcher key yet: the ladder stays a file you download and copy across by hand.'
     refreshCost()
     return
   }
