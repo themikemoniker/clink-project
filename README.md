@@ -244,7 +244,7 @@ made, not duration.
 |---|---|---|---|
 | **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
 | **B** | Nothing on the critical path is unexecuted | ~~8~~, 6, 7 | ⚑ (**8 done 2026-08-25**); 6 and 7 both need the machine with the node and the key |
-| **C** | A sale you can change from your phone | M1, 11, M2, **M3 (delete only)** | **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
+| **C** | A sale you can change from your phone | ~~M1~~, 11, M2, **M3 (delete only)** | **M1 done 2026-08-26** (relay round trip proved under throwaway keys; publishing as the real seller needs the key). **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
 | **D** | Runs unattended for a weekend | ~~13~~, 12, 14 | **13 closed 2026-08-26**, its last bullet with it |
 | **E** | A stranger can set it up | ~~16~~, ~~18~~, 15, 17, 19, 26, **27 (buy side only)** | ⚑ (**16 done 2026-08-25**, and 17's `noBuyReason` half with it; **18 done 2026-08-26**, and its premise was wrong); **27's first bullet done 2026-08-26** — what is left of 27 is a decision, not a fix |
 | **F** | The seller can see their own business | M4, M5 | liftable earlier |
@@ -367,7 +367,7 @@ confirmed and deliberately not fixed, none left in limbo.
 - ~~`refund.ts:257`~~ and ~~`refund.ts:221`~~ **— both reproduced, both fixed. See item 4.**
 - ~~`builder/index.html:206`~~ **Fixed (`63eb718`).** The copy now says what `sales-report.ts`
   actually prints: a refundable **count**, never a pointer.
-- ~~`spike/watch-sales.ts:327`~~ **— CONFIRMED at `:369`, and this roadmap's reading of it was
+- ~~`spike/watch-sales.ts:468`~~ **— CONFIRMED at `:369`, and this roadmap's reading of it was
   wrong.** The bullet said the MUST binds only when TLV 3 is present, "so a `k1` sent without one
   is not obviously forbidden". `docs/clink-notes.md` §3.3, quoting `clink-debits.md:163-172`, has
   two bullets, and the second is *"Absent ⇒ the wallet MUST NOT invent one."* Our `.ndebit` carries
@@ -586,8 +586,20 @@ rarer than "the seller needs to restock the mugs", which happens continuously du
 and today costs a file copy and a daemon restart every single time. M1 also reshapes items 11 and
 12, so building D first means building parts of it twice.
 
-**M1. The ladder has to travel over a relay, not a USB stick**
-Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:366`: *"Save it as
+**~~M1. The ladder has to travel over a relay, not a USB stick~~** **DONE 2026-08-26.** One kind
+30078 per item, `d: lamppost-ladder-<listing d>`, NIP-44 encrypted from the seller to a new
+`spike/.watcher-key` that owns nothing, spends nothing and signs nothing. The builder learns that
+key by paste; the watcher mints it, prints its npub, and `node watch-sales.ts --watcher-key`
+prints it without needing a node. Precedence is per item and the file is kept as the cold-start
+fallback. The watcher SUBSCRIBES, so an edit needs no restart either. It cost no new signer
+permission and exactly one more signature, which `approvalCount` now takes as a required argument.
+Full reasoning and the two new measurements are in /docs/spec.md §9.4; the real four-relay round
+trip is `node spike/check-ladder-relay.ts`, which needs no seller key. Still unproven until the
+keyed machine runs it: publishing a ladder as the real seller and the live watcher picking it up
+mid-sale. What follows is the problem statement as it stood.
+
+Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:366` (the line as it
+stood before M1; the sentence now survives only as the no-watcher fallback at `main.ts:412`): *"Save it as
 `.ladder.json` next to `watch-sales.ts`, then restart the watcher."* The seller downloads a file
 from their browser, copies it onto the machine running the daemon, and restarts a process. Miss
 the step and either `isStale` refuses to watch the item, or the watcher publishes rungs the relay
@@ -600,7 +612,7 @@ watcher to every item that device never published.
   30078 — but **encrypt to the watcher's pubkey, not to the seller's own key.** `notes.ts` is
   encrypt-to-self because only the seller's browser ever reads it; here the *watcher* has to
   decrypt, and only a holder of the seller's private key can open a self-encrypted payload. It
-  holds one today (`watch-sales.ts:115` reads `.dev-key`) purely because the fixture seller and
+  holds one today (`watch-sales.ts:148` reads `.dev-key`) purely because the fixture seller and
   the node account are one identity — a coincidence spec §12 says should be a separate key "where
   possible". Encrypting to self would turn that coincidence into a requirement. The shape is
   `notes.ts`'s; the recipient is not.
@@ -900,7 +912,7 @@ that can call `GetUserOfferInvoices`, and the watcher can publish.
   publishes it as a kind 30078 under **a third key** — not `.dev-key` and not `.refund-key`. The
   browser subscribes and decrypts.
 - **The "watcher holds no signing key" line is already false, and knowing that is what makes this
-  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:115`) and signs kind
+  buildable.** It reads the seller's secret key off disk (`watch-sales.ts:148`) and signs kind
   21000 with it (`pub-rpc.ts:97-99`). So the ledger's stated reason for keeping the refund journal
   off a relay — "the watcher holds no signing key by design, so it cannot publish a record of what
   it did" — is wrong on the facts. What slice 3 actually guarantees is narrower: the watcher signs

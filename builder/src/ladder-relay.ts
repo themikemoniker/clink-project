@@ -3,7 +3,7 @@
 // The shape is builder/src/notes.ts's, NIP-44 inside a kind 30078, and the recipient is not. The
 // notes are encrypted to self because only the seller's browser ever reads them; here the
 // *watcher* has to decrypt, and only a holder of the seller's private key could open a
-// self-encrypted payload. It holds one today (`watch-sales.ts:115` reads `.dev-key`) purely
+// self-encrypted payload. It holds one today (`watch-sales.ts:148` reads `.dev-key`) purely
 // because the fixture seller and the node account are one identity, a coincidence /docs/spec.md
 // §12 says should be a separate key where possible. Encrypting to self would make it permanent.
 //

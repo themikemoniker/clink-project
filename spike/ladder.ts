@@ -210,7 +210,7 @@ export type LadderChoice = { rung?: Rung; source: 'relay' | 'file' | 'none'; war
  * seller has ever published a ladder, and what keeps a sale running when the relays are down.
  *
  * A FAILED read and an ABSENT ladder are deliberately different branches even though both fall
- * back to the file. watch-sales.ts:204 already binds the rule: "the relay is down" must not read
+ * back to the file. watch-sales.ts:345 already binds the rule: "the relay is down" must not read
  * as "your ladder is stale". Their remedies differ, so their sentences differ. Waiting fixes one;
  * only re-publishing fixes the other.
  */

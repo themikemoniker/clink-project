@@ -211,7 +211,7 @@ test('a ladder payload that did not come from us reads as no ladder, and never t
 
 test('precedence: the relay wins when it decrypts, the file is the cold-start fallback', () => {
   // The four branches of the decision, and the reason the middle two are not one branch:
-  // watch-sales.ts:204 already binds the rule this must not break — "the relay is down" must not
+  // watch-sales.ts:345 already binds the rule this must not break — "the relay is down" must not
   // read as "your ladder is stale". A failed read and an absent ladder are different sentences
   // because their remedies are different: one is waiting, the other is publishing.
   const RELAY = { units: 3, steps: [{ created_at: 9 }] }
