@@ -232,6 +232,7 @@ const pool = new SimplePool()
 // What that leaves genuinely new is the JSON inside, which `parseRung` bounds.
 const readRelayLadders = async (): Promise<{ ladders: Map<string, Rung>; failed: boolean; undecryptable: number }> => {
   const ladders = new Map<string, Rung>()
+  const at = new Map<string, number>()
   let undecryptable = 0
   let events: Event[]
   try {
@@ -259,10 +260,13 @@ const readRelayLadders = async (): Promise<{ ladders: Map<string, Rung>; failed:
       continue
     }
     // NIP-01 keeps one event per (kind, pubkey, d), but relays disagree about which, so take the
-    // newest of whatever came back rather than the first, exactly as `loadNotes` does.
-    const seen = ladders.get(item)
-    if (!seen || ev.created_at > (seen as Rung & { at?: number }).at!) {
-      ladders.set(item, Object.assign(rung, { at: ev.created_at }))
+    // newest of whatever came back rather than the first, exactly as `loadNotes` does. The
+    // timestamps are kept beside the ladders rather than stamped onto them: the rung is the
+    // payload the builder sent and it goes on to be the thing this process publishes from, so
+    // nothing that is merely bookkeeping belongs inside it.
+    if (ev.created_at >= (at.get(item) ?? 0)) {
+      at.set(item, ev.created_at)
+      ladders.set(item, rung)
     }
   }
   return { ladders, failed: false, undecryptable }
