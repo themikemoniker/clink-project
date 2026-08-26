@@ -107,3 +107,93 @@ test('the sticker sheet exists and stays hidden until the seller builds one', as
   assert.equal(await sheet.getAttribute('aria-label'), 'Item stickers')
   await page.close()
 })
+
+// --- item 13's last bullet (2026-08-26) -------------------------------------------------------
+//
+// The shrink confirmation is new markup and new CSS, and item 8 exists because this project has
+// shipped five slices of markup that never rendered. So it renders here, in a real chromium,
+// before anybody trusts it.
+//
+// WHAT THIS PROVES AND WHAT IT DOES NOT, said plainly. It proves the element is in the built page,
+// that it is hidden cold, that unhiding it paints a legible, styled, non-clipped box, that the
+// list items lay out, and that the checkbox is a real control a person can tick. It does NOT
+// drive `doPublishSale` — that needs a signer and a four-relay read, neither of which exists in
+// this harness — so the decision to SHOW it is covered by the unit tests on `droppedMembers` in
+// src/admin.test.ts, and the painting is covered here. The seam between them is `showShrink`,
+// four lines of textContent and replaceChildren.
+
+test('the shrink confirmation is in the page and hidden until a publish would drop something', async () => {
+  const { page } = await open()
+  const box = page.locator('#sale-shrink')
+  assert.equal(await box.count(), 1)
+  assert.equal(await box.getAttribute('hidden'), '')
+  assert.equal(await box.isVisible(), false)
+  // Unticked cold, and main.ts `showShrink` clears it every time the box is hidden — a tick that
+  // survived from a previous publish is not a confirmation of this one.
+  assert.equal(await page.locator('#sale-shrink-ok').isChecked(), false)
+  // It has to sit INSIDE the sale form and above the submit button, or a seller reads the warning
+  // after pressing the thing it is warning about.
+  assert.equal(await page.locator('#sale #sale-shrink').count(), 1)
+  const buttonComesAfter = await page.evaluate(
+    () =>
+      !!(
+        document.querySelector('#sale-shrink')!.compareDocumentPosition(document.querySelector('#publish-sale')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+      ),
+  )
+  assert.equal(buttonComesAfter, true, 'the button should come after the warning')
+  await page.close()
+})
+
+test('and when it is shown it paints: styled, legible, and the checkbox is a real control', async () => {
+  const { page, errors } = await open()
+
+  // Exactly what main.ts `showShrink` writes — textContent and replaceChildren, never innerHTML,
+  // because these strings are `d` tags read off a relay.
+  await page.evaluate(() => {
+    const box = document.querySelector<HTMLElement>('#sale-shrink')!
+    box.hidden = false
+    document.querySelector('#sale-shrink-what')!.textContent = 'This would un-list 2 items that your sale lists right now:'
+    document.querySelector('#sale-shrink-list')!.replaceChildren(
+      ...['yardsale-2026-08-mugs', 'yardsale-2026-08-lamp'].map(d => {
+        const li = document.createElement('li')
+        li.textContent = d
+        return li
+      }),
+    )
+  })
+
+  const box = page.locator('#sale-shrink')
+  assert.equal(await box.isVisible(), true)
+  const rect = (await box.boundingBox())!
+  assert.ok(rect.height > 40 && rect.width > 100, `the box has no size: ${JSON.stringify(rect)}`)
+
+  // The warning reads as a warning. `.warn` is `color: var(--bad)`; if the rule is missing or the
+  // class is misspelled this is the muted grey every other hint uses, which is the failure that
+  // looks fine in a screenshot.
+  const what = page.locator('#sale-shrink-what')
+  const [warnColour, hintColour] = await page.evaluate(() => [
+    getComputedStyle(document.querySelector('#sale-shrink-what')!).color,
+    getComputedStyle(document.querySelector('#sale-shrink .hint')!).color,
+  ])
+  assert.notEqual(warnColour, hintColour, 'the warning is the same colour as an ordinary hint')
+  assert.match(await what.textContent() ?? '', /un-list 2 items/)
+
+  // Both `d`s painted, and as separate rows rather than one run-together string.
+  assert.equal(await page.locator('#sale-shrink-list li').count(), 2)
+  assert.equal(await page.locator('#sale-shrink-list li').first().textContent(), 'yardsale-2026-08-mugs')
+
+  // The sentence that stops M3 being built on a false premise: un-listing does not delete, and
+  // the storefront still draws a non-member. If this copy goes, the feature starts lying.
+  assert.match(await box.textContent() ?? '', /Un-listing is not deleting/)
+  assert.match(await box.textContent() ?? '', /replacement/)
+
+  // A real control, not a decoration. Ticking it is what the guard reads.
+  const ok = page.locator('#sale-shrink-ok')
+  assert.equal(await ok.isChecked(), false)
+  await ok.check()
+  assert.equal(await ok.isChecked(), true)
+
+  assert.deepEqual(errors, [])
+  await page.close()
+})

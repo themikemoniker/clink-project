@@ -196,6 +196,52 @@ export const noPublishSaleReason = (state: {
   return undefined
 }
 
+/**
+ * The `d` of every item the sale on the relays currently lists.
+ *
+ * `itemRefs` are `30402:<pubkey>:<d>` (Gamma spec.md:221, and `orderBySale` builds them in that
+ * exact shape). A ref that is not this seller's own 30402 is SKIPPED rather than counted: the
+ * builder only ever publishes this seller's items, so a foreign ref could never be preserved and
+ * warning about one would be a warning nobody can clear. That is a known limit rather than an
+ * oversight — nothing this app writes can produce one.
+ */
+export const saleMemberDs = (itemRefs: string[] | undefined, pubkey: string): string[] => {
+  if (!itemRefs?.length || !/^[0-9a-f]{64}$/.test(pubkey)) return []
+  const prefix = `${LISTING_KIND}:${pubkey}:`
+  const out: string[] = []
+  for (const ref of itemRefs) {
+    if (typeof ref !== 'string' || !ref.startsWith(prefix)) continue
+    // Everything after the second colon, so a `d` that itself contains one survives the split.
+    const d = ref.slice(prefix.length)
+    if (d && !out.includes(d)) out.push(d)
+  }
+  return out
+}
+
+/**
+ * Which members this publish would un-list — item 13's last bullet, and it is a SET difference
+ * rather than a length comparison.
+ *
+ * The roadmap words it as "the list I am about to publish is shorter than the one on the relays",
+ * and a count is a proxy for the thing that actually costs a seller something. Swapping one item
+ * for another leaves the count identical and still un-lists a real listing, so the count would
+ * wave it through. What matters is whether a member that IS in the sale right now is missing from
+ * the list about to replace it, and that is what this returns.
+ *
+ * IT RETURNS THE `d`s, NOT A BOOLEAN, because the confirmation has to name them. "This will
+ * un-list 3 items" is a warning a seller cannot check; naming them is a warning they can.
+ *
+ * WHY THIS IS NOT A REFUSAL. Shrinking is also exactly what a legitimate delete looks like — M3's
+ * retirement works BY removing a member — so nothing here can tell a mistake from an intention.
+ * A guard that cannot tell them apart must ask rather than decide, which is why this is an
+ * explicit confirmation and not another `noPublishSaleReason` branch. Building it here is what
+ * lets M3's delete land later without tripping a rule on every legitimate use.
+ */
+export const droppedMembers = (members: string[], next: string[]): string[] => {
+  const keep = new Set(next)
+  return members.filter(d => !keep.has(d))
+}
+
 export const reusableOffer = (noffer: string | undefined, priceSats: number): string | undefined => {
   if (!noffer) return undefined
   const decoded = decodeNoffer(noffer)

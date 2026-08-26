@@ -107,6 +107,24 @@
             is just text.
           </p>
 
+          <!-- Item 13's last bullet. Hidden until a publish would actually drop a member, and
+               populated by main.ts `showShrink` — never innerHTML, always textContent. -->
+          <div id="sale-shrink" class="shrink" hidden>
+            <p class="warn" id="sale-shrink-what"></p>
+            <ul id="sale-shrink-list"></ul>
+            <p class="hint">
+              A kind 30405 is a <strong>replacement</strong>: publishing this list is what un-lists
+              the rest, because nostr has no “remove one item” event. Un-listing is not deleting —
+              those listings stay on the relays and your storefront still draws them, at the foot
+              of the page and out of the sale’s order. And this is exactly what deliberately
+              retiring an item looks like, which is why nobody can tell the two apart for you.
+            </p>
+            <label class="row" for="sale-shrink-ok">
+              <input type="checkbox" id="sale-shrink-ok" />
+              <span>Yes, un-list them. I meant to.</span>
+            </label>
+          </div>
+
           <p class="cost" id="sale-cost"></p>
           <button type="submit" id="publish-sale" disabled>Publish my sale</button>
           <p class="hint" id="sale-state"></p>

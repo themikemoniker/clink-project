@@ -16,7 +16,16 @@
 // and it should not look AI-generated either — warm paper neutrals, one accent, high contrast.
 import './style.css'
 import { SimplePool } from 'nostr-tools/pool'
-import { draftFrom, loadItems, noPublishSaleReason, reusableOffer, soldCount, type Owned } from './admin.ts'
+import {
+  draftFrom,
+  droppedMembers,
+  loadItems,
+  noPublishSaleReason,
+  reusableOffer,
+  saleMemberDs,
+  soldCount,
+  type Owned,
+} from './admin.ts'
 import {
   draftFromSale,
   geohashOf,
@@ -76,6 +85,11 @@ let owned: Owned[] = []
 // real items. admin.ts `noPublishSaleReason` is the decision; these two are its inputs.
 let panelLoaded = false
 let answered: string[] = []
+// The `d`s the kind 30405 on the relays lists RIGHT NOW, which is the only thing a shrink can be
+// measured against. Set from the same read that sets `answered`, and cleared with it: a read that
+// failed cannot say anything about what is on the relays, and claiming otherwise would either
+// warn about nothing or wave a real shrink through.
+let saleMembers: string[] = []
 let notes: Notes = {}
 // SLICE 9. The sale this browser authors under. It used to be `SALE`, imported from the spike
 // fixture, which meant every seller published our neighbourhood, our geohash and an `a` tag
@@ -359,6 +373,35 @@ const refreshSaleCost = () => {
       `shown below — nostr has no edit, only replacement. Read from ${answered.length}/${RELAYS.length} relays.`
 }
 
+/**
+ * Paint item 13's confirmation, or take it away.
+ *
+ * `replaceChildren` + `textContent`, never innerHTML: the strings are `d` tags read off a relay,
+ * which is a stranger's input on a page that is about to sign something.
+ *
+ * The checkbox is cleared whenever the panel is hidden, so a tick can never survive into a later
+ * publish that the seller has not been shown. A confirmation that is still ticked from last time
+ * is not a confirmation.
+ */
+const showShrink = (dropped: string[]) => {
+  const box = $('#sale-shrink')
+  const ok = $<HTMLInputElement>('#sale-shrink-ok')
+  box.hidden = dropped.length === 0
+  if (!dropped.length) {
+    ok.checked = false
+    return
+  }
+  $('#sale-shrink-what').textContent =
+    `This would un-list ${dropped.length} item${dropped.length === 1 ? '' : 's'} that your sale lists right now:`
+  $('#sale-shrink-list').replaceChildren(
+    ...dropped.map(d => {
+      const li = document.createElement('li')
+      li.textContent = d
+      return li
+    }),
+  )
+}
+
 const doPublishSale = async (event: SubmitEvent) => {
   event.preventDefault()
   if (!signer) return
@@ -382,13 +425,34 @@ const doPublishSale = async (event: SubmitEvent) => {
     return say('That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.', 'bad')
   }
 
+  // ITEM 13'S LAST BULLET, and it sits AFTER the quorum gate on purpose. Below quorum the member
+  // list is short because a relay was slow, which is a different problem with a different answer
+  // ("Reload my items"); asking a seller to confirm un-listing items they never chose to drop
+  // would train them to tick the box. Only a list read from a majority of relays is worth
+  // comparing against.
+  const next = owned.map(o => o.item.d)
+  const dropped = droppedMembers(saleMembers, next)
+  if (dropped.length && !$<HTMLInputElement>('#sale-shrink-ok').checked) {
+    showShrink(dropped)
+    return say(
+      `Publishing this would un-list ${dropped.length} item${dropped.length === 1 ? '' : 's'}. ` +
+        `Read the box above, then tick it if you meant to.`,
+      'bad',
+    )
+  }
+
   $('#publish-sale').toggleAttribute('disabled', true)
   try {
     // EVERY member, every time. A kind 30405 is addressable, so this replaces the one on the
     // relays outright — handing it a subset silently un-lists the rest, which `orderBySale`
     // renders as strays at the foot of the storefront rather than dropping.
-    const { relaysOk } = await publishSale(signer, draft, owned.map(o => o.item.d), onStep)
+    const { relaysOk } = await publishSale(signer, draft, next, onStep)
     sale = draft
+    // The relays now list exactly what was just sent, so the next publish is measured against
+    // that and not against a list two edits old. Without this, one confirmed shrink would make
+    // every subsequent publish ask again about items that are already gone.
+    saleMembers = next
+    showShrink([])
     $('#sale-state').textContent =
       `“${draft.title}” is live on ${relaysOk}/${RELAYS.length} relays as ${draft.d}, listing ${owned.length} item(s).` +
       (draft.g ? ' Its neighbourhood is now a tappable map link on your storefront.' : '')
@@ -530,8 +594,13 @@ const loadPanel = async (withNotes = true) => {
   $('#refresh-items').toggleAttribute('disabled', true)
   try {
     $('#items-state').textContent = 'reading the relays…'
-    const loaded = await loadItems(pool, RELAYS, await signer.getPublicKey())
+    const pubkey = await signer.getPublicKey()
+    const loaded = await loadItems(pool, RELAYS, pubkey)
     owned = loaded.items
+    // What the sale on the relays lists today. A fresh read also means any warning the seller was
+    // looking at is about a comparison that no longer holds, so it goes away with the old list.
+    saleMembers = saleMemberDs(loaded.sale?.itemRefs, pubkey)
+    showShrink([])
     // Both of these gate `#publish-sale`. `answered` is which relays actually contributed an
     // event, not which were asked — see admin.ts `loadItems`.
     answered = loaded.answered
@@ -561,6 +630,8 @@ const loadPanel = async (withNotes = true) => {
     // rather than being left at whatever the last successful load said.
     panelLoaded = false
     answered = []
+    saleMembers = []
+    showShrink([])
     refreshSaleCost()
     $('#items-state').textContent = ''
     say(err instanceof Error ? err.message : String(err), 'bad')

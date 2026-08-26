@@ -10,7 +10,17 @@ import { test } from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { parseListings } from '../../storefront/src/listing.ts'
 import { DEFAULT_SALE, listingD as saleListingD, type SaleDraft } from './sale.ts'
-import { blobFrom, draftFrom, imetaValues, loadItems, noPublishSaleReason, reusableOffer, soldCount } from './admin.ts'
+import {
+  blobFrom,
+  draftFrom,
+  droppedMembers,
+  imetaValues,
+  loadItems,
+  noPublishSaleReason,
+  reusableOffer,
+  saleMemberDs,
+  soldCount,
+} from './admin.ts'
 import { approvalCount, eventsToSign, listingTags, type Blob, type Draft } from './listing.ts'
 import { parseNotes, MAX_NOTE } from './notes.ts'
 
@@ -316,4 +326,59 @@ test('the reason is a sentence, because a disabled button that says nothing is i
     assert.equal(typeof reason, 'string')
     assert.equal(reason.endsWith('.') || reason.endsWith('”.'), true, reason)
   }
+})
+
+// --- item 13's last bullet (2026-08-26): refuse to shrink a sale silently ---------------------
+//
+// The other two bullets landed in milestone A and both are about a list that is short BY ACCIDENT
+// — empty because the read had not finished, short because a relay was slow. This is the case
+// neither of them can see: a list that is short and correct, because the seller meant to retire
+// something. A kind 30405 is a replacement either way, so the wire cannot tell them apart, and
+// neither can we. What we can do is name what is about to go and make somebody say yes.
+//
+// This has to exist BEFORE M3's delete, not after: M3 retires an item BY dropping it from the
+// member list, so without a confirmation path M3 would trip a refusal on every legitimate use.
+
+test('the sale on the relays is read back as the item ds it lists', () => {
+  // `30402:<pubkey>:<d>` — Gamma spec.md:221, and `orderBySale` builds refs in that exact shape.
+  assert.deepEqual(saleMemberDs([`30402:${pk}:mugs`, `30402:${pk}:lamp`], pk), ['mugs', 'lamp'])
+  assert.deepEqual(saleMemberDs([], pk), [])
+  assert.deepEqual(saleMemberDs(undefined, pk), [])
+})
+
+test('a ref that is not this seller’s own listing is skipped, not counted as a member', () => {
+  const other = 'f'.repeat(64)
+  assert.deepEqual(saleMemberDs([`30402:${other}:theirs`, `30402:${pk}:mine`], pk), ['mine'])
+  // A different kind is not a 30402 member however it is spelled.
+  assert.deepEqual(saleMemberDs([`30405:${pk}:nested`, `30023:${pk}:article`], pk), [])
+  // A duplicate ref is one member. The count is shown to a seller, so it has to be the count.
+  assert.deepEqual(saleMemberDs([`30402:${pk}:mugs`, `30402:${pk}:mugs`], pk), ['mugs'])
+  // Nonsense in, nothing out — the refs come off a relay.
+  assert.deepEqual(saleMemberDs(['', 'not-a-ref', `30402:${pk}:`], pk), [])
+  assert.deepEqual(saleMemberDs([`30402:${pk}:mugs`], 'not-a-pubkey'), [])
+})
+
+test('a d containing a colon survives, because only the first two are the address', () => {
+  assert.deepEqual(saleMemberDs([`30402:${pk}:sale:2026:mugs`], pk), ['sale:2026:mugs'])
+})
+
+test('publishing a shorter list names every item it would un-list', () => {
+  assert.deepEqual(droppedMembers(['mugs', 'lamp', 'bike'], ['mugs', 'bike']), ['lamp'])
+  assert.deepEqual(droppedMembers(['mugs', 'lamp', 'bike'], []), ['mugs', 'lamp', 'bike'])
+})
+
+test('it is a SET difference, not a length test, because a swap is a same-length shrink', () => {
+  // The roadmap words this as "shorter than the one on the relays". A count would wave this
+  // through: three in, three out, and `lamp` is silently gone from the sale.
+  assert.deepEqual(droppedMembers(['mugs', 'lamp', 'bike'], ['mugs', 'bike', 'couch']), ['lamp'])
+  // And it must not fire on a rename-free reorder, which is not a shrink at all.
+  assert.deepEqual(droppedMembers(['mugs', 'lamp'], ['lamp', 'mugs']), [])
+})
+
+test('growing, or publishing the first sale there has ever been, asks nothing', () => {
+  assert.deepEqual(droppedMembers(['mugs'], ['mugs', 'lamp']), [])
+  assert.deepEqual(droppedMembers(['mugs'], ['mugs']), [])
+  // No sale on the relays yet: there is nothing to shrink, so there is nothing to confirm.
+  assert.deepEqual(droppedMembers([], ['mugs', 'lamp']), [])
+  assert.deepEqual(droppedMembers([], []), [])
 })
