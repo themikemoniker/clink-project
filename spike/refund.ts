@@ -19,7 +19,7 @@
 // problem from "you typed it wrong"); the name half is what identifies the person, and it is
 // never written, never printed, and never leaves this file. `new URL(url).host` is the only thing
 // that crosses that line, and it is the only thing that should.
-import { lookup } from 'node:dns/promises'
+import { lookup, Resolver } from 'node:dns/promises'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { request as httpsRequest } from 'node:https'
 import { isIP } from 'node:net'
@@ -300,6 +300,115 @@ export const lnurlpUrl = (address: string): string | null => {
   // on that host. encodeURIComponent is the whole guard and it is enough: the result cannot
   // contain `/` or `.` runs that a path parser would collapse.
   return `https://${host}/.well-known/lnurlp/${encodeURIComponent(name)}`
+}
+
+// --- BIP-353, and it is here ONLY to explain a failure ----------------------------------------
+//
+// ITEM 27, FIRST BULLET. `LN_ADDRESS.test()` cannot tell a BIP-353 address from an LNURL-pay one
+// — both are `user@domain` — so `lnurlpUrl` above builds a `/.well-known/lnurlp/…` URL for a host
+// that may serve no HTTPS at all. Measured 2026-08-26, and 2026-08-24 before it: `phoenixwallet.me`
+// has NS records on Route 53 and answers NOERROR with ZERO answers for both A and AAAA. There is
+// no server to ask. The buyer is not doing anything wrong; we are reading their address as the
+// only kind of address we know.
+//
+// WHAT THIS DOES NOT DO IS PAY. A BIP-353 record carries a BOLT12 offer and `./ndebit.ts` sends a
+// BOLT11; whether this Lightning.Pub can pay an offer at all is UNVERIFIED. That is item 27's
+// third bullet and a spike of its own. This looks up one TXT record so a `queued` row can say the
+// TRUE reason instead of naming DNS, and then it stops. `payDebit` is untouched.
+//
+// A DNS ANSWER IS HOSTILE INPUT, and /CLAUDE.md's money-path rule does not care that it is UDP:
+//
+//   * its OWN resolver, `timeout: 2000, tries: 1` — the OS resolver's default is five tries at
+//     five seconds, which would put 25 s inside a tick that `inFlightGuard` drops polls behind;
+//   * an outer wall-clock race as well, because a resolver timeout bounds the QUERY and this
+//     needs to bound the PROMISE — the same distinction that made `req.setTimeout` a defect;
+//   * record count and total bytes bounded BEFORE anything is scanned;
+//   * the query name is built from a single validated DNS label, so a pointer cannot smuggle
+//     extra labels or a different zone into the lookup;
+//   * and it runs only AFTER the LNURL hop has permanently failed, so it is never a second hop
+//     in front of a working one and costs the happy path nothing.
+//
+// AND IT RETURNS A BOOLEAN. The record's value is a payment credential addressed to a person —
+// the same class as the `refund_pointer` this file refuses to log. It is never returned, never
+// printed, never journalled. The failure message names the DOMAIN only, like every other one here.
+const BIP353_PREFIX = 'user._bitcoin-payment'
+const BIP353_TIMEOUT_MS = 2_000
+const BIP353_MAX_RECORDS = 16
+const BIP353_MAX_BYTES = 4 * 1024
+
+/**
+ * The BIP-353 TXT name for a Lightning address, or null if we will not ask about it.
+ *
+ * `<name>.user._bitcoin-payment.<domain>` — the shape recorded in `/docs/known-defects.md` from
+ * the 2026-08-24 measurement and re-resolved live on 2026-08-26, not recalled.
+ *
+ * DELIBERATELY STRICTER THAN `LN_ADDRESS`, whose name half is `[^\s@]{1,64}` and therefore admits
+ * dots, slashes and unicode. Here the name half must be ONE ordinary DNS label or we do not query
+ * at all: `a.b@host` would otherwise reach into a different zone than the address names, and this
+ * function's whole job is to answer a question about the address in front of it. Refusing is
+ * free — the caller falls back to the message it already had.
+ */
+export const bip353Name = (address: string): string | null => {
+  if (!LN_ADDRESS.test(address)) return null
+  const at = address.lastIndexOf('@')
+  const name = address.slice(0, at).toLowerCase()
+  const domain = address.slice(at + 1).toLowerCase()
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name)) return null
+  const query = `${name}.${BIP353_PREFIX}.${domain}`
+  return query.length <= 253 ? query : null
+}
+
+export type TxtLookup = (name: string) => Promise<string[][]>
+
+const dnsTxt: TxtLookup = name => new Resolver({ timeout: BIP353_TIMEOUT_MS, tries: 1 }).resolveTxt(name)
+
+/**
+ * Does this address publish a BIP-353 payment record? A boolean, and nothing else.
+ *
+ * `txt` is injectable because every real answer needs the internet, and the bounds below are the
+ * half that must be provable offline — the same reason `getJson` takes a `hop`.
+ */
+export const hasBip353 = async (address: string, txt: TxtLookup = dnsTxt): Promise<boolean> => {
+  const query = bip353Name(address)
+  if (!query) return false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let records: unknown
+  try {
+    records = await Promise.race([
+      txt(query),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('BIP-353 lookup deadline')), BIP353_TIMEOUT_MS + 500)
+      }),
+    ])
+  } catch {
+    return false // NXDOMAIN, a resolver that is having a bad minute, or a hostile one that stalls
+  } finally {
+    clearTimeout(timer)
+  }
+  if (!Array.isArray(records)) return false
+  let budget = BIP353_MAX_BYTES
+  for (const chunks of records.slice(0, BIP353_MAX_RECORDS)) {
+    if (!Array.isArray(chunks)) continue
+    // RFC 1035 TXT is a sequence of character-strings, each at most 255 bytes, and a BIP-353
+    // record is longer than that — `resolveTxt` hands back the chunks and they concatenate with
+    // NO separator. Verified 2026-08-26 against a real record: joining with anything else
+    // produces a `bitcoin:` URI with a gap in it, which would still start with `bitcoin:` and so
+    // would not be caught here. Hence joined first, then tested.
+    let joined = ''
+    for (const chunk of chunks) {
+      if (typeof chunk !== 'string') break
+      budget -= chunk.length
+      if (budget < 0) return false // an answer this big is not a payment record
+      joined += chunk
+    }
+    // The one thing BIP-353 requires of the value that we depend on. Verified live 2026-08-26:
+    // `mattcorallo.com` publishes a SECOND TXT record at the same name reading "as long as it
+    // doesn't start with bitcoin:, other records should be ignored", which is the rule stated by
+    // the zone itself. Everything past the prefix — `lno=`, an on-chain address, parameters — is
+    // deliberately not parsed, because nothing here pays it.
+    if (joined.slice(0, 8).toLowerCase() === 'bitcoin:') return true
+  }
+  return false
 }
 
 // LUD-06 payRequest, the subset we need. Deliberately re-validated rather than destructured off
@@ -654,8 +763,13 @@ export const resolvePointer = async (pointer: string, expectSats: number): Promi
   }
 
   const msat = expectSats * 1_000
+  // Which hop failed decides whether item 27's explanation applies. A host that answered a valid
+  // `payRequest` and then 4xx'd its own callback is having a different problem entirely.
+  let firstHop = true
   try {
-    const callback = payRequestCallback(await getJson(url), msat)
+    const payRequest = await getJson(url)
+    firstHop = false
+    const callback = payRequestCallback(payRequest, msat)
     if (!callback) {
       return { ok: false, error: `${new URL(url).host} did not answer with a usable LNURL-pay request for ${expectSats} sats`, queue: true }
     }
@@ -678,6 +792,22 @@ export const resolvePointer = async (pointer: string, expectSats: number): Promi
     }
     return { ok: true, bolt11 }
   } catch (err) {
+    // ITEM 27, FIRST BULLET: SAY THE TRUE REASON. The first hop failed permanently — no address
+    // record at all, or the host answered 4xx — and this exact address publishes a BIP-353
+    // payment record. Naming DNS here sends a seller to debug a hostname that was never wrong.
+    // Only on a PERMANENT failure, so a wallet host having a bad minute never gets this message,
+    // and only on the first hop. One bounded TXT lookup, on a path that is already lost.
+    if (firstHop && err instanceof PermanentHttpError && (await hasBip353(raw))) {
+      return {
+        ok: false,
+        error:
+          `${new URL(url).host} publishes a BIP-353 payment record and no LNURL-pay endpoint for ` +
+          `this address: that is a BIP-353 address and this refund path speaks LNURL-pay. Nothing ` +
+          `is wrong with the address. Pay this buyer by hand, or ask them for an LNURL-pay address ` +
+          `or an noffer.`,
+        queue: true,
+      }
+    }
     // A host that is down, slow, or serving nonsense gets another go — "the server was rebooting"
     // is the common case and the next attempt is minutes away. A 4xx does not: the host answered,
     // and what it said was that this address is not one of theirs. That is a person's problem.
