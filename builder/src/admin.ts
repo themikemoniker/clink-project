@@ -29,6 +29,7 @@ import { decodeNoffer } from '../../storefront/src/offer.ts'
 import {
   LISTING_KIND,
   SALE_KIND,
+  isSats,
   orderBySale,
   parseListings,
   parseSales,
@@ -108,12 +109,51 @@ const serverOf = (url: string): string => url.slice(0, url.lastIndexOf('/'))
  * ./sale.ts `saleD`, and note that this function is precisely why the sale's `d` is not a form
  * field: change it and every item the seller has stops being editable, in silence.
  */
+// Re-exported so main.ts asks ONE module about currency. admin.ts is already the seam between
+// the builder and the storefront's parser; a second import path to the same predicate is how two
+// of them drift apart, which is the defect M3 found in the first place.
+export { isSats } from '../../storefront/src/listing.ts'
+
+/**
+ * A currency this form may carry through, or null.
+ *
+ * THE ONE THING THAT MUST NOT HAPPEN is a "fiat" price that is really sats. `listingTags` writes
+ * `draft.fiat` straight into the `price` tag, and `publish.ts` mints nothing for a fiat draft — so
+ * a currency that the storefront reads as sats would produce a listing priced N sats with no
+ * offer, which is merely broken, and one round-trip later a seller could put an offer behind a
+ * number that was never sats. Refusing every spelling of sats here is what keeps the two paths
+ * from ever meeting. `isSats` is the storefront's own predicate, imported rather than restated.
+ *
+ * Otherwise: ISO 4217 is three letters, but 99.md:41 says "ISO 4217-like" and the wild is wider
+ * than that, so this bounds rather than enumerates. Letters only, 1–12 of them — enough for
+ * anything real, and short enough that a relay cannot hand the form a paragraph.
+ */
+export const fiatCurrency = (raw: string | undefined): string | null => {
+  const code = (raw ?? '').trim()
+  if (!/^[A-Za-z]{1,12}$/.test(code)) return null
+  return isSats(code) ? null : code
+}
+
 export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null => {
   const prefix = `${saleD}-`
   if (!item.d.startsWith(prefix)) return null
   const slug = item.d.slice(prefix.length)
   if (!slug) return null
-  if (item.price && item.price.currency !== 'sats') return null
+  // M3. This used to be `if (item.price && item.price.currency !== 'sats') return null`, so
+  // `records` at 80 MXN could never be edited at all. Two things were wrong with it and they are
+  // separable:
+  //
+  //   * IT COMPARED ON THE EXACT LOWERCASE STRING while storefront/src/listing.ts accepted
+  //     `/^sats?$/i`. An item priced `sat` or `SATS` was therefore BUYABLE and NOT EDITABLE.
+  //     Measured against both live sales on 2026-08-26: all 17 listings write exactly `sats` or
+  //     `MXN`, so this was latent, not live — and it is closed by construction now, because both
+  //     files call the same exported `isSats`.
+  //   * IT REFUSED FOREVER, which was right about the danger and wrong that refusing was the only
+  //     way out. A sats-only form would have republished 80 MXN as 80 sats, a silent 99.99%
+  //     discount on something somebody might then buy. Carrying the currency and the amount
+  //     through as a display price that never mints an offer is the other way to be right.
+  const fiat = item.price && !isSats(item.price.currency) ? fiatCurrency(item.price.currency) : null
+  if (item.price && !isSats(item.price.currency) && !fiat) return null
 
   const blobs = [...item.images, ...item.thumbs].flatMap(p => blobFrom(p) ?? [])
   const hero = blobs[0]
@@ -125,14 +165,18 @@ export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null
     slug,
     title: item.title,
     summary: item.summary ?? '',
-    priceSats: item.price?.amount ?? 0,
+    priceSats: fiat ? 0 : (item.price?.amount ?? 0),
+    ...(fiat ? { fiat: { amount: item.price!.amount, currency: fiat } } : {}),
     // `stock: undefined` means the seller never said, and `status` carries the answer instead
     // (storefront/src/listing.ts) — which for a yard sale means one unit, then gone.
     stock: item.stock ?? (item.sold ? 0 : 1),
     alt: imetaValues(event, 'alt')[0] ?? '',
     blobs,
     servers,
-    noffer: event.tags.find(t => t[0] === 'clink_offer')?.[1],
+    // A fiat item's `clink_offer`, if some other tool wrote one, is not reusable: `reusableOffer`
+    // measures a pointer's own TLV 4 against a SATS price, and this item has none. Dropping it
+    // here is what keeps "unpayable" true through an edit.
+    noffer: fiat ? undefined : event.tags.find(t => t[0] === 'clink_offer')?.[1],
   }
 }
 

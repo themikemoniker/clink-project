@@ -19,6 +19,8 @@ import { SimplePool } from 'nostr-tools/pool'
 import {
   draftFrom,
   droppedMembers,
+  fiatCurrency,
+  isSats,
   loadItems,
   noPublishSaleReason,
   reusableOffer,
@@ -75,6 +77,10 @@ let ladder: LadderFile = {}
 // this a replacement rather than a second item, and its `noffer` is what stops an edit minting a
 // second payable offer for something already on sale (admin.ts `reusableOffer`).
 let editing: { d: string; noffer?: string } | null = null
+// M3. The currency of the item being edited, when it is not sats. Set ONLY from a listing that
+// already carried one — there is no control anywhere that types a currency — and cleared by
+// `resetItem`, or the next item authored in the same page load would silently inherit it.
+let fiatCode: string | null = null
 // Photos uploaded THIS session, which is not the same as photos on the draft: an edit carries
 // blobs that are already on Blossom and re-uploads nothing. Only this number costs signatures.
 let uploads = 0
@@ -220,7 +226,10 @@ const readDraft = (): Draft => {
     slug: normaliseSlug($<HTMLInputElement>('#slug').value || $<HTMLInputElement>('#title').value),
     title: $<HTMLInputElement>('#title').value.trim(),
     summary: $<HTMLTextAreaElement>('#summary').value.trim(),
-    priceSats: Number($<HTMLInputElement>('#price').value),
+    priceSats: fiatCode ? 0 : Number($<HTMLInputElement>('#price').value),
+    ...(fiatCode
+      ? { fiat: { amount: Number($<HTMLInputElement>('#price-fiat-amount').value), currency: fiatCode } }
+      : {}),
     stock: Number($<HTMLInputElement>('#stock').value),
     alt: $<HTMLInputElement>('#alt').value.trim(),
     blobs: photos,
@@ -229,7 +238,9 @@ const readDraft = (): Draft => {
   // An edit keeps the offer the item already advertises — but only while the price still agrees
   // with the pointer's own TLV 4. Change the price and this returns nothing, publish.ts mints a
   // fresh offer, and the old one is left alone on the node rather than deleted (findings §13.17).
-  draft.noffer = reusableOffer(editing?.noffer, draft.priceSats)
+  // A fiat item has no sats price for a pointer's TLV 4 to agree with, so there is nothing to
+  // reuse and nothing to mint. `draftFrom` already dropped any `clink_offer` it found.
+  draft.noffer = fiatCode ? undefined : reusableOffer(editing?.noffer, draft.priceSats)
   return draft
 }
 
@@ -241,13 +252,16 @@ const refreshCost = () => {
   // An edit that reuses its offer mints nothing, and one that keeps its photos uploads nothing.
   // Both terms have to come out of the count or the number shown is a lie in the safe direction,
   // which is still a lie: a seller who is told thirty and sees four stops trusting the number.
-  const mint = !!node && draft.stock > 0 && !draft.noffer
+  // M3: never for a fiat item. `approvalCount` and publish.ts enforce the same thing, so the
+  // number shown here cannot drift from the events actually signed.
+  const mint = !!node && draft.stock > 0 && !draft.noffer && !draft.fiat
   const n = approvalCount(draft, mint, uploads)
   const units = Math.max(0, draft.stock)
   const parts = [
     ...(uploads ? [`${uploads} photo upload${uploads === 1 ? '' : 's'}`] : []),
     ...(mint ? ['1 offer'] : []),
     ...(draft.noffer ? ['0 offers — this item already has one, at this price'] : []),
+    ...(draft.fiat ? [`0 offers — priced in ${draft.fiat.currency}, so it stays cash at the table`] : []),
     '1 listing',
     `${units} availability step${units === 1 ? '' : 's'}`,
   ]
@@ -261,6 +275,29 @@ const refreshCost = () => {
 // tag. NIP-01 replaces on (kind, pubkey, d), so item one vanished from the sale, its minted offer
 // was orphaned and unwatchable, and item two silently carried item one's photo. The signer, the
 // node pointer, the price and the stock are what a seller reuses between items, so those stay.
+/**
+ * Put the price row into the currency the item actually has — M3.
+ *
+ * `#price` is DISABLED rather than merely hidden. A `required` field inside a hidden wrapper is
+ * still a constraint the form validates, and Chrome refuses to submit with "an invalid form
+ * control is not focusable" — a submit button that silently does nothing, which is worse than the
+ * refusal this feature replaces. Disabling takes it out of validation and out of the tab order in
+ * one attribute.
+ *
+ * The currency is written with textContent and comes off a listing on a relay, so it goes through
+ * `fiatCurrency` before it ever reaches here: letters only, bounded, and never a spelling of sats.
+ */
+const showFiat = (fiat: { amount: number; currency: string } | null) => {
+  fiatCode = fiat?.currency ?? null
+  $('#price-sats').hidden = !!fiat
+  $<HTMLInputElement>('#price').toggleAttribute('disabled', !!fiat)
+  $('#price-fiat').hidden = !fiat
+  $('#price-fiat-note').hidden = !fiat
+  $<HTMLInputElement>('#price-fiat-amount').toggleAttribute('disabled', !fiat)
+  $('#price-fiat-currency').textContent = fiat?.currency ?? '—'
+  $<HTMLInputElement>('#price-fiat-amount').value = fiat ? String(fiat.amount) : ''
+}
+
 const resetItem = () => {
   photos = []
   servers = []
@@ -270,6 +307,10 @@ const resetItem = () => {
     $<HTMLInputElement | HTMLTextAreaElement>(id).value = ''
   }
   $<HTMLInputElement>('#slug').toggleAttribute('readonly', false)
+  // Back to sats. Without this the next item authored in the same page load would inherit the
+  // last edited item's currency, which is the class of defect `resetItem` exists for — the
+  // second-publish-under-the-first-item's-d bug in this same function.
+  showFiat(null)
   $('#publish').textContent = 'Publish this item'
   $('#editing-note').hidden = true
   $('#cancel-edit').hidden = true
@@ -290,10 +331,18 @@ const doPublish = async (event: SubmitEvent) => {
   // taps on a phone.
   if (!draft.slug) return say('Give the item a title, or a slug.', 'bad')
   if (!draft.title) return say('Give the item a title.', 'bad')
-  if (!Number.isSafeInteger(draft.priceSats) || draft.priceSats < 0) return say('Price must be a whole number of sats.', 'bad')
+  // M3. A fiat item is validated as its own price and never as sats, and neither the sats floor
+  // nor the node's 10-sat minimum applies to it — it is not going to be invoiced at all.
+  if (draft.fiat) {
+    if (!Number.isSafeInteger(draft.fiat.amount) || draft.fiat.amount < 0) {
+      return say(`Price must be a whole number of ${draft.fiat.currency}.`, 'bad')
+    }
+  } else if (!Number.isSafeInteger(draft.priceSats) || draft.priceSats < 0) {
+    return say('Price must be a whole number of sats.', 'bad')
+  }
   // Lightning.Pub hardcodes a 10-sat floor on what it will invoice (offerManager.ts:224,251 —
   // findings §13.7). Below it the node answers `code 5` and the seller never learns why.
-  if (node && draft.stock > 0 && draft.priceSats < 10) {
+  if (node && !draft.fiat && draft.stock > 0 && draft.priceSats < 10) {
     return say('A buyable item must be at least 10 sats — the node will not invoice less. Set stock to 0, or clear the node field, to list it as cash-only.', 'bad')
   }
   if (!Number.isSafeInteger(draft.stock) || draft.stock < 0 || draft.stock > 999) return say('Stock must be 0–999.', 'bad')
@@ -564,9 +613,12 @@ const renderItems = () => {
       // data: this form is sats-only and addresses this sale only.
       const why = document.createElement('span')
       why.className = 'hint'
+      // M3 removed the fiat half of this. What is left is the `d`-prefix refusal, plus a currency
+      // this form cannot carry at all — a `price` tag whose currency is not letters, which no
+      // tool of ours writes and a relay can still hand us.
       why.textContent =
-        item.price && item.price.currency !== 'sats'
-          ? `Priced in ${item.price.currency}. This form only speaks sats, and republishing it here would re-price it.`
+        item.price && !isSats(item.price.currency) && !fiatCurrency(item.price.currency)
+          ? `Priced in something this form cannot carry, so republishing it here would change what it says.`
           : `Published outside “${sale.d}”, so this form cannot address it without orphaning the original.`
       row.append(why)
     }
@@ -655,7 +707,8 @@ const editItem = (own: Owned, draft: Draft, markingSold = false) => {
   $<HTMLInputElement>('#slug').value = draft.slug
   $<HTMLInputElement>('#title').value = draft.title
   $<HTMLTextAreaElement>('#summary').value = draft.summary
-  $<HTMLInputElement>('#price').value = String(draft.priceSats)
+  showFiat(draft.fiat ?? null)
+  if (!draft.fiat) $<HTMLInputElement>('#price').value = String(draft.priceSats)
   $<HTMLInputElement>('#stock').value = String(draft.stock)
   $<HTMLInputElement>('#alt').value = draft.alt
   $<HTMLInputElement>('#photo').value = ''

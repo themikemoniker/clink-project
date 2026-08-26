@@ -197,3 +197,81 @@ test('and when it is shown it paints: styled, legible, and the checkbox is a rea
   assert.deepEqual(errors, [])
   await page.close()
 })
+
+// --- M3's fiat half (2026-08-26) --------------------------------------------------------------
+//
+// New markup again, and one claim in main.ts `showFiat` that is a browser behaviour rather than a
+// design opinion: `#price` is DISABLED and not merely hidden, because a `required` control inside
+// a hidden wrapper is still validated and Chrome refuses to submit with "an invalid form control
+// is not focusable" — a submit button that silently does nothing. That is asserted here, both
+// ways, rather than believed.
+
+test('the fiat price field is in the page and out of the way until an item needs it', async () => {
+  const { page } = await open()
+  assert.equal(await page.locator('#price-fiat').getAttribute('hidden'), '')
+  assert.equal(await page.locator('#price-fiat-note').getAttribute('hidden'), '')
+  assert.equal(await page.locator('#price-fiat-amount').isDisabled(), true)
+  // The sats field is the default and the only one a seller can reach by typing. There is no
+  // control anywhere that enters a currency — it can only ever be read off an existing listing.
+  assert.equal(await page.locator('#price').isVisible(), true)
+  assert.equal(await page.locator('#price').isDisabled(), false)
+  assert.equal(await page.locator('#price-fiat-currency').textContent(), '—')
+  await page.close()
+})
+
+test('switched into a currency, the row paints it and the form still submits', async () => {
+  const { page, errors } = await open()
+
+  // Exactly the attribute changes main.ts `showFiat(fiat)` makes.
+  await page.evaluate(() => {
+    const $ = (s: string) => document.querySelector<HTMLElement>(s)!
+    $('#price-sats').hidden = true
+    ;($('#price') as HTMLInputElement).toggleAttribute('disabled', true)
+    $('#price-fiat').hidden = false
+    $('#price-fiat-note').hidden = false
+    ;($('#price-fiat-amount') as HTMLInputElement).toggleAttribute('disabled', false)
+    $('#price-fiat-currency').textContent = 'MXN'
+    ;($('#price-fiat-amount') as HTMLInputElement).value = '80'
+  })
+
+  assert.equal(await page.locator('#price').isVisible(), false)
+  assert.equal(await page.locator('#price-fiat').isVisible(), true)
+  assert.equal(await page.locator('#price-fiat-amount').inputValue(), '80')
+  // The label reads "Price, in MXN" — one sentence built from a listing's own currency tag.
+  assert.match((await page.locator('label[for="price-fiat-amount"]').textContent()) ?? '', /Price, in MXN/)
+  // And the warning that this item can never be bought through the page, which is the whole
+  // reason carrying the price through is safe at all.
+  assert.match((await page.locator('#price-fiat-note').textContent()) ?? '', /no Buy button/)
+  assert.match((await page.locator('#price-fiat-note').textContent()) ?? '', /nothing in this app\s+converts/)
+
+  // THE CLAIM. `#title` is the form's other required field and is empty on a cold page, so it is
+  // filled first — otherwise this measures the title and not the price.
+  await page.locator('#title').fill('Records, jazz and salsa')
+  const disabled = await page.evaluate(() => ({
+    // `willValidate` is the direct statement: a disabled control is barred from constraint
+    // validation entirely (HTML §4.10.18.3), which is what takes it out of the submit path.
+    priceWillValidate: document.querySelector<HTMLInputElement>('#price')!.willValidate,
+    formValid: document.querySelector<HTMLFormElement>('#item')!.checkValidity(),
+  }))
+  const validWhenDisabled = disabled.formValid
+  assert.equal(disabled.priceWillValidate, false, 'a disabled control should be barred from validation')
+
+  // Re-enable the hidden required field, which is what "just hide it" would have left behind.
+  await page.evaluate(() => {
+    const price = document.querySelector<HTMLInputElement>('#price')!
+    price.toggleAttribute('disabled', false)
+    price.value = ''
+  })
+  const enabled = await page.evaluate(() => ({
+    priceWillValidate: document.querySelector<HTMLInputElement>('#price')!.willValidate,
+    formValid: document.querySelector<HTMLFormElement>('#item')!.checkValidity(),
+  }))
+  const validWhenHiddenAndRequired = enabled.formValid
+  assert.equal(enabled.priceWillValidate, true, 'hiding a wrapper does not take its control out of validation')
+
+  assert.equal(validWhenDisabled, true, 'disabling the sats field should take it out of validation')
+  assert.equal(validWhenHiddenAndRequired, false, 'a hidden required field still blocks submit — this is why disabled')
+
+  assert.deepEqual(errors, [])
+  await page.close()
+})

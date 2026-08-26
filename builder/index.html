@@ -145,9 +145,16 @@
           <textarea id="summary" rows="2" maxlength="600" placeholder="Rewired, works, some patina on the base."></textarea>
 
           <div class="row">
-            <span>
+            <span id="price-sats">
               <label for="price">Price, in sats</label>
               <input id="price" type="number" min="0" step="1" value="1000" required />
+            </span>
+            <!-- M3. Only ever shown for an item whose listing ALREADY carries another currency.
+                 There is no way to reach it by typing: the currency is read off the item, never
+                 entered, and an item priced this way can never have a Buy button. -->
+            <span id="price-fiat" hidden>
+              <label for="price-fiat-amount">Price, in <span id="price-fiat-currency">—</span></label>
+              <input id="price-fiat-amount" type="number" min="0" step="1" disabled />
             </span>
             <span>
               <label for="stock">How many</label>
@@ -158,6 +165,12 @@
             Sats only. There is no currency conversion anywhere in this app — that would need a
             price oracle, and an oracle is somebody else’s server. Price something in pesos by
             leaving the node field empty: it lists, it just has no Buy button.
+          </p>
+          <p class="warn" id="price-fiat-note" hidden>
+            This item was priced in another currency, so it keeps that price and stays cash at the
+            table — no Buy button, no offer on your node, whatever the node field says. You can
+            change the amount. You cannot change the currency here, and nothing in this app
+            converts one to the other.
           </p>
 
           <label for="photo">Photo</label>

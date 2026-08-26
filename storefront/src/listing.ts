@@ -165,13 +165,29 @@ const parsePhotos = (ev: Event, name: 'image' | 'thumb'): Photo[] => {
 // and otherwise one bit saying whether the reason was a price disagreement: the only refusal
 // here that makes the DISPLAYED price untrustworthy. Everything else leaves the price tag intact,
 // so a buyer can still turn up with cash for the number they read.
+/**
+ * Is this `price` tag's currency our own unit?
+ *
+ * ONE PREDICATE, EXPORTED, because there used to be two and they disagreed. This accepted
+ * `/^sats?$/i` while `builder/src/admin.ts` refused anything but the exact lowercase `sats`, so an
+ * item priced `sat` or `SATS` rendered a Buy button and could never be edited. Measured against
+ * both live sales on 2026-08-26: every one of the 17 listings writes exactly `sats` or `MXN`, so
+ * the disagreement was latent rather than live — and latent is why it survived three slices.
+ *
+ * Loose rather than strict, and that direction is deliberate. `sat`, `SATS` and `Sats` are all
+ * things a NIP-99 client that is not ours will write (99.md:41 calls the field "ISO 4217-like",
+ * which in practice means anything), and refusing them would make a correctly-priced listing
+ * unbuyable. Widening the BUILDER to match is the change that cost nothing.
+ */
+export const isSats = (currency: string): boolean => /^sats?$/i.test(currency)
+
 const buyableOffer = (
   raw: string | undefined,
   price: Money | undefined,
   sold: boolean,
 ): { offer?: Offer; priceDisagrees?: boolean } => {
   if (raw === undefined || sold) return {} // §7.4(a): a sold item's offer should not exist
-  if (!price || !/^sats?$/i.test(price.currency)) return {}
+  if (!price || !isSats(price.currency)) return {}
   if (!Number.isSafeInteger(price.amount) || price.amount < MIN_PAYABLE_SATS) return {}
   const offer = decodeNoffer(raw)
   // A pointer we cannot decode is NOT a price disagreement. We do not know what it says, so we
