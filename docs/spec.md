@@ -1080,6 +1080,72 @@ unit-tested and has never rendered, because reaching it needs a signed listing w
 the fiat and free branches. Ledger row in `/docs/known-defects.md`. Recording that gap rather than
 rounding it up to "done" is the habit item 8 was bought to install.
 
+### 9.3 The dead-ends sweep: items 18, 27, 13 and M3's fiat half (2026-08-26)
+
+Four roadmap items on one machine with no node, no LND, no keys and no NIP-07 signer. One spine:
+a dead end is a place the app stops and tells somebody nothing they can act on. Nothing in this
+session signed, published or spent.
+
+**The byte budget moved by 7 and nothing else touched the storefront.** 32,134 -> **32,141 bytes
+gzip**, headroom against 33 KB **866 -> 859**. The seven bytes are §6.1's currency predicate being
+exported so that two files can share one copy of it; the rest of the session is in `/spike` and
+`/builder`, which have their own budgets. Measured before and after, both times.
+
+**Item 18 — the gateway's premise was wrong, and finding that out was the item.** The README says
+the nsite gateway "serves the previous build until it lapses". Measured 2026-08-26: it does not
+lapse. The live manifest was replaced `2026-08-21T18:11:43Z` and the gateway was still serving the
+pre-replacement `index.html` **4d 9h later** — 106x the advertised `max-age=3600` — while
+`check-deploy.ts` sections 1 and 2 passed throughout. Same picture on the builder's own nsite,
+independently. Three of the four freshness headers change what the tool may honestly claim:
+`age` is **not sent at all**, so nothing can compute how much of the window is left; `last-modified`
+is the **Blossom blob's** mtime travelling through (the origin returns the identical value for the
+same hash), so dating the cache from it would have been the obvious wrong answer that looked
+right; and `etag` **is** the sha256 of the decompressed bytes, weak-tagged `W/"…"` under gzip,
+which makes `curl -sI` a complete staleness check and is asserted every run. §4 turns those into
+one verdict with four branches, all four watched render. Details and the escape-hatch probes are
+in `/docs/spike-findings.md` §7 and `/docs/runbook.md` §8.
+
+**Item 27's first bullet — a DNS answer is hostile input.** `LN_ADDRESS` cannot tell a BIP-353
+address from an LNURL-pay one, so a Phoenix buyer's refund pointer resolved to
+`/.well-known/lnurlp/…` on a domain with no A or AAAA record, and the `queued` row named DNS.
+It now looks up `<name>.user._bitcoin-payment.<domain>` when the FIRST LNURL hop fails
+**permanently**, and says the true reason. §12's money-path rules bind on a TXT lookup exactly as
+they do on a fetch: its own resolver at 2 s / 1 try, an outer **wall-clock** race (a resolver
+timeout bounds the query; this bounds the promise — the same distinction that made `req.setTimeout`
+a denial of service), 16 records, 4 KB, a single validated DNS label, and it returns a **boolean**
+because the record's value is a payment credential addressed to a person. Proven live against
+`matt@mattcorallo.com` in 392 ms and proven **not** to fire against a real LNURL host.
+`payDebit` is untouched: paying a BOLT12 offer is a feature, not a fix, and whether this
+Lightning.Pub can pay one is UNVERIFIED.
+
+**Item 13's last bullet — a set difference, not a length comparison.** §6.3's kind 30405 is a
+replacement, so the member list handed to `publishSale` IS the sale. Milestone A closed the two
+ways that list is short by accident; this is the case neither can see, a list that is short and
+correct because the seller meant it. The roadmap words it as "shorter than the one on the relays",
+and a count is a proxy: swap one item for another and the count is identical while a real listing
+is un-listed. `droppedMembers` asks which current members are missing from the replacement, names
+them, and requires an explicit tick. It sits **after** the quorum gate on purpose — below quorum
+the list is short because a relay was slow, and asking someone to confirm that is how you train
+them to tick without reading. This had to land **before** M3's delete, which retires an item BY
+dropping it from the member list.
+
+**M3's fiat half — the guard was right about the danger and wrong about the only remedy.**
+`admin.ts` refused to edit any item priced in anything but sats, so `records` at 80 MXN could not
+have its title, photo, stock or summary changed either. It now carries currency and amount through
+as a display price, and what makes that safe is that the offer cannot follow it: `publish.ts`,
+`approvalCount` and `draftFrom` each refuse independently, and `fiatCurrency` refuses every
+spelling of sats so the two paths can never meet.
+
+**And the currency comparison the item asked about was two questions.** §6.1's price tag is
+"ISO 4217-like" (99.md:41). `storefront/src/listing.ts` accepted `/^sats?$/i` and
+`builder/src/admin.ts` demanded the exact lowercase `sats`, so an item priced `sat` or `SATS` was
+**buyable and uneditable**. That disagreement is real. It is also **latent**: both live sales read
+off the relays on 2026-08-26 carry 17 listings whose price tags are exactly `sats` or `MXN`, and
+`builder/src/listing.ts` writes the literal `'sats'`, which is why three slices passed without
+anybody meeting it. Closed by construction — `isSats` is exported from the storefront and both
+files call it — and **widened rather than narrowed**, because tightening the storefront would have
+been a money-path change made to fix a builder bug.
+
 ---
 
 ## 10. Build plan — vertical slices

@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
+Last updated: **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
 
 **READ THIS PARAGRAPH BEFORE ACTING ON ANYTHING BELOW.** Milestone A landed as ten commits
 (`ac87512`..`a934056`) and then a review of that branch found **five defects it had introduced**,
@@ -80,6 +80,34 @@ machine and its backup is on one disk (see "The one thing milestone A could not 
 budgets, both dev servers, `check-admin.ts`, `check-deploy.ts`, item 7's **render-only** half, and
 item 8 in full. That is enough to keep the roadmap moving without the hardware; it is not enough
 to close milestone B, which is by definition about things that have executed on real hardware.
+
+### What the second machine has now closed (2026-08-26)
+
+Four roadmap items, one commit each, none of which needed a key: **18**, **27's first bullet**,
+**13's last bullet** and **M3's fiat half**. Test counts moved 75 / 70 / 42 -> **75 / 88 / 51**,
+all green, `tsc` clean in both apps. Reasoning is in spec §9.3; the short version:
+
+- **The nsite gateway does not lapse.** `max-age=3600` is what it tells clients, not how long it
+  holds. The live site's manifest was replaced 2026-08-21T18:11:43Z and the gateway was serving the
+  pre-replacement build **4d 9h later**, 106x the window, on both nsites. `check-deploy.ts` §4 now
+  prints the freshness headers it actually receives (`age`: **not sent**; `last-modified`: the
+  **blob's**, not the cache's; `etag`: the content hash) and says `WAIT IT OUT` or `WAITING IS NOT
+  THE FIX`. No client-side escape hatch exists; two are probed on every stale run. Runbook §8.
+- **A `queued` refund row stops blaming DNS** when the buyer handed over a BIP-353 address.
+  Bounded as hostile input; returns a boolean; never touches `payDebit`.
+- **Publishing a shorter sale now has to be confirmed**, by name, per dropped item. This is what
+  **unblocks M3's delete** for the machine that has the key — the collision the ledger named is
+  now a path rather than a wall.
+- **`records` at 80 MXN is editable** and still unpayable. And the currency comparison the item
+  asked about: the builder's `!== 'sats'` and the storefront's `/^sats?$/i` really did disagree,
+  so an item priced `sat` or `SATS` was buyable and uneditable — but **measured against both live
+  sales, all 17 listings write exactly `sats` or `MXN`**, so it was latent. One exported predicate
+  now, called from both.
+
+**Still needs the machine with the node and the keys:** M3's delete (a re-publish), item 27's buy
+side (a decision first — see the roadmap), paying a BOLT12 offer at all (UNVERIFIED), and a real
+Phoenix address to prove the BIP-353 branch against `phoenixwallet.me` rather than against a
+published test vector.
 
 ### Before item 6 runs
 
@@ -188,7 +216,7 @@ now a deliberate boundary rather than an accident.
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **9,000 sats** across **4 settled invoices** (`plants` 6,000, `mugs` 3×1,000), measured 2026-08-23 by `node spike/sales-report.ts` — 8,946 of it payable after the Pub's fee. Up from 8,000/3 as of 2026-08-21: `mugs`' third unit settled that evening. `sales-report.ts` prints it (`GetUserInfo`), so the number stops being a note here — **but only for this seller; the script has no `--key` and cannot report the second one** |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
 | Blossom | **four** servers, verified. `blossom.primal.net` answers a blob with a **302 to `r2a.primal.net/…/<hash>.txt`** — `fetch` follows it and `check-deploy.ts` passes, but a bare `curl` without `-L` returns 0 bytes and reads like a missing mirror. `blossom.band` now refuses the site's JS and HTML on content-type sniffing (it still holds the photos) and falls out of the kind 10063 list on its own — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
-| Storefront bundle | **32,134 bytes gzip JS** (32.13 KB) + 2,214 CSS + 2.4 HTML cold, + 3,915 QR chunk on Buy. Measured 2026-08-25 after items 16 and 17, up from 31,883. Budget raised to 33 in slice 9, with reasoning: spec §9 and §9.2. **866 bytes of headroom left**, so the next render slice measures before it writes |
+| Storefront bundle | **32,141 bytes gzip JS** (32.14 KB) + 2,214 CSS + 2.4 HTML cold, + 3,915 QR chunk on Buy. Measured 2026-08-26 after M3's fiat half, up 7 bytes from 32,134 (one exported currency predicate, spec §9.3). Budget raised to 33 in slice 9, with reasoning: spec §9 and §9.2. **859 bytes of headroom left**, so the next render slice measures before it writes |
 | Builder bundle | **59.49 KB gzip cold** (+2.12 for slice 9), + a built storefront in `public/site` (~99 KB raw) |
 
 Four items are buyable; the rest deliberately are not:

@@ -646,12 +646,21 @@ pasted per browser and stored in `localStorage`, so a seller on a new device is 
 
 **M3. Retire an item, and edit a fiat one**
 Two holes in the edit form that have nothing to do with each other except that both are refusals.
-- **Fiat items cannot be edited at all.** `builder/src/admin.ts:116` returns `null` for any
-  currency that is not sats, so `records` at 80 MXN can never be changed — the guard exists
-  because a sats-only form would republish it as 80 sats, which is right, but "refuse forever" is
-  not the only way to be right. Carry currency and amount through the form as a display price
-  that stays unpayable.
-- **There is no delete.** "Mark sold" is the only retirement and the item stays on the storefront
+- ~~**Fiat items cannot be edited at all.**~~ **DONE 2026-08-26.** `Draft.fiat` carries currency
+  and amount through and replaces the sats price tag, so `records` republishes as
+  `["price","80","MXN"]`. What makes that safe is that **the offer cannot follow it**: `publish.ts`,
+  `approvalCount` and `draftFrom` each refuse to mint or reuse one independently, and
+  `fiatCurrency` refuses every spelling of sats so the two paths can never meet. The currency is
+  read off the listing and can never be typed. `#price` is **disabled**, not merely hidden, because
+  a `required` control in a hidden wrapper still blocks submit — asserted in chromium.
+  - **The currency comparison was two questions.** The disagreement is REAL: `admin.ts` demanded
+    the exact lowercase `sats` while `storefront/src/listing.ts` accepted `/^sats?$/i`, so an item
+    priced `sat` or `SATS` was **buyable and uneditable**. It is also **LATENT**: measured against
+    both live sales on 2026-08-26, all 17 listings write exactly `sats` or `MXN`. Closed by
+    construction — one exported `isSats`, called from both — and **widened**, not narrowed, because
+    tightening the storefront is a money-path change made to fix a builder bug. Cost: 7 bytes gzip.
+- **Still open, and it is the delete:**
+  **There is no delete.** "Mark sold" is the only retirement and the item stays on the storefront
   at stock 0 permanently. **Removing it from the kind 30405 member list hides nothing** — the
   storefront queries `{kinds: [30402, 30405], authors: [pubkey]}` and `orderBySale` only *sorts*,
   so a non-member falls to the foot of the page in `d` order and keeps rendering. That is the
@@ -659,10 +668,11 @@ Two holes in the edit form that have nothing to do with each other except that b
   stock 0 with `status: sold` (which `ladder.ts` `atStock` already produces) plus an optional
   NIP-09 kind 5 request — and the NIP-09 half, the one relays honour at their discretion, is the
   only half that can stop a page drawing it.
-- **This has to land after item 13, not before.** M3's delete works *by* shrinking the member
-  list, which is indistinguishable on the wire from item 13's slow-relay short read. Build the
-  "refuse to shrink without confirmation" guard first or M3 trips it on every legitimate delete —
-  the ledger names this collision outright.
+- ~~**This has to land after item 13, not before.**~~ **Item 13's guard landed 2026-08-26, so
+  this is unblocked.** M3's delete works *by* shrinking the member list, which is indistinguishable
+  on the wire from item 13's slow-relay short read; the confirmation path now exists, so a
+  legitimate delete has somewhere to go instead of tripping a refusal. The delete itself needs a
+  re-publish and therefore the machine with the key.
 - Do **not** delete the offer on the node when retiring an item. It takes the buyer's stored
   refund pointer with it (findings §13.17).
 
@@ -700,9 +710,14 @@ three bullets went to A and landed there on 2026-08-24:
   how many items are about to replace the collection, and how many relays it was read from.
   ~~Surface which relays answered, so a partial read is visible rather than inferred.~~ **DONE in
   A** as a consequence: it is the same measurement the quorum rule needs.
-- **Still here, and deliberately:** refuse to shrink a sale without an explicit confirmation.
-  Shrinking is also what a legitimate delete looks like (`docs/known-defects.md`, slice-9 section,
-  row 1), so telling those apart entangles with M3 (findings §4). It is sequenced against M3.
+- ~~**Still here, and deliberately:** refuse to shrink a sale without an explicit confirmation.~~
+  **DONE 2026-08-26, and it is a SET DIFFERENCE rather than a length comparison.** "Shorter than
+  the one on the relays" is a proxy: swap one item for another and the count is identical while a
+  real listing is un-listed. `droppedMembers` asks which current members are missing from the
+  replacement, **names them**, and requires an explicit tick. It sits **after** the quorum gate on
+  purpose — below quorum the list is short because a relay was slow, and asking a seller to confirm
+  that trains them to tick without reading. The confirmation is asserted rendering in
+  `builder/smoke.test.ts`. This is what unblocks M3's delete for the machine with the key.
 
 **14. Node liveness and the channel lease**
 - The inbound channel is a **lease and it expires 2026-11-19.** Nothing watches it. Add the check
@@ -781,14 +796,32 @@ closed it in milestone A on 2026-08-24. What is left is the half that was always
   buyer has paid: a BIP-353 refund pointer is accepted at buy time and is useless at refund time.
   **Still open**, and the nearest thing to this slice on the list.
 
-**18. Make redeploying safe**
-The nsite gateway sends `max-age=3600` and serves the previous build until it lapses. The current
-mitigation is a note reading "do not redeploy on demo day", which is not a mitigation.
-- Have `check-deploy.ts` report the gateway's cache age alongside the relay and Blossom state, so
-  "did my deploy land" has one answer instead of three.
-- Document the cache-busting query-string escape hatch, if one exists on the gateway.
-- Build stickers **after** deploying — they encode the site URL, so a sheet printed first points
-  at nothing.
+**~~18. Make redeploying safe~~ LANDED 2026-08-26**
+~~The nsite gateway sends `max-age=3600` and serves the previous build until it lapses.~~ **It
+does not lapse, and that is the item's finding.** Measured 2026-08-26: the live manifest was
+replaced 2026-08-21T18:11:43Z and the gateway was still serving the pre-replacement `index.html`
+**4d 9h later**, 106× the advertised `max-age`, while `check-deploy.ts` §1 and §2 passed
+throughout. Same on the builder's own nsite. The mechanism is UNVERIFIED.
+- ~~Have `check-deploy.ts` report the gateway's cache age alongside the relay and Blossom state.~~
+  **DONE**, and it reports what the gateway actually sends rather than a cache age it does not
+  have: `age` is **not sent at all**, `last-modified` is the **Blossom blob's** mtime (the origin
+  returns the identical value, so it dates the build and not the cache), `cache-control` is
+  `public, max-age=3600`, and `etag` **is** the sha256 of the decompressed bytes — weak-tagged
+  `W/"…"` under gzip, which makes `curl -sI <url>` a complete staleness check. §4 turns those into
+  one verdict: `WAIT IT OUT` while the manifest is younger than `max-age`, `WAITING IS NOT THE FIX`
+  once it is older and still stale.
+- ~~Document the cache-busting query-string escape hatch, if one exists on the gateway.~~ **It
+  does not exist, and that is now probed rather than believed.** §4 runs two probes on every stale
+  run — a query string and `cache-control: no-cache` — and both returned the same stale bytes on
+  2026-08-26. The stale copy is on the gateway's side and is not addressable from a client.
+- ~~Build stickers **after** deploying~~ **already true in the app** — `builder/src/main.ts:434`
+  says so on screen next to the sheet. What was missing was the ordering in the runbook (§8), and
+  one correction: the sticker URL is derived from the pubkey and is stable across *re*-deploys, so
+  this binds on the **first** deploy, not on every one.
+- **Candidate spun out of this, not built:** the current kind 15128 answers from `relay.damus.io`,
+  `nos.lol` and `purplepag.es` and **not** from `relay.nostr.band` or `relay.primal.net`, both in
+  `SALE_RELAYS`. §1 queries the pool as a set and cannot show this. Whether it explains the
+  gateway is UNVERIFIED.
 
 **19. A second seller who is not us ⚑**
 `docs/spec.md` §3.1 draws the line: two keys that are both ours is model 1; somebody else's sats
@@ -824,10 +857,15 @@ Found by running `resolvePointer` against a real address for the first time — 
 offline test could have found it: every address a test server can bind is one `isPrivateAddress`
 correctly refuses.
 
-- **Say the true reason.** When the LNURL hop fails to resolve, look up the BIP-353 TXT record; if
-  it answers, the `queued` row should read *"that is a BIP-353 address and this refund path speaks
-  LNURL-pay"* rather than naming DNS. Cheap, and it is the difference between a seller who hands
-  the money over at the table and one who files a bug. **Liftable earlier than the rest of E.**
+- ~~**Say the true reason.**~~ **DONE 2026-08-26.** `resolvePointer` looks up
+  `<name>.user._bitcoin-payment.<domain>` when the **first** LNURL hop fails **permanently** (no
+  address record, or a 4xx) and this exact address publishes a record starting `bitcoin:`. Per
+  **address**, not per domain, so a typo cannot become a BIP-353 accusation. Bounded as hostile
+  input: its own resolver at 2 s / 1 try, an outer **wall-clock** race, 16 records, 4 KB, a single
+  validated DNS label, and it returns a **boolean** so the offer is never logged. Proven live
+  against `matt@mattcorallo.com` (a published test vector) in 392 ms, and proven **not** to fire
+  against `coinos.io`. **Still open here:** a real Phoenix address cannot be tested from a machine
+  with no buyer — a made-up name is NXDOMAIN at the BIP-353 name too and correctly falls back.
 - **Then decide the buy side, which is the larger half and is a decision rather than a fix.**
   Should `isPointer` refuse a pointer the refund path cannot use? It would move the failure from
   *after* the sale to *before* it — a settled invoice stores the pointer forever and the node
