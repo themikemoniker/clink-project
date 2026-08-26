@@ -587,7 +587,7 @@ and today costs a file copy and a daemon restart every single time. M1 also resh
 12, so building D first means building parts of it twice.
 
 **M1. The ladder has to travel over a relay, not a USB stick**
-Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:298`: *"Save it as
+Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:366`: *"Save it as
 `.ladder.json` next to `watch-sales.ts`, then restart the watcher."* The seller downloads a file
 from their browser, copies it onto the machine running the daemon, and restarts a process. Miss
 the step and either `isStale` refuses to watch the item, or the watcher publishes rungs the relay
