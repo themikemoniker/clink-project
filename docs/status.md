@@ -84,7 +84,8 @@ to close milestone B, which is by definition about things that have executed on 
 ### What the second machine has now closed (2026-08-26)
 
 Four roadmap items, one commit each, none of which needed a key: **18**, **27's first bullet**,
-**13's last bullet** and **M3's fiat half**. Test counts moved 75 / 70 / 42 -> **75 / 88 / 51**,
+**13's last bullet** and **M3's fiat half**, then the review of all four. Test counts moved
+75 / 70 / 42 -> **76 / 94 / 51**,
 all green, `tsc` clean in both apps. Reasoning is in spec §9.3; the short version:
 
 - **The nsite gateway does not lapse.** `max-age=3600` is what it tells clients, not how long it

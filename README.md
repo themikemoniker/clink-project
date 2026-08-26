@@ -662,7 +662,8 @@ Two holes in the edit form that have nothing to do with each other except that b
     priced `sat` or `SATS` was **buyable and uneditable**. It is also **LATENT**: measured against
     both live sales on 2026-08-26, all 17 listings write exactly `sats` or `MXN`. Closed by
     construction — one exported `isSats`, called from both — and **widened**, not narrowed, because
-    tightening the storefront is a money-path change made to fix a builder bug. Cost: 7 bytes gzip.
+    tightening the storefront is a money-path change made to fix a builder bug. Cost: 6 bytes gzip
+    (7 while `render.ts` still carried two literal copies of the regex; 6 once they were deleted).
 - **Still open, and it is the delete:**
   **There is no delete.** "Mark sold" is the only retirement and the item stays on the storefront
   at stock 0 permanently. **Removing it from the kind 30405 member list hides nothing** — the
