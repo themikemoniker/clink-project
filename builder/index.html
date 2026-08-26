@@ -151,10 +151,19 @@
             </span>
             <!-- M3. Only ever shown for an item whose listing ALREADY carries another currency.
                  There is no way to reach it by typing: the currency is read off the item, never
-                 entered, and an item priced this way can never have a Buy button. -->
+                 entered, and an item priced this way can never have a Buy button.
+
+                 `required` is not decoration. Without it a blank field reads as `Number('')`,
+                 which is 0, which passes every check below it and republishes an 80 MXN item as
+                 `["price","0","MXN"]`, and the storefront draws that as "Free, just ask when you
+                 get here". The sats field has always had it; this one did not.
+
+                 `step="any"` and not `step="1"`. Sats are whole by nature and pesos are not, so a
+                 12.50 listing under step="1" is a control the browser refuses to submit and a
+                 seller cannot fix without changing the price. -->
             <span id="price-fiat" hidden>
               <label for="price-fiat-amount">Price, in <span id="price-fiat-currency">—</span></label>
-              <input id="price-fiat-amount" type="number" min="0" step="1" disabled />
+              <input id="price-fiat-amount" type="number" min="0" step="any" required disabled />
             </span>
             <span>
               <label for="stock">How many</label>

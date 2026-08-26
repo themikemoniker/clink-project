@@ -17,8 +17,19 @@
 // **host** — `ln.tips`, `walletofsatoshi.com` — and never the name half. The host is the wallet
 // provider and is what makes a queued row actionable ("their server is down" is a different
 // problem from "you typed it wrong"); the name half is what identifies the person, and it is
-// never written, never printed, and never leaves this file. `new URL(url).host` is the only thing
-// that crosses that line, and it is the only thing that should.
+// never written, never printed, and never journalled. `new URL(url).host` is the only thing that
+// crosses into a message, and it is the only thing that should.
+//
+// "NEVER LEAVES THIS FILE" IS NOT WHAT THIS SAYS, and item 27 is why the wording changed. The
+// name half has always left the machine on the wire, as the path of the LNURL request
+// `/.well-known/lnurlp/<name>`, but that is inside TLS, so the only thing on the network is the
+// SNI host, which is the host we were already prepared to print. `hasBip353` below is a plaintext
+// UDP DNS query for `<name>.user._bitcoin-payment.<domain>`, so the name half is visible to the
+// resolver and to anything between here and it. That is a real disclosure and a new one. It is
+// accepted, narrowly: it fires only after the LNURL hop has failed permanently, only for that one
+// address, once, and the alternative is telling a seller their buyer's address is broken when it
+// is not. Anything that would make it fire on the happy path is a change to this trade, not an
+// extension of it.
 import { lookup, Resolver } from 'node:dns/promises'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { request as httpsRequest } from 'node:https'

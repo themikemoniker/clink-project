@@ -818,7 +818,7 @@ throughout. Same on the builder's own nsite. The mechanism is UNVERIFIED.
   does not exist, and that is now probed rather than believed.** §4 runs two probes on every stale
   run — a query string and `cache-control: no-cache` — and both returned the same stale bytes on
   2026-08-26. The stale copy is on the gateway's side and is not addressable from a client.
-- ~~Build stickers **after** deploying~~ **already true in the app** — `builder/src/main.ts:434`
+- ~~Build stickers **after** deploying~~ **already true in the app** — `builder/src/main.ts:551`
   says so on screen next to the sheet. What was missing was the ordering in the runbook (§8), and
   one correction: the sticker URL is derived from the pubkey and is stable across *re*-deploys, so
   this binds on the **first** deploy, not on every one.

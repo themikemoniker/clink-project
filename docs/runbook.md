@@ -332,7 +332,7 @@ either. So "budget an hour" is optimistic. Budget on the blobs.
 `https://<npub>.nsite.lol/#/item/<d>` (`builder/src/stickers.ts`), so a sheet printed before the
 site has ever been deployed is a page of codes that lead nowhere, and the paper cannot be
 recalled. The builder already says this on screen next to the sheet
-(`builder/src/main.ts:434`). The URL itself is stable across *re*-deploys — it is derived from the
+(`builder/src/main.ts:551`). The URL itself is stable across *re*-deploys — it is derived from the
 pubkey — so this binds on the first deploy, not on every one.
 
 **And do not redeploy on the day of the sale.** Not because of an hour, but because the window

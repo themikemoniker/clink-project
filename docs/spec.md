@@ -1086,10 +1086,15 @@ Four roadmap items on one machine with no node, no LND, no keys and no NIP-07 si
 a dead end is a place the app stops and tells somebody nothing they can act on. Nothing in this
 session signed, published or spent.
 
-**The byte budget moved by 7 and nothing else touched the storefront.** 32,134 -> **32,141 bytes
-gzip**, headroom against 33 KB **866 -> 859**. The seven bytes are §6.1's currency predicate being
-exported so that two files can share one copy of it; the rest of the session is in `/spike` and
+**The byte budget moved by 6 and nothing else touched the storefront.** 32,134 -> **32,140 bytes
+gzip**, headroom against 33 KB **866 -> 860**. The six bytes are §6.1's currency predicate being
+exported so that every file can share one copy of it; the rest of the session is in `/spike` and
 `/builder`, which have their own budgets. Measured before and after, both times.
+
+It cost 7 on the first pass and 6 after the review, and the difference is the point rather than
+noise: `render.ts` kept two literal copies of the regex the predicate replaced, in `formatPrice`
+and in `noBuyReason`, so "one predicate, exported" had gone from two readers to three. Deleting
+them is what made the change cheaper than the thing it replaced.
 
 **Item 18 — the gateway's premise was wrong, and finding that out was the item.** The README says
 the nsite gateway "serves the previous build until it lapses". Measured 2026-08-26: it does not

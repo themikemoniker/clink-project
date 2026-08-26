@@ -5,7 +5,7 @@
 // typed rather than parsed. That is a property of h() below, not of a sanitiser we have to
 // remember to call — which is why there is no sanitiser here.
 import { requestInvoice, type Outcome } from './buy.ts'
-import { srcset, type Item, type Money, type Sale } from './listing.ts'
+import { isSats, srcset, type Item, type Money, type Sale } from './listing.ts'
 import { isPointer, MIN_PAYABLE_SATS } from './offer.ts'
 
 // The working name, settled in slice 2. It appears twice and quietly: as the masthead when a
@@ -36,7 +36,7 @@ const h = <K extends keyof HTMLElementTagNameMap>(
 export const formatPrice = (price: Money | undefined): string | undefined => {
   if (!price) return undefined
   if (price.amount === 0) return 'Free'
-  if (/^sats?$/i.test(price.currency)) return `${price.amount.toLocaleString('en-US')} sats`
+  if (isSats(price.currency)) return `${price.amount.toLocaleString('en-US')} sats`
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
@@ -398,7 +398,7 @@ export const noBuyReason = (item: Item): string | undefined => {
   // is an HTTP call to somebody else's server and /CLAUDE.md rule 1 forbids one (spec §6.1). So a
   // fiat price is a real price that this page genuinely cannot take, and saying which currency it
   // is stops the sentence reading like a bug.
-  if (!/^sats?$/i.test(price.currency)) {
+  if (!isSats(price.currency)) {
     return `Priced in ${price.currency.toUpperCase()} — cash at the table. This page pays over Lightning, in sats, and it has no way to convert.`
   }
   // Lightning.Pub will not invoice below 10 sats (offer.ts MIN_PAYABLE_SATS), so a Buy button

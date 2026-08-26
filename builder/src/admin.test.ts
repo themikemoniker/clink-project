@@ -15,6 +15,7 @@ import {
   draftFrom,
   droppedMembers,
   fiatCurrency,
+  fiatPriceReason,
   imetaValues,
   isSats,
   loadItems,
@@ -458,6 +459,85 @@ test('a fiat item is editable now, and republishes as its own currency and not a
   // ones already on the relay. A regression that re-priced it would land here.
   const strip = (tags: string[][]) => tags.filter(t => t[0] !== 'published_at')
   assert.deepEqual(strip(listingTags(round, pk, NOW + 500, SALE)), strip(event.tags))
+})
+
+test('a fiat amount is checked against the storefront’s bound, not against the sats rule', () => {
+  // THE ASSERTION THAT WOULD HAVE CAUGHT IT. `doPublish` validated a fiat amount with
+  // `Number.isSafeInteger` for one slice, which is the rule for sats: a sat is whole by
+  // definition and a peso is not. It lived inline in the submit handler, so nothing could reach
+  // it. It is `fiatPriceReason` now, and this is what it has to say.
+  assert.equal(fiatPriceReason(12.5, 'USD'), undefined)
+  assert.equal(fiatPriceReason(80.5, 'MXN'), undefined)
+  assert.equal(fiatPriceReason(80, 'MXN'), undefined)
+  // Zero is a real price. `boxes` is `["price","0","MXN"]` on the live sale and the page draws it
+  // as "Free". A BLANK field is also 0 and is a different thing entirely, which is why the markup
+  // carries `required` and this function is not asked to tell them apart.
+  assert.equal(fiatPriceReason(0, 'MXN'), undefined)
+
+  // The bound is `parsePrice`'s bound: a price this form accepts has to be one the page reads back.
+  assert.ok(fiatPriceReason(-1, 'MXN'))
+  assert.ok(fiatPriceReason(NaN, 'MXN'))
+  assert.ok(fiatPriceReason(Infinity, 'MXN'))
+  assert.ok(fiatPriceReason(1e16, 'MXN'))
+  assert.equal(fiatPriceReason(1e15, 'MXN'), undefined)
+
+  // It names the currency, because "give a price in MXN" is an instruction and "invalid price"
+  // is a status message about our form.
+  assert.match(fiatPriceReason(-1, 'MXN')!, /MXN/)
+})
+
+test('every amount the form accepts survives the trip to a tag and back', () => {
+  // The bound above is only worth anything if it agrees with the parser it claims to match.
+  // `String()` writes the tag and `Number()` reads it, so this is the round trip asserted end to
+  // end rather than reasoned about, including the exponent form, which is what `String()` emits
+  // at the small end and which `Number()` reads straight back.
+  for (const amount of [0, 1, 12.5, 80.5, 0.01, 1e-7, 1e15]) {
+    assert.equal(fiatPriceReason(amount, 'USD'), undefined, `${amount} should be publishable`)
+    assert.equal(Number(String(amount)), amount, `${amount} should survive String -> Number`)
+  }
+})
+
+test('a fiat price does not have to be a whole number, because a peso is not a sat', () => {
+  // THE FIRST PASS AT M3 VALIDATED THIS WITH `Number.isSafeInteger`, inherited from the sats
+  // field rather than reasoned about. A sat is whole by definition; 12.50 USD is an ordinary
+  // price, and `parsePrice` in storefront/src/listing.ts has always accepted any finite number
+  // from 0 to 1e15. So a fractional listing was editable and then unpublishable, and the only
+  // way out the form offered a seller was to change what the item costs, which is the silent
+  // re-pricing this whole item exists to prevent.
+  const original = draft({ priceSats: 0, fiat: { amount: 12.5, currency: 'USD' }, blobs: [], servers: [], alt: '' })
+  const { event, item } = publishedAs(original)
+  assert.deepEqual(event.tags.find(t => t[0] === 'price'), ['price', '12.5', 'USD'])
+
+  const round = draftFrom(item, event, SALE.d)
+  assert.ok(round, 'a fractional fiat item has to survive the round trip like any other')
+  assert.deepEqual(round.fiat, { amount: 12.5, currency: 'USD' })
+  assert.equal(round.priceSats, 0)
+
+  const strip = (tags: string[][]) => tags.filter(t => t[0] !== 'published_at')
+  assert.deepEqual(strip(listingTags(round, pk, NOW + 500, SALE)), strip(event.tags))
+
+  // Still unpayable, which is the invariant that makes carrying any of this safe at all.
+  assert.equal(item.offer, undefined)
+  assert.deepEqual(item.price, { amount: 12.5, currency: 'USD' })
+})
+
+test('the round trip is through Number, so trailing zeros are the one thing not carried byte for byte', () => {
+  // `parsePrice` is `Number(tag[1])` and `listingTags` is `String(amount)`, so a relay that hands
+  // us `12.50` hands the form 12.5 and the form writes back `12.5`. The VALUE is identical and
+  // the bytes are not. Asserted rather than left to be discovered, because "carried through
+  // unchanged" is the claim M3 makes and this is the edge where it is a value claim, not a byte
+  // one. Nothing reads a price tag for its formatting: the storefront renders through
+  // `formatPrice`, which formats from the number.
+  const original = draft({ priceSats: 0, fiat: { amount: 80, currency: 'MXN' } })
+  const template = eventsToSign(original, pk, NOW, SALE)[0]!
+  const event = finalizeEvent(
+    { ...template, tags: template.tags.map(t => (t[0] === 'price' ? ['price', '12.50', 'USD'] : t)) },
+    sk,
+  )
+  const item = parseListings([event], pk)[0]!
+  const round = draftFrom(item, event, SALE.d)!
+  assert.deepEqual(round.fiat, { amount: 12.5, currency: 'USD' })
+  assert.deepEqual(listingTags(round, pk, NOW, SALE).find(t => t[0] === 'price'), ['price', '12.5', 'USD'])
 })
 
 test('editing a fiat item cannot make it buyable, whatever the seller has configured', () => {

@@ -101,9 +101,16 @@ const serverOf = (url: string): string => url.slice(0, url.lastIndexOf('/'))
  * Returns null for an item this form cannot faithfully republish, and both cases are real:
  *   * A `d` outside this sale's prefix. Republishing it under `listingD(slug)` would address a
  *     DIFFERENT event, leaving the original orphaned on the relays and unowned by any ladder.
- *   * A fiat price. Sats only, everywhere in this project — there is no conversion and no
- *     oracle (/docs/spec.md §6.1) — so republishing `80 MXN` through a sats-only form would
- *     write `80 sats`, a silent 99.99% discount on an item somebody might then buy.
+ *   * A currency this form cannot carry: anything `fiatCurrency` refuses, which is a `price` tag
+ *     whose currency is not 1–12 plain letters. No tool of ours writes one and a relay can still
+ *     hand us one, and republishing it would change what the listing says.
+ *
+ * A FIAT PRICE IS NO LONGER ONE OF THEM (M3), and read the body, because this docblock said the
+ * opposite for one slice after the code stopped agreeing. It used to refuse every non-sats
+ * currency outright, on the reasoning that a sats-only form would republish `80 MXN` as `80 sats`
+ * and hand somebody a 99.99% discount. That reasoning was right about the danger and wrong that
+ * refusing forever was the only way out: the price and the currency are carried through, no
+ * offer is minted, and the item stays exactly as unpayable as it was.
  *
  * `saleD` was the spike fixture's `SALE.d` until slice 9. It is now the seller's own — see
  * ./sale.ts `saleD`, and note that this function is precisely why the sale's `d` is not a form
@@ -133,6 +140,34 @@ export const fiatCurrency = (raw: string | undefined): string | null => {
   if (!/^[A-Za-z]{1,12}$/.test(code)) return null
   return isSats(code) ? null : code
 }
+
+/**
+ * Why this fiat amount cannot be published, in the seller's terms, or `undefined` if it can.
+ *
+ * HERE RATHER THAN INLINE IN `main.ts` FOR THE REASON `noPublishSaleReason` IS: a check written
+ * into the submit handler is a check with no test on it, and this one was wrong for a slice
+ * without anything noticing. The first pass at M3 validated a fiat amount with
+ * `Number.isSafeInteger`, which is the SATS rule wearing the fiat field's label. A sat is whole
+ * by definition. 12.50 USD and 80.50 MXN are ordinary prices, `parsePrice` in
+ * storefront/src/listing.ts has always read them, and `records` at 80 MXN only slipped through
+ * because it happens to be round. Every fractional listing in the wild was editable and then
+ * unpublishable, and the one way out the form offered was to change what the item costs.
+ *
+ * THE BOUND IS `parsePrice`'S BOUND, deliberately: a price this form accepts has to be a price
+ * the page can read back, and the storefront refuses anything non-finite, negative, or over 1e15.
+ * `String(amount)` is what reaches the tag and `Number()` is what reads it, and those round-trip
+ * to the same value for everything in range, exponent notation included.
+ *
+ * Zero is legal and is not an oversight: `boxes` is `["price","0","MXN"]` on the live sale, and
+ * the storefront draws it as "Free". What must not reach here is a BLANK field, which reads as
+ * `Number('')` and is also 0: that is caught in the markup by `required` on `#price-fiat-amount`,
+ * because the difference between "this is free" and "I cleared the box" is not visible from the
+ * number and is not this function's to guess.
+ */
+export const fiatPriceReason = (amount: number, currency: string): string | undefined =>
+  Number.isFinite(amount) && amount >= 0 && amount <= 1e15
+    ? undefined
+    : `Give a price in ${currency}, as a number, at or above zero.`
 
 export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null => {
   const prefix = `${saleD}-`
@@ -219,8 +254,14 @@ export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null
  *
  * QUORUM IS A MAJORITY of the configured relays. Not all of them — one permanently unreachable
  * relay would then block a seller forever — and not one, which is the reading that drops items.
- * Item 13's third bullet, refusing to SHRINK a sale, deliberately stays in milestone D: shrinking
- * is also what a legitimate delete looks like, and telling those apart entangles with M3.
+ *
+ * SHRINKING IS NOT DECIDED HERE, and this paragraph used to say it was not decided anywhere.
+ * Item 13's last bullet landed as `droppedMembers` below, one function down, and the reason it is
+ * not another branch of this function is the reason this docblock gave for deferring it: a shrink
+ * is also exactly what a legitimate delete looks like, so nothing can tell a mistake from an
+ * intention. A guard that cannot tell them apart must ask rather than refuse, so it is an explicit
+ * confirmation in `main.ts` `doPublishSale` and it sits AFTER this gate. Below quorum the member
+ * list is short because a relay was slow, which has a different answer.
  */
 export const noPublishSaleReason = (state: {
   signedIn: boolean

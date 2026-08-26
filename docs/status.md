@@ -216,7 +216,7 @@ now a deliberate boundary rather than an accident.
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **9,000 sats** across **4 settled invoices** (`plants` 6,000, `mugs` 3×1,000), measured 2026-08-23 by `node spike/sales-report.ts` — 8,946 of it payable after the Pub's fee. Up from 8,000/3 as of 2026-08-21: `mugs`' third unit settled that evening. `sales-report.ts` prints it (`GetUserInfo`), so the number stops being a note here — **but only for this seller; the script has no `--key` and cannot report the second one** |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
 | Blossom | **four** servers, verified. `blossom.primal.net` answers a blob with a **302 to `r2a.primal.net/…/<hash>.txt`** — `fetch` follows it and `check-deploy.ts` passes, but a bare `curl` without `-L` returns 0 bytes and reads like a missing mirror. `blossom.band` now refuses the site's JS and HTML on content-type sniffing (it still holds the photos) and falls out of the kind 10063 list on its own — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
-| Storefront bundle | **32,141 bytes gzip JS** (32.14 KB) + 2,214 CSS + 2.4 HTML cold, + 3,915 QR chunk on Buy. Measured 2026-08-26 after M3's fiat half, up 7 bytes from 32,134 (one exported currency predicate, spec §9.3). Budget raised to 33 in slice 9, with reasoning: spec §9 and §9.2. **859 bytes of headroom left**, so the next render slice measures before it writes |
+| Storefront bundle | **32,140 bytes gzip JS** (32.14 KB) + 2,214 CSS + 2.4 HTML cold, + 3,915 QR chunk on Buy. Measured 2026-08-27 after M3's fiat half and the review that followed it, up 6 bytes from 32,134 (one exported currency predicate, spec §9.3; it cost 7 while `render.ts` still carried two literal copies of the regex it replaced, and 6 once they were deleted). Budget raised to 33 in slice 9, with reasoning: spec §9 and §9.2. **860 bytes of headroom left**, so the next render slice measures before it writes |
 | Builder bundle | **59.49 KB gzip cold** (+2.12 for slice 9), + a built storefront in `public/site` (~99 KB raw) |
 
 Four items are buyable; the rest deliberately are not:
@@ -241,7 +241,7 @@ Nothing here needs a build step; Node 24 runs the `.ts` files directly.
 ```bash
 # storefront
 cd storefront
-npm test            # 75 tests, node --test, no framework. 70 unit + 5 headless (smoke.test.ts,
+npm test            # 76 tests, node --test, no framework. 71 unit + 5 headless (smoke.test.ts,
                     # item 8). The smoke run builds, serves dist/ and drives chromium; it needs
                     # NO relay, node or key. The relay read is stubbed from smoke-fixture.json
 npm run build       # tsc --noEmit && vite build
@@ -250,7 +250,7 @@ npm run dev         # http://localhost:5173
 
 # the money path, against the running node
 cd spike
-npm test                               # 42 tests, node --test — the ladder and the refund journal
+npm test                               # 51 tests, node --test — the ladder and the refund journal
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
 node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
                                        # --pay REFUSES without --pointer as of slice 8: a settled

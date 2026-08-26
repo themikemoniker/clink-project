@@ -174,6 +174,11 @@ const parsePhotos = (ev: Event, name: 'image' | 'thumb'): Photo[] => {
  * both live sales on 2026-08-26: every one of the 17 listings writes exactly `sats` or `MXN`, so
  * the disagreement was latent rather than live — and latent is why it survived three slices.
  *
+ * ONE means one. `./render.ts` kept two literal copies of the regex through the first pass at
+ * this (`formatPrice` and `noBuyReason`), which left the drift surface at three rather than at
+ * zero, which is the same shape of defect one file down. Every reader in the tree calls this now, and
+ * `render.test.ts` asserts the two files agree on `SATS` rather than trusting that they do.
+ *
  * Loose rather than strict, and that direction is deliberate. `sat`, `SATS` and `Sats` are all
  * things a NIP-99 client that is not ours will write (99.md:41 calls the field "ISO 4217-like",
  * which in practice means anything), and refusing them would make a correctly-priced listing

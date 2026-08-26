@@ -191,6 +191,21 @@ are different claims. Item 8 is what makes that distinction sayable.
 
 ---
 
+## Added by the review of the dead-ends sweep (2026-08-27)
+
+Two rows, both from reading the branch back before merging it. Four other findings from the same
+pass were fixed rather than filed: a blank fiat price republishing as `["price","0","MXN"]`, a
+fractional fiat price being editable and then unpublishable, two docblocks that contradicted the
+code under them, and `render.ts` keeping two literal copies of the currency predicate M3 exported
+to have one of. These two are the ones that are decisions rather than defects.
+
+| what breaks | where | what it costs a user | why it is deferred | what fixing it looks like |
+|---|---|---|---|---|
+| **Item 27's message never reaches a buyer whose name half has an underscore.** `bip353Name` requires the local part to be one bare LDH DNS label, so `bob_smith@phoenixwallet.me` returns null, the lookup never happens, and the `queued` row falls back to the old message that blames DNS. Underscores are common in real Lightning addresses. | `spike/refund.ts` `bip353Name` | A seller with a Phoenix buyer whose address has an underscore is sent to debug a hostname that was never wrong, which is exactly the dead end item 27 exists to close, for a subset of the addresses it was built for. Fail-safe: the fallback is the message that shipped before, never a wrong claim. | Whether BIP-353's "encoded as a DNS label" admits `_` is a spec question, not a plumbing one, and this repo does not guess at protocol details (/CLAUDE.md). The strictness is also what stops `a.b@host` reaching into a zone the address does not name, so widening it is a change to a bound on hostile input and deserves its own reading of the BIP. | Read BIP 353 on the user part, then either widen the label pattern to admit `_` (still one label, still no dots) with the citation in the comment, or write `UNVERIFIED` beside the current pattern and leave it. Both halves are already covered by `refund.test.ts`, so the change is one regex and one assertion. |
+| **`builder/smoke.test.ts` reimplements `showFiat` rather than calling it.** The two fiat tests drive `page.evaluate` to set the same attributes `main.ts` `showFiat` sets, so they prove the browser behaviour they claim (a `disabled` control leaves constraint validation, a hidden `required` one does not) and prove nothing about whether `showFiat` still does that. | `builder/smoke.test.ts`, the M3 section | Nothing today. It is a test that would keep passing through a regression in the function it is named after, which is the failure mode item 8 exists to prevent, one level up. | `showFiat` is a closure over module state in `main.ts` and is not exported; reaching it from a test means either exporting it or driving the real edit path, and the real edit path needs a signer and a four-relay read. Neither is available on the machine that found this. | Cheapest honest version: drive the page's own edit flow in the smoke test with the relay read stubbed the way `storefront/smoke.test.ts` already stubs it, and assert the attributes afterwards rather than setting them. That makes it one test of `showFiat` instead of two tests of the markup. |
+
+---
+
 ## Documentation drift
 
 A different kind of debt, listed so the eventual restructure has a target. **Nothing here was

@@ -77,7 +77,7 @@ test('the authoring page boots cold (no signer, no node, no relay) without throw
 })
 
 test('the print stylesheet hides <main>, so the sticker sheet is the only thing on the paper', async () => {
-  // style.css:154, `body > main { display: none }`. This is the block roadmap item 8 names, and
+  // style.css:165, `body > main { display: none }`. This is the block roadmap item 8 names, and
   // design.md §4 is the reason: everything inside <main> is a tool (a form, a signer, a deploy
   // button) and none of it means anything printed. It had never run in a browser before item 8.
   const { page } = await open()
@@ -273,5 +273,83 @@ test('switched into a currency, the row paints it and the form still submits', a
   assert.equal(validWhenHiddenAndRequired, false, 'a hidden required field still blocks submit — this is why disabled')
 
   assert.deepEqual(errors, [])
+  await page.close()
+})
+
+// --- and the two things the fiat row got wrong the first time (2026-08-27) ---------------------
+//
+// Both are attributes on `#price-fiat-amount`, both were missing, and neither is reachable from a
+// unit test: what enforces them is the browser's own constraint validation, which is exactly the
+// class of claim item 8 exists to stop us asserting from a comment. So they are driven here.
+
+// The shared setup, which is the attribute changes main.ts `showFiat(fiat)` makes.
+const intoFiat = async (page: import('playwright').Page, currency: string, amount: string) => {
+  await page.evaluate(
+    ([code, value]) => {
+      const $ = (s: string) => document.querySelector<HTMLElement>(s)!
+      $('#price-sats').hidden = true
+      ;($('#price') as HTMLInputElement).toggleAttribute('disabled', true)
+      $('#price-fiat').hidden = false
+      $('#price-fiat-note').hidden = false
+      ;($('#price-fiat-amount') as HTMLInputElement).toggleAttribute('disabled', false)
+      $('#price-fiat-currency').textContent = code!
+      ;($('#price-fiat-amount') as HTMLInputElement).value = value!
+    },
+    [currency, amount],
+  )
+  // `#title` is the form's other required field and is empty on a cold page, so it is filled
+  // first, or every assertion below measures the title and not the price.
+  await page.locator('#title').fill('Records, jazz and salsa')
+}
+
+const formValid = (page: import('playwright').Page) =>
+  page.evaluate(() => document.querySelector<HTMLFormElement>('#item')!.checkValidity())
+
+test('a blank fiat price cannot be published, because a blank number field reads as zero', async () => {
+  // THE DEFECT. `#price` has always been `required` and `#price-fiat-amount` was not, so clearing
+  // it left `readDraft` computing `Number('')`, which is 0, which passes every check after it.
+  // An 80 MXN item opened to change its stock and saved with the amount blank republishes as
+  // `["price","0","MXN"]`, and the storefront draws that as "Free, just ask when you get here".
+  //
+  // `required` is the whole fix and it has to be asserted in a browser: it is inert while the
+  // control is disabled (HTML §4.10.18.3, the same rule the test above leans on), so "the
+  // attribute is in the markup" and "the attribute stops a submit" are different claims.
+  const { page } = await open()
+  assert.equal(await page.locator('#price-fiat-amount').getAttribute('required'), '')
+
+  await intoFiat(page, 'MXN', '')
+  assert.equal(await formValid(page), false, 'a blank fiat price should block submit, as a blank sats price does')
+
+  // And it is the blank that is refused, not the fiat row itself.
+  await page.locator('#price-fiat-amount').fill('80')
+  assert.equal(await formValid(page), true)
+
+  // Zero typed on purpose is a real price: `boxes` is `["price","0","MXN"]` on the live sale and
+  // the page draws it as "Free". The form must not confuse "free" with "I cleared the box", and
+  // the only thing that tells them apart is whether a seller typed the character.
+  await page.locator('#price-fiat-amount').fill('0')
+  assert.equal(await formValid(page), true)
+  await page.close()
+})
+
+test('a fiat price may have a fractional part, because a peso is not a sat', async () => {
+  // The field shipped as `step="1"`, inherited from the sats field beside it. A sat is whole by
+  // definition and 12.50 USD is an ordinary price, so under step="1" a fractional listing was
+  // editable, rendered into the form, and then refused by the browser on submit with a bubble the
+  // seller cannot clear without changing what the item costs. `admin.ts` `fiatPriceReason` is the
+  // other half; this is the half only a browser can answer.
+  const { page } = await open()
+  assert.equal(await page.locator('#price-fiat-amount').getAttribute('step'), 'any')
+
+  await intoFiat(page, 'USD', '12.5')
+  assert.equal(await formValid(page), true, 'step="1" would report a stepMismatch here')
+
+  await page.locator('#price-fiat-amount').fill('80.5')
+  assert.equal(await formValid(page), true)
+
+  // The bound that survives from the sats field: negative is not a price. `min="0"` is what says
+  // so, and `fiatPriceReason` says it again for anything that reaches the handler another way.
+  await page.locator('#price-fiat-amount').fill('-1')
+  assert.equal(await formValid(page), false)
   await page.close()
 })

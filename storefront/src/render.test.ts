@@ -20,7 +20,7 @@
 // nothing on the other side of it.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { Item } from './listing.ts'
+import { isSats, type Item } from './listing.ts'
 import { declineText, formatPrice, freshnessNote, geoUri, missingItemNote, noBuyReason, sats, stockNote } from './render.ts'
 
 const item = (over: Partial<Item> = {}): Item => ({
@@ -139,6 +139,36 @@ test('a fiat-priced item says cash at the table and names the currency', () => {
   const text = noBuyReason(item({ price: { amount: 80, currency: 'MXN' } }))!
   assert.match(text, /MXN/)
   assert.match(text, /cash at the table/i)
+})
+
+test('every reader in the tree agrees on what a sat is, which is what “one predicate” has to mean', () => {
+  // M3's whole argument is that two spellings of the same question drift apart and the drift is
+  // latent until it is not: `builder/src/admin.ts` demanded exact lowercase `sats` while
+  // `listing.ts` accepted `/^sats?$/i`, so an item priced `SATS` was BUYABLE and UNEDITABLE for
+  // three slices. `isSats` was exported to close that, and then ./render.ts kept two literal
+  // copies of the regex anyway, in `formatPrice` and in `noBuyReason`, which left three readers
+  // where the fix claimed one.
+  //
+  // This is that claim as an assertion rather than as a comment. `isSats` is the ONLY thing that
+  // may decide this question, so the test asks the two functions a buyer actually sees, in the
+  // two directions that matter: a sats item must never be told to bring cash, and a fiat item
+  // must always be.
+  for (const currency of ['sats', 'sat', 'SATS', 'SAT', 'Sats']) {
+    assert.equal(isSats(currency), true, `${currency} should be sats`)
+    // `noBuyReason` must fall PAST the fiat branch to the sats one. A copy of the regex that
+    // drifted would send this item to "cash at the table" while `buyableOffer` drew a Buy button
+    // for it, which is the same shape of contradiction M3 found in the builder.
+    const why = noBuyReason(item({ price: { amount: 6_000, currency } }))!
+    assert.doesNotMatch(why, /cash at the table/i, `${currency} was sent down the fiat branch`)
+    assert.match(why, /Not payable on this page/)
+    // And the price reads as sats rather than going through Intl as a currency code.
+    assert.equal(formatPrice({ amount: 6_000, currency }), '6,000 sats')
+  }
+
+  for (const currency of ['MXN', 'USD', 'satoshi', 'sats2']) {
+    assert.equal(isSats(currency), false, `${currency} should not be sats`)
+    assert.match(noBuyReason(item({ price: { amount: 80, currency } }))!, /cash at the table/i)
+  }
 })
 
 test('a free item says how to claim it', () => {

@@ -204,7 +204,7 @@ test('the print stylesheet takes the Buy panel off the paper', async () => {
   // NOTE, and it is a doc-vs-code correction: the roadmap's item 8 bullet says the print
   // stylesheet hides `<main>`. In THIS app it does not: `<main>` is the item grid and printing
   // the sale is the entire point of the flyer (design.md §3). `body > main { display: none }` is
-  // the BUILDER's rule (builder/src/style.css:154), asserted in builder/smoke.test.ts. Read the
+  // the BUILDER's rule (builder/src/style.css:165), asserted in builder/smoke.test.ts. Read the
   // code, not the bullet.
   const { page } = await open('#/item/yardsale-2026-08-lamp')
   await page.locator('section.buy').waitFor({ timeout: 15_000 })

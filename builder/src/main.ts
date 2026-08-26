@@ -20,6 +20,7 @@ import {
   draftFrom,
   droppedMembers,
   fiatCurrency,
+  fiatPriceReason,
   isSats,
   loadItems,
   noPublishSaleReason,
@@ -333,10 +334,13 @@ const doPublish = async (event: SubmitEvent) => {
   if (!draft.title) return say('Give the item a title.', 'bad')
   // M3. A fiat item is validated as its own price and never as sats, and neither the sats floor
   // nor the node's 10-sat minimum applies to it — it is not going to be invoiced at all.
+  //
+  // NOT `Number.isSafeInteger`, which is what this said for one slice: the SATS rule wearing the
+  // fiat field's label. The decision is `admin.ts` `fiatPriceReason`, out here where a test can
+  // reach it, for the same reason `noPublishSaleReason` is.
   if (draft.fiat) {
-    if (!Number.isSafeInteger(draft.fiat.amount) || draft.fiat.amount < 0) {
-      return say(`Price must be a whole number of ${draft.fiat.currency}.`, 'bad')
-    }
+    const why = fiatPriceReason(draft.fiat.amount, draft.fiat.currency)
+    if (why) return say(why, 'bad')
   } else if (!Number.isSafeInteger(draft.priceSats) || draft.priceSats < 0) {
     return say('Price must be a whole number of sats.', 'bad')
   }
