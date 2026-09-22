@@ -449,7 +449,7 @@ profile for the demo is the clean separation.
 
 **A CORRECTION, because it was written into three documents on 2026-08-24 and is wrong:** "whether
 the extension honours `perms`" **does not apply to NIP-07 at all.** `PERMS` is used only on the
-NIP-46 path (`signer.ts:143`, `createNostrConnectURI`); `connectNip07` (`:90`) never sends it and
+NIP-46 path (`signer.ts:143`, `createNostrConnectURI`); `connectNip07` (`:91`) never sends it and
 NIP-07 has no such handshake — it calls `getPublicKey()` purely to provoke the extension's own
 prompt at connect time rather than mid-publish (`:100`). So findings §8's Amber/nsec.app `perms`
 measurements, and q8's residual risk about Amber's "Approve basic actions" policy, describe a
