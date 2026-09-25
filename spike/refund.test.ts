@@ -575,18 +575,32 @@ test('a Lightning address becomes the BIP-353 name recorded on 2026-08-24, and i
   assert.equal(bip353Name('Bob@Example.COM'), 'bob.user._bitcoin-payment.example.com')
 })
 
-test('the name half must be ONE ordinary DNS label, because the query is a different zone otherwise', () => {
+test('the name half must be ONE DNS label, because the query is a different zone otherwise', () => {
   // `LN_ADDRESS`'s name half is `[^\s@]{1,64}`: it admits dots, slashes and unicode. `lnurlpUrl`
   // survives that with `encodeURIComponent`; a DNS name has no such escape, so `a.b@host` would
-  // ask about `a.b.user._bitcoin-payment.host` — a name the address does not name. Refuse instead.
+  // ask about `a.b.user._bitcoin-payment.host`, a name the address does not name. Refuse instead.
   assert.equal(bip353Name('a.b@example.com'), null)
   assert.equal(bip353Name('../../admin@example.com'), null)
-  assert.equal(bip353Name('bob_smith@example.com'), null)
   assert.equal(bip353Name('-bob@example.com'), null) // a label may not start with a hyphen
   assert.equal(bip353Name('bob-@example.com'), null)
   assert.equal(bip353Name('b'.repeat(64) + '@example.com'), null) // over one label's 63 bytes
   assert.equal(bip353Name('not an address'), null)
   assert.equal(bip353Name('noffer1qszqqqqhwqpszqq'), null)
+})
+
+test('an underscore in the name half is asked about, because BIP 353 never said otherwise', () => {
+  // This asserted `null` until 2026-09-25, on the letter-digit-hyphen syntax for a HOSTNAME.
+  // BIP 353's only character rule for the user part is printable ASCII, punycode otherwise
+  // (`bip-0353.mediawiki:45`, restated `:65`; findings §13.32 carries the quotes and the file
+  // hash). Underscores are common in real Lightning addresses, and `bob_smith@phoenixwallet.me`
+  // was getting the message that blames DNS for a name we had simply refused to look up.
+  assert.equal(bip353Name('bob_smith@example.com'), 'bob_smith.user._bitcoin-payment.example.com')
+  assert.equal(bip353Name('_bob@example.com'), '_bob.user._bitcoin-payment.example.com')
+  assert.equal(bip353Name('bob_@example.com'), 'bob_.user._bitcoin-payment.example.com')
+  assert.equal(bip353Name('_@example.com'), '_.user._bitcoin-payment.example.com')
+  // The bound that matters is untouched: one label, so still no second zone and still 63 bytes.
+  assert.equal(bip353Name('a_b.c@example.com'), null)
+  assert.equal(bip353Name('_'.repeat(64) + '@example.com'), null)
 })
 
 test('an assembled name over 253 bytes is refused rather than sent', () => {

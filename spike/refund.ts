@@ -354,17 +354,40 @@ const BIP353_MAX_BYTES = 4 * 1024
  * the 2026-08-24 measurement and re-resolved live on 2026-08-26, not recalled.
  *
  * DELIBERATELY STRICTER THAN `LN_ADDRESS`, whose name half is `[^\s@]{1,64}` and therefore admits
- * dots, slashes and unicode. Here the name half must be ONE ordinary DNS label or we do not query
- * at all: `a.b@host` would otherwise reach into a different zone than the address names, and this
+ * dots, slashes and unicode. Here the name half must be ONE DNS label or we do not query at all:
+ * `a.b@host` would otherwise reach into a different zone than the address names, and this
  * function's whole job is to answer a question about the address in front of it. Refusing is
- * free — the caller falls back to the message it already had.
+ * free: the caller falls back to the message it already had.
+ *
+ * UNDERSCORES ARE ADMITTED, and that is a correction rather than a widening for its own sake.
+ * The pattern here was `[a-z0-9-]`, the letter-digit-hyphen syntax for a *hostname*, and
+ * `bob_smith@phoenixwallet.me` therefore got no lookup and the old message blaming DNS, which is
+ * the exact dead end item 27 exists to close. BIP 353 imposes no such rule. Read 2026-09-25 from
+ * `bitcoin/bips@master:bip-0353.mediawiki`, sha256
+ * `b9239e2df8b8551ac4d5ef1aae26a2b9c74981dda0481641333ed782b85bab61` (findings §13.32, which
+ * carries the quotes): its only character rule for the user part is `:45`, *"User and domain names
+ * which are not expressible using standard printable ASCII MUST be encoded using the punycode IDN
+ * encoding"*, restated at `:65` as *"wallets SHOULD NOT create identifiers which are not entirely
+ * printable ASCII"*. The words LDH, alphanumeric and hyphen do not appear in the document at all.
+ * An underscore is printable ASCII, so `bob_smith` is a conforming BIP 353 user name. And the
+ * scheme's own record name is `<user>.user._bitcoin-payment.<domain>` (`:37`), so an underscore
+ * label is something this very lookup already resolves.
+ *
+ * WHAT IS STILL REFUSED, and why this is not "admit all printable ASCII". A dot is the one
+ * character that creates a label boundary, which is the bound that matters and is unchanged. The
+ * rest of printable ASCII (`*`, `\`, `"`, a space) would need its own reading of what a DNS label
+ * may carry on the wire before it went into a name built from hostile input, and no address we
+ * have seen needs it. A leading or trailing HYPHEN stays refused because that rule is real and is
+ * about hyphens, not underscores. So the residual is smaller, not gone: a name with a dot in it
+ * still falls back to the older message, which is a true statement about an address we decline to
+ * ask about rather than a wrong one about DNS.
  */
 export const bip353Name = (address: string): string | null => {
   if (!LN_ADDRESS.test(address)) return null
   const at = address.lastIndexOf('@')
   const name = address.slice(0, at).toLowerCase()
   const domain = address.slice(at + 1).toLowerCase()
-  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name)) return null
+  if (!/^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/.test(name)) return null
   const query = `${name}.${BIP353_PREFIX}.${domain}`
   return query.length <= 253 ? query : null
 }

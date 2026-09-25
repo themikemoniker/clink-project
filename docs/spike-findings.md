@@ -19,6 +19,7 @@ Where this file disagrees with `/docs/spec.md`, this file wins. Corrections are 
 | CLINK specs — `github.com/shocknet/CLINK` | commit `442b7ae`, branch `main`, fetched 2026-08-20 |
 | NIPs — `github.com/nostr-protocol/nips` | commit `656cecc`, branch `master`, **re-fetched 2026-08-21** for §31. The repo is not kept on this machine; anything cited from it must be re-fetched, never recalled |
 | Blossom BUDs — `github.com/hzrd149/blossom` | fetched 2026-08-20 |
+| BIP 353 — `github.com/bitcoin/bips` | `bip-0353.mediawiki`, branch `master`, fetched **2026-09-25**, sha256 `b9239e2d…b85bab61` (§13.32). Pinned by content hash because `api.github.com` is unreachable from the cloud container while `raw.githubusercontent.com` is. Re-fetch and re-hash; never recall |
 | Lightning.Pub source | the **running local install**, `~/lightning_pub`, `package.json` version `0.0.37` |
 | `@shocknet/clink-sdk` | `1.5.5` bundled in Lightning.Pub; `1.7.0` current on npm |
 | Live node | local Pub, LND `SERVER_ACTIVE`, 1 private channel, **92,160 sat inbound / 6,000 outbound** after the test payment (§1) |
@@ -1736,3 +1737,44 @@ invalidate.
     the same lesson as findings §13.11 ("a 200 is not evidence") pointed at our own output rather
     than at a server's.
 
+
+32. **BIP 353 puts no letter-digit-hyphen rule on the user part, so `bip353Name` was refusing
+    conforming addresses.** The row the 2026-08-27 review opened asked whether BIP 353's "encoded
+    as a DNS label" admits an underscore, and called it a spec question rather than a plumbing one.
+    It is, and the spec answers it by saying nothing: **the words LDH, alphanumeric and hyphen do
+    not appear in the document at all.**
+
+    Read 2026-09-25 from `bitcoin/bips@master:bip-0353.mediawiki`, sha256
+    `b9239e2df8b8551ac4d5ef1aae26a2b9c74981dda0481641333ed782b85bab61`. Pinned by content hash
+    rather than by commit because `api.github.com` is not reachable from this environment while
+    `raw.githubusercontent.com` is, and a hash is verifiable without either.
+
+    The only character rule for the user part, `:45`:
+
+    > User and domain names which are not expressible using standard printable ASCII MUST be
+    > encoded using the punycode IDN encoding defined in RFC 3492 and RFC 5891.
+
+    Restated as advice to wallets at `:65`:
+
+    > As such, wallets SHOULD NOT create identifiers which are not entirely printable ASCII.
+
+    And the record name, `:37`, which is the second half of the answer:
+
+    > Instructions for a given `user` and `domain` are stored at
+    > `user`.user._bitcoin-payment.`domain` in a single TXT RR.
+
+    So an underscore is printable ASCII and therefore conforming, and the scheme's own name carries
+    an underscore label (`user._bitcoin-payment`), which is this very lookup already resolving one.
+    Our pattern was `[a-z0-9-]`, the syntax for a **hostname** (RFC 1123's preferred form) rather
+    than anything BIP 353 requires, so `bob_smith@phoenixwallet.me` got no lookup and fell back to
+    the message that blames DNS. Underscores are common in real Lightning addresses, which made
+    this the exact dead end item 27 exists to close, for a subset of the addresses it was built
+    for. Fixed 2026-09-25; the pattern now admits `_` anywhere in the label.
+
+    **What was deliberately NOT done, because it is the bound on hostile input.** Widening to all
+    printable ASCII would admit `*`, `\`, `"` and a space into a name built from a stranger's
+    string. A **dot** is the one character that creates a label boundary, so it stays refused and
+    the one-label guarantee is untouched; a leading or trailing **hyphen** stays refused because
+    that rule is about hyphens and is real. The residual is therefore smaller rather than gone,
+    and a dotted name still falls back to the older message, which is a true statement about an
+    address we decline to ask about rather than a wrong one about DNS.
