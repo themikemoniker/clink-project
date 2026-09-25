@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
+Last updated: **2026-09-25**, after a cloud session that closed the last two ledger rows and found that this file's two-machine model has a third case in it. **Read "THE THIRD MACHINE" below before you trust any reachability claim here.** The paragraphs below that are from **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
 
 **READ THIS PARAGRAPH BEFORE ACTING ON ANYTHING BELOW.** Milestone A landed as ten commits
 (`ac87512`..`a934056`) and then a review of that branch found **five defects it had introduced**,
@@ -44,6 +44,37 @@ reads as the fix for something else, which is why the diff did not show them:
 was pre-existing rather than milestone A's: **a BIP-353 address is the same `user@domain` shape as
 an LNURL one**, so a Phoenix buyer's refund pointer is accepted at buy time and is useless at
 refund time. That is **roadmap item 27**, and it has a trap in it — see below.
+
+### THE THIRD MACHINE: a container, where the relays are denied too (added 2026-09-25)
+
+**The section below sorts the world into two machines, and a cloud session is a third.** Its claim
+that "the four public relays and the four Blossom servers are reachable, so every read-only path
+works here" is FALSE in a container. Measured 2026-09-25: all five relays, all four Blossom servers
+and the nsite gateway answer `403` to the egress proxy's CONNECT. What is allowed is the package
+registries and GitHub.
+
+So establish reachability with **two** commands, not one:
+
+```bash
+curl -s http://127.0.0.1:1776/api/health          # the node: keyed machine or not
+curl -s -o /dev/null -w '%{http_code}\n' https://nos.lol/   # 000 or 403 means a container
+```
+
+**What that rules out beyond the second machine's list:** `check-admin.ts`, `check-deploy.ts`,
+rendering the live storefront, item 18's freshness probes, M7's mirror audit, and **M1's
+`check-ladder-relay.ts`**, which the M1 brief names as one of its four deliverables. M1's offline
+half is unaffected. This is an environment network policy, not code, and it is liftable per host by
+widening Network access on the environment, so a session that needs the relays can have them.
+
+**Also Node v22.22.2 here**, where this file says Node 24. Type stripping ran all three suites
+anyway.
+
+**And the byte numbers in this file are toolchain-dependent, which nothing had said before.**
+`vite` is pinned `^7.1.3`, a caret range; `npm install` resolved **7.3.6** here and the same source
+produced **32,221** gzip storefront (against the 32,140 recorded on 2026-08-27) and **60.62 KB**
+builder (against 59.49). Headroom is **779 bytes against 33,000 on this toolchain, not 860**.
+Measure on the machine you are on, do not carry a number over, and see spec §9.4 before concluding
+that some change cost 81 bytes.
 
 ### THE SECOND MACHINE: read this before you plan anything (added 2026-08-25)
 
@@ -242,16 +273,20 @@ Nothing here needs a build step; Node 24 runs the `.ts` files directly.
 ```bash
 # storefront
 cd storefront
-npm test            # 76 tests, node --test, no framework. 71 unit + 5 headless (smoke.test.ts,
-                    # item 8). The smoke run builds, serves dist/ and drives chromium; it needs
-                    # NO relay, node or key. The relay read is stubbed from smoke-fixture.json
+npm test            # 81 tests, node --test, no framework. 71 unit + 5 headless (smoke.test.ts,
+                    # item 8) + 5 for the browser-launch helper (smoke-browser.test.ts, 2026-09-25;
+                    # the root glob is `*.test.ts` now, because the old one would have collected a
+                    # new root-level test file never). The smoke run builds, serves dist/ and drives
+                    # chromium; it needs NO relay, node or key. The relay read is stubbed from
+                    # smoke-fixture.json, and the launch falls back to the host's own chromium when
+                    # playwright's pinned build is absent, saying so
 npm run build       # tsc --noEmit && vite build
 npm run size        # raw + gzip per asset
 npm run dev         # http://localhost:5173
 
 # the money path, against the running node
 cd spike
-npm test                               # 51 tests, node --test — the ladder and the refund journal
+npm test                               # 52 tests, node --test — the ladder and the refund journal
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
 node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
                                        # --pay REFUSES without --pointer as of slice 8: a settled

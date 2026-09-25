@@ -89,7 +89,9 @@ export const launchChromium = async (): Promise<Browser> => {
  * class below. It speaks only the three frames these pages use.
  *
  * The events must be REAL SIGNED events. SimplePool verifies everything it accepts
- * (`nostr-tools/lib/esm/index.js:1177`), so unsigned fixtures are dropped before they reach the
+ * (`nostr-tools/lib/esm/index.js:1179`, on the exactly-pinned 2.24.3; `smoke.test.ts`'s header
+ * said `:1177` from slice-8 onward and it was off by two, re-grepped 2026-09-25), so unsigned
+ * fixtures are dropped before they reach the
  * page and every assertion downstream passes for the wrong reason. `storefront/smoke-fixture.json`
  * is a capture off the four public relays for exactly this, and it is shared rather than re-captured.
  */

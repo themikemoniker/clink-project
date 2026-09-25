@@ -1151,6 +1151,118 @@ anybody meeting it. Closed by construction — `isSats` is exported from the sto
 files call it — and **widened rather than narrowed**, because tightening the storefront would have
 been a money-path change made to fix a builder bug.
 
+### 9.4 A third machine class, and the two ledger rows it could close (2026-09-25)
+
+A cloud session, in a container. No roadmap item was in scope: what was reachable was the two
+open rows from the 2026-08-27 review plus the environment finding that had to come first. Nothing
+signed, published or spent, and **the byte budget did not move at all**: both bundles are
+byte-identical before and after, same chunk hashes, 32,221 gzip storefront and 60.62 KB builder.
+
+**THE MACHINE FINDING, and it is the one to read before planning another cloud session.**
+`/docs/status.md` has sorted the world into two machines since 2026-08-25: the keyed one, and the
+second one which has no hardware but where "the four public relays and the four Blossom servers
+are reachable, so **every read-only path works here**". A container is a **third** class and that
+sentence is false in it. Measured 2026-09-25, all five relays, all four Blossom servers and the
+nsite gateway answer `403` to the proxy's CONNECT:
+
+```
+relay.damus.io, nos.lol, relay.nostr.band, relay.primal.net, purplepag.es   denied
+blossom.primal.net, blossom.band, cdn.satellite.earth, nostr.download       denied
+npub1lvvw3q….nsite.lol                                                      denied
+```
+
+What IS allowed is the package registries and GitHub. So the second machine's list of "reachable
+and proven" is wrong here in three places: `check-admin.ts`, `check-deploy.ts` and rendering the
+live storefront all read relays. It is an environment network policy rather than anything in the
+code, and it is liftable per host. **The consequence for planning: M1's `check-ladder-relay.ts`,
+which the brief makes one of its four deliverables, cannot run in a container as configured.** The
+offline half of M1 can.
+
+Also Node **v22.22.2**, where `status.md` says "Node 24 runs the `.ts` files directly". Type
+stripping ran all three suites anyway, so it is a caveat and not a blocker.
+
+**THE BYTE BUDGET IS MEASURED AGAINST A FLOATING DEPENDENCY, which matters because this project
+guards it to the byte.** `storefront/package.json` pins `vite: ^7.1.3`, a caret range, and a plain
+`npm install` here resolved **7.3.6**. Same source, different minifier, different bytes:
+
+| | recorded 2026-08-27 | this toolchain |
+|---|---|---|
+| storefront cold JS gzip | 32,140 | **32,221** (+81) |
+| builder cold gzip | 59.49 KB | **60.62 KB** (+1.1 KB) |
+
+§9.3 above reasons carefully about a **6-byte** change and the README raises the budget with a
+justification. A dependency resolution moved the number thirteen times further than that, in the
+direction that spends headroom: **779 bytes against 33,000 on this toolchain, not 860.** Nothing
+was changed about it in this session, because pinning vite is a toolchain decision with its own
+trade-off (§9.1's reasoning about pinning playwright exactly is the precedent, and it was taken for
+the download rather than for the bytes). It is recorded so that the next render slice measures on
+its own machine and does not trust either number, and so that a future "we went 10 bytes over" is
+read against the right baseline. The 33 KB budget itself is unaffected: it is a budget on what the
+gateway serves, and what the gateway serves is whatever built it.
+
+**Playwright resolves its browser by a build number, so 14 tests were red on a machine whose
+browser was fine.** `playwright: 1.62.1` wants chromium build 1234; the container ships 1194 with a
+`chromium` symlink at the top of `$PLAYWRIGHT_BROWSERS_PATH`, and `launch()` looks only for the
+former. Five storefront and nine builder tests failed in `before` while all 207 offline tests
+passed, which is the harm item 8 exists to prevent one level up: **a suite nobody can believe is a
+suite nobody reads.** `launchChromium` in `storefront/smoke-browser.ts` prefers the pinned browser
+and falls back only when it cannot start and a named alternative is really on disk, printing which
+executable ran and its version. The fallback's version can skew (chrome 141 against the pinned 151
+here); every assertion in both suites is structural, which is why that is acceptable and why the
+warning says it out loud rather than letting a silent substitution happen. With nothing on disk,
+playwright's own "run `playwright install`" error is rethrown untouched.
+
+It also found that `storefront`'s test script was `node --test src/*.test.ts smoke.test.ts`, which
+collected a new root-level test file **never**. Verified silently skipping before the glob was
+widened. A test file the runner does not open is worse than no test, because it reads as coverage.
+
+**BIP 353 has no letter-digit-hyphen rule, so `bip353Name` was refusing conforming addresses.**
+Findings §13.32 carries the quotes, the line numbers and the file's sha256. The short version: the
+only character rule for the user part is printable ASCII with punycode otherwise
+(`bip-0353.mediawiki:45`, restated `:65`), the words LDH, alphanumeric and hyphen do not appear in
+the document at all, and the scheme's own record name carries an underscore label (`:37`). Our
+pattern was the syntax for a **hostname**, so `bob_smith@phoenixwallet.me` got no lookup and the
+seller got the message blaming DNS. A **dot** stays refused, because it is the one character that
+creates a label boundary and that is the bound on hostile input this function exists to keep; the
+residual is smaller rather than gone, and the docblock says so.
+
+**A test that imitates the function it is named after is not a test of it, and that is now shown
+rather than argued.** The two M3 fiat tests set the attributes `showFiat` sets, via
+`page.evaluate`. A third test clicks the page's own Edit button on `yardsale-2026-08-records` and
+asserts what the page did, reaching `editItem` -> `showFiat(draft.fiat)` for real. **Mutate
+`showFiat` to stop disabling `#price` and the two imitating tests still pass while only the new one
+fails**; mutating the currency read does the same. That is the regression the ledger row predicted,
+caught.
+
+What made it reachable is a small harness, and it is the reusable part of this session:
+`installRelayStub` (the WebSocket stub **extracted** from `storefront/smoke.test.ts` rather than
+copied, and the storefront's five tests re-run against the extracted version first) and
+`installNip07Stub`, answering from `storefront/smoke-fixture.json`'s real signed events. `npm test`
+stays offline, deterministic and side-effect free. **The stub signs nothing on purpose**:
+`signEvent` throws, because no test using it is entitled to publish and one that starts signing by
+accident should fail loudly rather than mint an event under a key that does not exist.
+
+**This is not item 7, and the code says so where somebody might assume otherwise.** A stub is not
+an extension holding the real seller key, and the prompt count item 7 exists to measure cannot
+appear here by construction. What the harness does reach is the markup and wiring behind the signer
+gate, which no test had ever rendered. One fact came free and is the first of its kind: **the admin
+panel loads with a signer and produces no `pageerror`.**
+
+**And one citation was wrong, found by obeying this repo's own rule about checking them at commit
+time.** `storefront/smoke.test.ts`'s header has cited `nostr-tools/lib/esm/index.js:1177` for
+`this.verifyEvent(event, this.url)` since item 8. The line is **1179**. `nostr-tools` is pinned
+**exactly** (`2.24.3`, no caret) in both apps, so this is not version drift: it was wrong when
+written and stayed wrong through the milestone A review that fixed ten other mis-citations. Fixed
+in both places, with the date, because the next reader deserves to know it was re-grepped rather
+than copied a third time.
+
+Test counts moved 76 / 94 / 51 -> **81 / 95 / 52**, all green, `tsc` clean in both apps. The five
+new storefront tests are the launch helper's; the two new browser tests are the ones above. With
+this, both rows in `/docs/known-defects.md`'s "Added by the review of the dead-ends sweep" section
+are closed.
+
+---
+
 ---
 
 ## 10. Build plan — vertical slices

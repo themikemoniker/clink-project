@@ -10,7 +10,9 @@
 // NO NETWORK, NO KEY, NO NODE. The relay read is stubbed at `window.WebSocket` and answered from
 // `smoke-fixture.json`, real kind 30402/30405 events captured off the four public relays on
 // 2026-08-25, with their real signatures, because SimplePool verifies every event it accepts
-// (nostr-tools/lib/esm/index.js:1177 `this.verifyEvent(event, this.url)`) and unsigned fixtures
+// (nostr-tools/lib/esm/index.js:1179 `this.verifyEvent(event, this.url)`, re-grepped 2026-09-25;
+// this said `:1177` until then, and nostr-tools is pinned exactly, so it was wrong rather than
+// drifted) and unsigned fixtures
 // would be dropped before they reached the page. Captured rather than minted: signing fixtures
 // here would mean a private key in the test suite, and CLAUDE.md rule 2 puts key handling in a
 // Signer and nowhere else. Re-capture with a plain relay read if the sale is ever re-cut; the

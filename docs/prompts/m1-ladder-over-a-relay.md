@@ -35,7 +35,8 @@ code disagree, read the code and say so.
 No Lightning.Pub (nothing answers `127.0.0.1:1776`), no LND, no `lncli`, none of the gitignored
 state (`.dev-key`, `.offers.json`, `.ladder.json`, `.refund-key`, `.nmanage`, `.ndebit`,
 `.refunds.json`), no NIP-07 extension in this browser profile. The four public relays and the four
-Blossom servers ARE reachable.
+Blossom servers ARE reachable. **(True of the machine this brief was written for. In a cloud
+container they are DENIED: see the 2026-09-25 note in Phase 0.)**
 
 Everything in the build below is reachable without any of the missing hardware, because a
 throwaway key can read and write public relays freely. What is NOT reachable is publishing a
@@ -54,6 +55,17 @@ As of 2026-08-26, after the dead-ends sweep and the review that followed it, tha
 **76 / 94 / 51**, all green, `tsc` clean in both apps, storefront cold JS **32,140 bytes gzip**.
 These are measurements, not promises. If a number differs, report the actual output and say the
 document is stale rather than restating it.
+
+**UPDATED 2026-09-25, and the byte figure needs a caveat this brief could not have had.** A cloud
+session closed the last two ledger rows, so the baseline is now **81 / 95 / 52** (5 new storefront
+tests for the browser-launch helper, 1 new builder browser test, 1 new spike test). More
+importantly: `vite` is pinned `^7.1.3`, a caret range, and the resolved version changes the output
+bytes. On vite 7.3.6 the same source measures **32,221** gzip, not 32,140, which is **+81 bytes and
+leaves 779 of headroom, not 860**. So the instruction below to stop if you add a byte to
+`storefront/src` still holds exactly, but **measure your own before and after on your own machine**
+and do not diff against 32,140. Spec §9.4 and `/docs/status.md` "THE THIRD MACHINE" have the
+reasoning. Note also that `check-ladder-relay.ts`, one of this brief's four deliverables, **cannot
+run in a cloud container as configured**: the relays are denied there. See the same two sections.
 
 **The byte budget: 860 bytes of headroom against 33,000.** M1 is builder and spike work and should
 add nothing to the storefront bundle. If you find yourself adding a byte to `storefront/src`,
