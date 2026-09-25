@@ -216,8 +216,17 @@ export const parseLadder = (plaintext: unknown): Rung | null => {
 
   // `units` decides which rung `stepFor` reaches for (`rung.steps[rung.units - target - 1]`), so a
   // float or a negative here would index into nothing and throw there instead of here.
+  // `typeof x === 'number'` before `Number.isSafeInteger(x)`, here and on every step field below,
+  // and NO `as number` anywhere. `Number.isSafeInteger` is declared `(number: unknown) => boolean`
+  // rather than as a type predicate, so it does not narrow `unknown`, and the first draft of this
+  // reached for a cast to satisfy the compiler. **The runtime bound was never wrong** — measured:
+  // removing these typeof checks changes no test outcome, because `Number.isSafeInteger` already
+  // rejects a string. What the cast did was hide a real compile error one field over, where
+  // `created_at` was being written into a typed struct while still `unknown`. `tsc` in /builder
+  // caught that, because builder's tsconfig includes this file; a cast is how the next one would
+  // get through.
   const { units, noffer, steps } = raw
-  if (!Number.isSafeInteger(units) || (units as number) < 0 || (units as number) > MAX_STEPS) return null
+  if (typeof units !== 'number' || !Number.isSafeInteger(units) || units < 0 || units > MAX_STEPS) return null
   if (noffer !== undefined && (typeof noffer !== 'string' || noffer.length > MAX_NOFFER)) return null
   if (!Array.isArray(steps) || steps.length > MAX_STEPS) return null
 
@@ -231,7 +240,7 @@ export const parseLadder = (plaintext: unknown): Rung | null => {
     // ladder that silently never publishes. Found by this file's own round-trip test.
     if (typeof s.id !== 'string' || typeof s.pubkey !== 'string' || typeof s.sig !== 'string') return null
     if (typeof s.kind !== 'number' || !Number.isSafeInteger(s.kind)) return null
-    if (!Number.isSafeInteger(s.created_at)) return null
+    if (typeof s.created_at !== 'number' || !Number.isSafeInteger(s.created_at)) return null
     if (typeof s.content !== 'string' || s.content.length > MAX_CONTENT) return null
     if (!Array.isArray(s.tags) || s.tags.length > MAX_TAGS || !s.tags.every(isStringArray)) return null
     out.push({
@@ -240,14 +249,14 @@ export const parseLadder = (plaintext: unknown): Rung | null => {
       sig: s.sig,
       kind: s.kind,
       created_at: s.created_at,
-      tags: s.tags as string[][],
+      tags: s.tags,
       content: s.content,
     })
   }
   // A ladder whose step count disagrees with its own `units` is the shape `stepFor` would throw
   // on, one tick at a time, for the rest of the sale. Refuse it once, here.
   if (out.length !== units) return null
-  return { units: units as number, noffer: noffer as string | undefined, steps: out }
+  return { units, noffer, steps: out }
 }
 
 /** Where a watched item's ladder came from, and whether the choice was made blind. */

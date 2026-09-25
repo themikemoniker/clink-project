@@ -11,6 +11,7 @@ import { unitsOf } from '../../spike/ladder.ts'
 import { mintOffer, type ManagePointer } from './manage.ts'
 import { eventsToSign, type Draft } from './listing.ts'
 import { listingD, saleTemplate, type SaleDraft } from './sale.ts'
+import { publishLadder } from './watcher.ts'
 import type { Signer } from './signer.ts'
 
 export const RELAYS = SALE_RELAYS
@@ -28,6 +29,14 @@ export type Published = {
   listing: Event
   ladder: LadderFile
   relaysOk: number
+  /**
+   * How many relays took the M1 ladder event, or null when no watcher pubkey is configured.
+   *
+   * null and 0 are different answers and the UI says so differently: null is "you have not told
+   * this browser which watcher to encrypt to", which is a setup step, and 0 is "we tried and no
+   * relay took it", which means the seller still needs the download this time.
+   */
+  ladderRelaysOk: number | null
 }
 
 // EXACTLY the shape /spike/watch-sales.ts reads: { [d]: { units, noffer?, steps[] } }, steps[i]
@@ -55,6 +64,7 @@ export const publish = async (
   node: ManagePointer | null,
   draft: Draft,
   sale: SaleDraft,
+  watcher: string | null,
   onStep: (step: Step) => void,
 ): Promise<Published> => {
   const pubkey = await signer.getPublicKey()
@@ -165,9 +175,35 @@ export const publish = async (
       .publish(RELAYS, listing)
       .map(p => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8_000))])),
   )
-  pool.close(RELAYS)
   const relaysOk = results.filter(r => r.status === 'fulfilled').length
-  if (relaysOk === 0) throw new Error('No relay accepted the listing. It is signed but nobody can see it — try again.')
+  if (relaysOk === 0) {
+    pool.close(RELAYS)
+    throw new Error('No relay accepted the listing. It is signed but nobody can see it — try again.')
+  }
+
+  // --- 5. M1: send the ladder to the watcher over a relay ----------------------------------
+  // AFTER the listing, and only if the listing landed. The two failure orders are not symmetric: a
+  // ladder on the relays for a listing that was never published is a watcher holding rungs for an
+  // item nobody can see, while a listing with no ladder yet is exactly the state every publish
+  // before M1 left behind, and the seller still has the download. So this runs last, and its
+  // failure is REPORTED rather than thrown: the listing is already on the relays and throwing here
+  // would tell the seller their publish failed when the irreversible half of it succeeded.
+  //
+  // It replaces on (kind, pubkey, `d`) like any addressable event, which is what makes an edit
+  // self-healing: the new ladder lands under the same `d` and the watcher's next update carries it.
+  // That includes "mark sold", where the new ladder has zero rungs and correctly tells the watcher
+  // there is nothing left to publish for this item.
+  const rung = { units: unitsOf(String(draft.stock)), noffer, steps }
+  let ladderRelaysOk: number | null = null
+  if (watcher) {
+    onStep({ kind: 'sign', text: 'Signing the ladder for your watcher…', done: 0, total: 1 })
+    try {
+      ladderRelaysOk = await publishLadder(signer, watcher, d, rung, pool, RELAYS)
+    } catch {
+      ladderRelaysOk = 0 // the seller is told, and the download is still the fallback
+    }
+  }
+  pool.close(RELAYS)
 
   onStep({ kind: 'done', text: `Published to ${relaysOk}/${RELAYS.length} relays.` })
 
@@ -176,7 +212,8 @@ export const publish = async (
     noffer,
     listing,
     relaysOk,
-    ladder: { [d]: { units: unitsOf(String(draft.stock)), noffer, steps } },
+    ladderRelaysOk,
+    ladder: { [d]: rung },
   }
 }
 

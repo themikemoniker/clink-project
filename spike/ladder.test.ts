@@ -213,6 +213,13 @@ test('M1: a corrupt or oversized payload reads as NO ladder rather than throwing
     '{}', // no units, no steps
     JSON.stringify({ units: 1 }), // no steps
     JSON.stringify({ units: 1.5, steps: [] }),
+    // A field of the WRONG TYPE, not merely the wrong value. These two do NOT bite: measured
+    // 2026-09-25, `Number.isSafeInteger` already rejects a string, so removing the `typeof` guards
+    // beside it changes no outcome here. They are kept as regression documentation, and they are
+    // recorded as not-biting rather than presented as the thing that caught the cast — what caught
+    // that was `tsc` in /builder.
+    JSON.stringify({ units: '1', steps: [] }),
+    JSON.stringify({ units: 1, steps: [{ id: 'x', pubkey: 'p', sig: 'y', kind: 30402, created_at: 'soon', tags: [], content: '' }] }),
     JSON.stringify({ units: -1, steps: [] }),
     JSON.stringify({ units: 100_000, steps: [] }), // over MAX_STEPS
     JSON.stringify({ units: 0, steps: {} }), // steps not an array

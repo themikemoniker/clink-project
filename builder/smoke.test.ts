@@ -14,6 +14,7 @@ import { extname, join, normalize } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { type Browser } from 'playwright'
+import * as nip19 from 'nostr-tools/nip19'
 import { installNip07Stub, installRelayStub, launchChromium } from '../storefront/smoke-browser.ts'
 import { build } from 'vite'
 
@@ -344,6 +345,59 @@ test('editing the fiat listing calls the real showFiat, which the two tests abov
   assert.equal(await page.locator('#price').isDisabled(), true)
   assert.equal(await page.locator('#price-sats').isVisible(), false)
 
+  assert.deepEqual(errors, [])
+  await page.close()
+})
+
+// --- M1's watcher field (2026-09-25) ---------------------------------------------------------
+//
+// New markup, and one claim that is only true in a browser: the signature count the seller is
+// shown has to change the moment a watcher key is accepted, because from then on every publish
+// signs one more event. `watcher.test.ts` proves `approvalCount` does the arithmetic; this proves
+// the page actually reruns it and repaints, which is the half a unit test cannot reach.
+
+test('M1: the watcher field starts empty and says what that costs', async () => {
+  const { page } = await open()
+  assert.equal(await page.locator('#watcher-input').inputValue(), '')
+  assert.match((await page.locator('#watcher-state').textContent()) ?? '', /No watcher/)
+  // The honest version of "optional": it still works, you just carry the file.
+  assert.match((await page.locator('#watcher-state').textContent()) ?? '', /by hand/)
+  // And the cost line does not yet mention a ladder for anybody.
+  assert.doesNotMatch((await page.locator('#cost').textContent()) ?? '', /ladder for your watcher/)
+  await page.close()
+})
+
+test('M1: a paste that is not an npub is refused in the page, not just in the parser', async () => {
+  const { page, errors } = await open()
+  await page.locator('#watcher-input').fill('npub1definitelynotakey')
+  await page.locator('#watcher-input').dispatchEvent('change')
+  const state = (await page.locator('#watcher-state').textContent()) ?? ''
+  assert.match(state, /not an npub/)
+  // The reason is in the copy, because a refusal with no explanation is its own defect. It has to
+  // say why hex is not accepted either, or the seller's next move is to paste hex.
+  assert.match(state, /checksum/)
+  assert.doesNotMatch((await page.locator('#cost').textContent()) ?? '', /ladder for your watcher/)
+  assert.deepEqual(errors, [])
+  await page.close()
+})
+
+test('M1: accepting a watcher key repaints the signature count, which is what the seller reads', async () => {
+  const { page, errors } = await open()
+  // A real npub, generated in the test rather than pasted from anywhere: its checksum has to be
+  // valid or the field refuses it, which is the point of the field.
+  const npub = nip19.npubEncode(SELLER)
+
+  const before = (await page.locator('#cost').textContent()) ?? ''
+  await page.locator('#watcher-input').fill(npub)
+  await page.locator('#watcher-input').dispatchEvent('change')
+
+  assert.match((await page.locator('#watcher-state').textContent()) ?? '', /Watcher npub1/)
+  const after = (await page.locator('#cost').textContent()) ?? ''
+  assert.match(after, /1 ladder for your watcher/)
+  assert.notEqual(after, before, 'the count the seller is shown has to move when the cost moves')
+  // And the number itself went up by exactly one, read off the page rather than recomputed.
+  const count = (text: string) => Number(/^(\d+) signature/.exec(text)?.[1])
+  assert.equal(count(after), count(before) + 1)
   assert.deepEqual(errors, [])
   await page.close()
 })

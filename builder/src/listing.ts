@@ -205,8 +205,20 @@ export const eventsToSign = (
  * uploads nothing — the blobs are already on Blossom and slice 6's `admin.ts` rebuilds their
  * descriptors from the URLs — so it passes 0 and the count stops over-stating the cost by three.
  */
-export const approvalCount = (draft: Draft, mintOffer: boolean, uploads = draft.blobs.length): number =>
+export const approvalCount = (
+  draft: Draft,
+  mintOffer: boolean,
+  uploads = draft.blobs.length,
+  publishesLadder = false,
+): number =>
   uploads + // one kind 24242 per blob — NEVER batch them (findings §9)
+  // M1. The ladder now travels to the watcher as a kind 30078, which is one more signature, and it
+  // is only signed when a watcher pubkey is configured. `publishLadder` is called from exactly one
+  // place under exactly this condition, and `main.ts` reads the same module-level `watcher` for
+  // both this count and that call, so the two cannot disagree. Defaulting to false rather than
+  // true is the safe direction for the older callers: it under-promises the cost of a publish that
+  // is not happening, rather than showing a seller a signature they will never be asked for.
+  (publishesLadder ? 1 : 0) +
   // A fiat item never mints, whatever the caller asked for. The number this shows and the number
   // publish.ts actually signs have to be the same one, and enforcing it in both places rather
   // than trusting the call sites is the cheaper half of "unpayable" being a property.
