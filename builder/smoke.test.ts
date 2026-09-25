@@ -13,7 +13,8 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { chromium, type Browser } from 'playwright'
+import { type Browser } from 'playwright'
+import { launchChromium } from '../storefront/smoke-browser.ts'
 import { build } from 'vite'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
@@ -49,7 +50,7 @@ before(async () => {
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
   const addr = server.address()
   origin = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`
-  browser = await chromium.launch()
+  browser = await launchChromium()
 })
 
 after(async () => {

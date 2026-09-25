@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "node --test src/*.test.ts smoke.test.ts",
+    "test": "node --test src/*.test.ts *.test.ts",
     "size": "npm run build && find dist/assets -name '*.js' -o -name '*.css' | xargs -I{} sh -c 'printf \"%-40s %6s raw %6s gzip\\n\" {} $(wc -c <{}) $(gzip -9 -c {} | wc -c)'"
   },
   "dependencies": {
