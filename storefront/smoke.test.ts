@@ -22,7 +22,7 @@ import { extname, join, normalize } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { type Browser } from 'playwright'
-import { launchChromium } from './smoke-browser.ts'
+import { installRelayStub, launchChromium } from './smoke-browser.ts'
 import { build } from 'vite'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
@@ -82,51 +82,7 @@ const open = async (hash = '') => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on('pageerror', e => errors.push(e.message))
-  await page.addInitScript((evs: unknown[]) => {
-    class FakeWebSocket {
-      static CONNECTING = 0
-      static OPEN = 1
-      static CLOSING = 2
-      static CLOSED = 3
-      readyState = 0
-      onopen: ((e: unknown) => void) | null = null
-      onmessage: ((e: { data: string }) => void) | null = null
-      onerror: ((e: unknown) => void) | null = null
-      onclose: ((e: unknown) => void) | null = null
-      url: string
-      constructor(url: string) {
-        this.url = url
-        setTimeout(() => {
-          this.readyState = 1
-          this.onopen?.({})
-        }, 0)
-      }
-      send(raw: string) {
-        let msg: unknown[]
-        try {
-          msg = JSON.parse(raw)
-        } catch {
-          return
-        }
-        if (msg[0] !== 'REQ') return
-        const sub = msg[1]
-        setTimeout(() => {
-          if (this.readyState !== 1) return
-          for (const ev of evs) this.onmessage?.({ data: JSON.stringify(['EVENT', sub, ev]) })
-          this.onmessage?.({ data: JSON.stringify(['EOSE', sub]) })
-        }, 0)
-      }
-      close() {
-        if (this.readyState === 3) return
-        this.readyState = 3
-        this.onclose?.({ code: 1000, reason: '', wasClean: true })
-      }
-      addEventListener() {}
-      removeEventListener() {}
-    }
-    // @ts-expect-error replacing the browser global on purpose
-    window.WebSocket = FakeWebSocket
-  }, events)
+  await installRelayStub(page, events)
   await page.goto(`${origin}/?seller=${SELLER}${hash}`)
   await page.waitForSelector('main', { timeout: 15_000 })
   return { page, errors }

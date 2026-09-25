@@ -14,7 +14,7 @@ import { extname, join, normalize } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { type Browser } from 'playwright'
-import { launchChromium } from '../storefront/smoke-browser.ts'
+import { installNip07Stub, installRelayStub, launchChromium } from '../storefront/smoke-browser.ts'
 import { build } from 'vite'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
@@ -32,8 +32,17 @@ let server: Server
 let browser: Browser
 let origin: string
 
+// The seller whose signed listings `storefront/smoke-fixture.json` carries, and whose kind 30405
+// every item's `d` is prefixed with. It has to be THIS pubkey: `draftFrom` measures each item's
+// `d` against the sale's, so a stub answering with a different key renders a panel with no Edit
+// button at all and the test below would pass its way to a wrong conclusion.
+const SELLER = 'fb18e881362a772e1bff2fc260a5ff47cb01d3fa7a254349948603774cdb47a0'
+const FIAT_ITEM = 'Records, jazz and salsa' // yardsale-2026-08-records, 80 MXN
+let events: unknown[]
+
 before(async () => {
   await build({ root: here, logLevel: 'error' })
+  events = JSON.parse(await readFile(join(here, '..', 'storefront', 'smoke-fixture.json'), 'utf8'))
   server = createServer((req, res) => {
     const path = normalize(new URL(req.url ?? '/', 'http://x').pathname).replace(/^(\.\.[/\\])+/, '')
     const file = join(dist, path === '/' ? 'index.html' : path)
@@ -64,6 +73,34 @@ const open = async () => {
   page.on('pageerror', e => errors.push(e.message))
   await page.goto(`${origin}/`)
   await page.waitForSelector('main', { timeout: 15_000 })
+  return { page, errors }
+}
+
+/**
+ * The page with a signer and the relays answered, which is the state every panel path needs.
+ *
+ * `open()` above is the cold page and stays that way: it is what a seller first sees and it is
+ * worth asserting on its own. This one is the other half. The signer is a stub that signs nothing
+ * (`installNip07Stub`) and the four-relay read is answered from the storefront's captured fixture,
+ * so nothing here reaches a relay, a node or a key, and `npm test` stays offline and free of side
+ * effects.
+ *
+ * It is NOT item 7. Item 7 is a real extension holding the real seller key, and the prompt count
+ * it exists to measure cannot appear here by construction. What this reaches is the markup and the
+ * wiring behind the signer gate, which is the part that has never rendered in any test.
+ */
+const openPanel = async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(e.message))
+  await installRelayStub(page, events)
+  await installNip07Stub(page, SELLER)
+  await page.goto(`${origin}/`)
+  await page.waitForSelector('main', { timeout: 15_000 })
+  await page.locator('#nip07').click()
+  // `loadPanel` is what fills this, and it only resolves once the read has finished and
+  // `renderItems` has run. Waiting on the list rather than on a timeout.
+  await page.waitForSelector('#items li', { timeout: 15_000 })
   return { page, errors }
 }
 
@@ -272,6 +309,40 @@ test('switched into a currency, the row paints it and the form still submits', a
 
   assert.equal(validWhenDisabled, true, 'disabling the sats field should take it out of validation')
   assert.equal(validWhenHiddenAndRequired, false, 'a hidden required field still blocks submit — this is why disabled')
+
+  assert.deepEqual(errors, [])
+  await page.close()
+})
+
+test('editing the fiat listing calls the real showFiat, which the two tests above only imitate', async () => {
+  // THE ROW THIS CLOSES (docs/known-defects.md, the 2026-08-27 review): the two tests above drive
+  // `page.evaluate` to set the same attributes `showFiat` sets, so they prove the browser
+  // behaviour they claim and prove nothing about whether `showFiat` still does that. They would
+  // keep passing through a regression in the function they are named after, which is the failure
+  // mode item 8 exists to prevent, one level up.
+  //
+  // So this one touches none of those attributes. It clicks the page's own Edit button on the one
+  // fiat listing in the fixture and asserts what the page did, which reaches `editItem` ->
+  // `showFiat(draft.fiat)` for real. The row said the real edit path "needs a signer and a
+  // four-relay read. Neither is available on the machine that found this" — both are stubbed now.
+  const { page, errors } = await openPanel()
+
+  // Before: the cold defaults, so a pass below cannot be the initial state.
+  assert.equal(await page.locator('#price-fiat').isVisible(), false)
+  assert.equal(await page.locator('#price').isDisabled(), false)
+
+  await page.locator(`#items li:has(strong:text-is("${FIAT_ITEM}")) button:text-is("Edit")`).click()
+
+  // Every one of these is `showFiat`'s doing, read off the listing's own `["price","80","MXN"]`.
+  assert.equal(await page.locator('#price-fiat').isVisible(), true)
+  assert.equal(await page.locator('#price-fiat-note').isVisible(), true)
+  assert.equal(await page.locator('#price-fiat-currency').textContent(), 'MXN')
+  assert.equal(await page.locator('#price-fiat-amount').inputValue(), '80')
+  assert.equal(await page.locator('#price-fiat-amount').isDisabled(), false)
+  // And the sats field is disabled rather than merely hidden, which is the claim the two tests
+  // above assert the browser half of. This is the half that says main.ts still makes it true.
+  assert.equal(await page.locator('#price').isDisabled(), true)
+  assert.equal(await page.locator('#price-sats').isVisible(), false)
 
   assert.deepEqual(errors, [])
   await page.close()
