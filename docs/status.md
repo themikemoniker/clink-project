@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-09-25**, after a cloud session that closed the last two ledger rows and found that this file's two-machine model has a third case in it. **Read "THE THIRD MACHINE" below before you trust any reachability claim here.** The paragraphs below that are from **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
+Last updated: **2026-09-25**, after a cloud session that built **M1** (the ladder travels over a relay; spec §9.5, and its relay round trip is UNRUN because a container denies the relays), closed the last two ledger rows, and found that this file's two-machine model has a third case in it. **Read "THE THIRD MACHINE" below before you trust any reachability claim here.** The paragraphs below that are from **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
 
 **READ THIS PARAGRAPH BEFORE ACTING ON ANYTHING BELOW.** Milestone A landed as ten commits
 (`ac87512`..`a934056`) and then a review of that branch found **five defects it had introduced**,
@@ -75,6 +75,23 @@ produced **32,221** gzip storefront (against the 32,140 recorded on 2026-08-27) 
 builder (against 59.49). Headroom is **779 bytes against 33,000 on this toolchain, not 860**.
 Measure on the machine you are on, do not carry a number over, and see spec §9.4 before concluding
 that some change cost 81 bytes.
+
+### M1 changed how a ladder reaches the watcher (2026-09-25)
+
+`node watch-sales.ts` generates `spike/.watcher-key` on first run and prints its npub every run.
+**Paste that npub into the builder's "Watcher key" field, section 2.** From then on every item you
+publish also sends that item's ladder to that key, NIP-44 encrypted inside a kind 30078, and the
+watcher reads it off the relays and re-reads whenever one is replaced. No file copy, no daemon
+restart, and a second device works because the watcher DISCOVERS ladders by querying the seller's
+own 30078s rather than reading a fixed list.
+
+`.ladder.json` is now the cold-start fallback rather than the only route, and it is no longer
+required to start. Keep it. A failed relay read falls back to it and says so loudly, because "the
+relay is down" must not read as "your ladder is stale".
+
+**What is unproven:** the four-relay round trip (`node spike/check-ladder-relay.ts`, no key needed,
+denied in a container), publishing a ladder as the real seller, and the live watcher picking one up
+mid-sale. Item 11 is still needed: M1 makes a stale ladder heal itself, not detectable.
 
 ### THE SECOND MACHINE: read this before you plan anything (added 2026-08-25)
 
@@ -286,7 +303,7 @@ npm run dev         # http://localhost:5173
 
 # the money path, against the running node
 cd spike
-npm test                               # 52 tests, node --test — the ladder and the refund journal
+npm test                               # 58 tests, node --test — the ladder and the refund journal
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
 node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
                                        # --pay REFUSES without --pointer as of slice 8: a settled

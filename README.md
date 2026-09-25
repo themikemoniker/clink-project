@@ -244,7 +244,7 @@ made, not duration.
 |---|---|---|---|
 | **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
 | **B** | Nothing on the critical path is unexecuted | ~~8~~, 6, 7 | ⚑ (**8 done 2026-08-25**); 6 and 7 both need the machine with the node and the key |
-| **C** | A sale you can change from your phone | M1, 11, M2, **M3 (delete only)** | **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
+| **C** | A sale you can change from your phone | ~~M1~~, 11, M2, **M3 (delete only)** | **M1 built 2026-09-25** (its relay round trip is unrun: `check-ladder-relay.ts` needs relay access); **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
 | **D** | Runs unattended for a weekend | ~~13~~, 12, 14 | **13 closed 2026-08-26**, its last bullet with it |
 | **E** | A stranger can set it up | ~~16~~, ~~18~~, 15, 17, 19, 26, **27 (buy side only)** | ⚑ (**16 done 2026-08-25**, and 17's `noBuyReason` half with it; **18 done 2026-08-26**, and its premise was wrong); **27's first bullet done 2026-08-26** — what is left of 27 is a decision, not a fix |
 | **F** | The seller can see their own business | M4, M5 | liftable earlier |
@@ -585,6 +585,18 @@ defects, so D protects against *unknown* bad days — a process dying, a relay l
 rarer than "the seller needs to restock the mugs", which happens continuously during a live sale
 and today costs a file copy and a daemon restart every single time. M1 also reshapes items 11 and
 12, so building D first means building parts of it twice.
+
+**~~M1. The ladder has to travel over a relay, not a USB stick~~ BUILT 2026-09-25**
+Every bullet below landed as described, with one deviation and three findings recorded in
+spec §9.5. The deviation: `ladderD` takes the item's whole `d` rather than `(saleD, slug)`, which
+produces the same string and stops the watcher re-splitting a `d` it only ever has whole. The
+watcher generates `.watcher-key` on first run and prints its npub; the builder has a "Watcher key"
+field in section 2 that accepts an npub and refuses hex, because hex has no checksum and a
+mistyped key would encrypt ladders to nobody, silently. `approvalCount` grew by one, asserted.
+**What is NOT proven:** the four-relay round trip (`node spike/check-ladder-relay.ts`, which needs
+no key but does need relay access), publishing a ladder as the real seller, and the live watcher
+picking one up mid-sale. Item 11 is next and still needed: M1 makes a stale ladder heal itself,
+not detectable.
 
 **M1. The ladder has to travel over a relay, not a USB stick**
 Today every edit — and restock *is* an edit — ends at `builder/src/main.ts:366`: *"Save it as
