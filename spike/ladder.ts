@@ -94,3 +94,190 @@ export const nofferOf = (
   fallback?: string,
 ): string | undefined =>
   rung.noffer ?? rung.steps.flatMap(step => step.tags).find(t => t[0] === 'clink_offer')?.[1] ?? fallback
+
+// --- M1: the ladder travels over a relay instead of a USB stick (2026-09-25) -------------------
+//
+// Everything above is slice 3 and is about WHAT the watcher publishes. This is about how the
+// ladder REACHES it, and it exists because every edit used to end at `builder/src/main.ts:366`
+// telling the seller to save `.ladder.json` next to `watch-sales.ts` and restart the watcher.
+// Restock is an edit, so that was every restock during a live sale. Miss the step and either
+// `isStale` above refuses to watch the item, or the watcher publishes rungs the relay silently
+// drops and the item stays on sale after it sold.
+//
+// THE RUNGS ARE NOT PUBLISHED RAW. They are signed public kind 30402s, so publishing them would
+// immediately advertise the lowest stock on every item, and `publish.ts` already says the rungs
+// exist "for the watcher and nowhere else". They are wrapped: NIP-44 inside a kind 30078, the
+// shape `builder/src/notes.ts` already uses for private notes.
+//
+// ENCRYPTED TO THE WATCHER'S PUBKEY, NOT TO THE SELLER'S OWN KEY, and that is the one thing that
+// differs from `notes.ts`. Notes are encrypt-to-self because only the seller's browser ever reads
+// them. Here the WATCHER decrypts, and only a holder of the seller's private key can open a
+// self-encrypted payload. `watch-sales.ts:115` holds one today purely because the fixture seller
+// and the node account are one identity, which spec §12 says should be a separate key "where
+// possible"; encrypting to self would turn that coincidence into a permanent requirement. So the
+// recipient is a third key, `spike/.watcher-key`, which owns nothing, spends nothing and signs
+// nothing. Its only power is decrypting ladders.
+//
+// WHAT THIS DOES NOT DO, said plainly because the project makes a nearby claim that must not blur:
+// it does NOT make the watcher keyless. `.dev-key` is still the node observe credential. What
+// slice 3 guarantees is narrower and is unchanged: the watcher signs no LISTING.
+//
+// THE TRUST CHAIN IS THREE LAYERS AND THE THIRD ALREADY EXISTS. The query filters
+// `authors: [SELLER]` and nostr-tools verifies signatures, so only the seller's own 30078s arrive.
+// NIP-44 decryption with (watcher private, seller public) succeeds only if the seller encrypted
+// it. And `stepFor` in `watch-sales.ts` still verifies every rung independently before publishing
+// it, under "Never publish an event on the strength of where it was loaded from." So the transport
+// change costs no new trust work at the publish moment. The genuinely new surface is the bounded
+// parse of the decrypted plaintext below, and `notes.ts` `parseNotes` is the pattern it copies:
+// cap the plaintext, cap the entry count, cap each field, never throw, read a corrupt payload as
+// no ladder.
+
+/** NIP-78 addressable application data, the same kind `notes.ts` uses. */
+export const LADDER_KIND = 30078
+
+/**
+ * The `d` tag for one item's ladder.
+ *
+ * ONE EVENT PER ITEM, not one for the whole shop, and that was settled by measurement rather than
+ * preference (spec §9.5, reproduced from `spike/merida-fixture.ts`): the whole-shop ladder for an
+ * 8-item sale is 57,741 bytes with photos, **88.1% of NIP-44's 65,535-byte plaintext ceiling**,
+ * and the mean per item puts the ceiling at about 9 items, which is the same number the flyer
+ * holds (design.md §3). Per item the fattest real item is `jabon` at 19,906 bytes, 30% of the
+ * ceiling, so this leaves roughly 3.3x headroom on the worst case. The binding cap is NIP-44's
+ * plaintext ceiling and not a relay's event size limit, which was measured 2026-08-23 at 131,072
+ * on nos.lol and about a million on damus and primal.
+ *
+ * THE PREFIX COLLIDES WITH NEITHER of the two things that own names on this kind. CLINK Beacon
+ * reserves `clink-*` (clink-beacon.md:195, via /docs/clink-notes.md §6) and the running
+ * Lightning.Pub still publishes a legacy `d = "Lightning.Pub"` (`nostrPool.ts:53`); `notes.ts`
+ * takes `lamppost-shop`.
+ *
+ * It takes the item's whole `d` rather than `(saleD, slug)`, which is a deviation from the M1
+ * brief's table and is the same string either way: `builder/src/sale.ts:77` is
+ * `listingD = (saleD, slug) => \`${saleD}-${slug}\``, and the watcher only ever has a `d` whole —
+ * its ladder file is keyed by it. A two-argument version would make the watcher re-split a string
+ * it never split, on a separator that lives in a file it cannot import.
+ */
+export const ladderD = (listingD: string): string => `lamppost-ladder-${listingD}`
+
+/** One item's ladder: exactly `builder/src/publish.ts`'s `LadderFile` entry, unchanged. */
+export type Rung = { units: number; noffer?: string; steps: LadderStep[] }
+
+/**
+ * A rung as it survives the bounded parse: structurally an event, semantically unjudged.
+ *
+ * Deliberately NOT `nostr-tools`' `Event`. Asserting that here would be a claim this parse cannot
+ * make: nothing below checks a signature. `stepFor` is what verifies a rung, and it re-parses
+ * stock and status out of the tags rather than trusting an index, so the authority stays in one
+ * place and this type stays honest about being shaped rather than trusted.
+ */
+export type LadderStep = {
+  id: string
+  pubkey: string
+  sig: string
+  kind: number
+  created_at: number
+  tags: string[][]
+  content: string
+}
+
+// Bounds on a payload that decrypted, because "the seller wrote it" is only true until a relay
+// hands us something that decrypts. MAX_PLAINTEXT is NIP-44's own plaintext ceiling, so anything
+// over it could not have been a NIP-44 payload in the first place. MAX_STEPS follows the stock
+// bound the builder already enforces (`builder/src/main.ts`: 0 to 999), plus one; the plaintext
+// cap binds long before it on any real item, and it is here so a malformed `steps` cannot make us
+// walk a million-element array before the size check would have caught it.
+const MAX_PLAINTEXT = 65_535
+const MAX_STEPS = 1_000
+const MAX_TAGS = 100
+const MAX_NOFFER = 2_000
+const MAX_CONTENT = 8_000
+
+const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
+
+/**
+ * Bounded parse of one decrypted ladder payload. Never throws; anything wrong reads as no ladder.
+ *
+ * Returning null rather than throwing is the same choice `parseNotes` makes and it matters more
+ * here: this runs inside the watcher's tick, and a throw would take down the process that is the
+ * only thing republishing stock. A corrupt ladder must cost exactly one unwatched item, named in
+ * the startup report, and nothing else.
+ */
+export const parseLadder = (plaintext: unknown): Rung | null => {
+  if (typeof plaintext !== 'string' || plaintext.length > MAX_PLAINTEXT) return null
+  let value: unknown
+  try {
+    value = JSON.parse(plaintext)
+  } catch {
+    return null
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Record<string, unknown>
+
+  // `units` decides which rung `stepFor` reaches for (`rung.steps[rung.units - target - 1]`), so a
+  // float or a negative here would index into nothing and throw there instead of here.
+  const { units, noffer, steps } = raw
+  if (!Number.isSafeInteger(units) || (units as number) < 0 || (units as number) > MAX_STEPS) return null
+  if (noffer !== undefined && (typeof noffer !== 'string' || noffer.length > MAX_NOFFER)) return null
+  if (!Array.isArray(steps) || steps.length > MAX_STEPS) return null
+
+  const out: LadderStep[] = []
+  for (const step of steps) {
+    if (!step || typeof step !== 'object' || Array.isArray(step)) return null
+    const s = step as Record<string, unknown>
+    // `pubkey` is not optional and forgetting it is not cosmetic: `stepFor` re-verifies every
+    // rung through `parseListings`, which cannot check a signature without it. A parse that
+    // dropped it would hand the watcher rungs that fail verification on every tick, which is a
+    // ladder that silently never publishes. Found by this file's own round-trip test.
+    if (typeof s.id !== 'string' || typeof s.pubkey !== 'string' || typeof s.sig !== 'string') return null
+    if (typeof s.kind !== 'number' || !Number.isSafeInteger(s.kind)) return null
+    if (!Number.isSafeInteger(s.created_at)) return null
+    if (typeof s.content !== 'string' || s.content.length > MAX_CONTENT) return null
+    if (!Array.isArray(s.tags) || s.tags.length > MAX_TAGS || !s.tags.every(isStringArray)) return null
+    out.push({
+      id: s.id,
+      pubkey: s.pubkey,
+      sig: s.sig,
+      kind: s.kind,
+      created_at: s.created_at,
+      tags: s.tags as string[][],
+      content: s.content,
+    })
+  }
+  // A ladder whose step count disagrees with its own `units` is the shape `stepFor` would throw
+  // on, one tick at a time, for the rest of the sale. Refuse it once, here.
+  if (out.length !== units) return null
+  return { units: units as number, noffer: noffer as string | undefined, steps: out }
+}
+
+/** Where a watched item's ladder came from, and whether the choice was made blind. */
+export type LadderChoice = { rung: Rung | null; source: 'relay' | 'file' | 'none'; degraded: boolean }
+
+/**
+ * Precedence, per item: the relay wins when it decrypts, the file is the cold-start fallback.
+ *
+ * Pure, and separate from every relay call, because the branch that matters most cannot be
+ * arranged on demand: `relayFailed` is the case `watch-sales.ts:204` already writes the rule for —
+ * *"the relay is down" must not read as "your ladder is stale"*. The remedy for one is waiting and
+ * the remedy for the other is re-publishing, so conflating them sends the seller to fix the wrong
+ * thing. Hence `degraded`, which is what makes the warning loud rather than a log line.
+ *
+ * KEEP THE FILE. Do not delete it. It is what a watcher starts from when the relays are
+ * unreachable, and M1 removes the copy-and-restart rather than the file.
+ *
+ * The contradictory input is handled rather than assumed away: a failed read that nonetheless
+ * produced a decrypted ladder yields an authentic rung (NIP-44 with the seller's pubkey is what
+ * authenticated it), but the read may have been partial, so the file still wins when there is one
+ * and the relay's copy is used only when there is not. Either way `degraded` is true, because
+ * nothing here knows how much of the read was missing.
+ */
+export const chooseLadder = (relay: Rung | null, file: Rung | null, relayFailed: boolean): LadderChoice => {
+  if (relayFailed) {
+    if (file) return { rung: file, source: 'file', degraded: true }
+    if (relay) return { rung: relay, source: 'relay', degraded: true }
+    return { rung: null, source: 'none', degraded: true }
+  }
+  if (relay) return { rung: relay, source: 'relay', degraded: false }
+  if (file) return { rung: file, source: 'file', degraded: false }
+  return { rung: null, source: 'none', degraded: false }
+}

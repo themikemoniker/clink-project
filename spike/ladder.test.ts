@@ -9,7 +9,18 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools/pure'
 import { parseListings } from '../storefront/src/listing.ts'
-import { atStock, isStale, nofferOf, targetStock, unitsOf } from './ladder.ts'
+import * as nip44 from 'nostr-tools/nip44'
+import {
+  atStock,
+  chooseLadder,
+  isStale,
+  ladderD,
+  nofferOf,
+  parseLadder,
+  targetStock,
+  unitsOf,
+  type Rung,
+} from './ladder.ts'
 
 const sk = generateSecretKey()
 const PK = getPublicKey(sk)
@@ -142,4 +153,137 @@ test('a one-of-a-kind item is watchable, which is the case inference used to los
   // The file wins over the tag: an edit that re-priced the item re-minted the offer, and the
   // freshly cut ladder is the one that knows which offer the new listing actually points at.
   assert.equal(nofferOf({ noffer: ON_FILE, steps: three }), ON_FILE)
+})
+
+// --- M1: the ladder over a relay (2026-09-25) --------------------------------------------------
+//
+// What is provable offline is the `d` scheme, every bound on a payload that decrypted, every
+// branch of the precedence rule, and that a real NIP-44 round trip between two ephemeral keys
+// survives the parse. What is NOT provable here is the four-relay round trip, which is
+// `check-ladder-relay.ts` on demand, and publishing a ladder as the real seller, which needs the
+// keyed machine.
+//
+// The keys below are generated per run and held only in memory, the same narrow rule-2 exception
+// the rest of this file already takes.
+
+test('M1: the ladder d is derived from the item d, and collides with neither reserved name', () => {
+  assert.equal(ladderD('yardsale-2026-08-lamp'), 'lamppost-ladder-yardsale-2026-08-lamp')
+  // `notes.ts` takes `lamppost-shop`; CLINK Beacon reserves `clink-*` on this kind
+  // (clink-beacon.md:195) and the running Pub publishes a legacy `Lightning.Pub`.
+  assert.equal(ladderD('x').startsWith('clink-'), false)
+  assert.notEqual(ladderD('x'), 'lamppost-shop')
+  assert.notEqual(ladderD('x'), 'Lightning.Pub')
+  // One event per item, so two items never share a d.
+  assert.notEqual(ladderD('yardsale-2026-08-lamp'), ladderD('yardsale-2026-08-mugs'))
+  // And two sales never share one either, which is what keeps M6 from colliding.
+  assert.notEqual(ladderD('yardsale-2026-09-lamp'), ladderD('yardsale-2026-08-lamp'))
+})
+
+// A ladder payload that is exactly what publish.ts writes, built from real signed rungs so the
+// parse is exercised against the shape it will actually meet rather than a hand-rolled object.
+const realRung = (units: number): { units: number; noffer: string; steps: Event[] } => ({
+  units,
+  noffer: NOFFER,
+  steps: Array.from({ length: units }, (_, i) =>
+    finalizeEvent({ kind: 30402, created_at: 1_700_000_000 + i + 1, tags: atStock(tags(String(units)), units - i - 1), content: '' }, sk),
+  ),
+})
+
+test('M1: a ladder payload publish.ts would write survives the parse unchanged', () => {
+  const rung = realRung(3)
+  const parsed = parseLadder(JSON.stringify(rung))
+  assert.ok(parsed)
+  assert.equal(parsed.units, 3)
+  assert.equal(parsed.noffer, NOFFER)
+  assert.equal(parsed.steps.length, 3)
+  // Same bytes on the relay as in the file, which is what makes precedence a straight swap and
+  // keeps there being one parser rather than two.
+  assert.deepEqual(JSON.parse(JSON.stringify(parsed)), JSON.parse(JSON.stringify(rung)))
+  // And the rungs still go through the real door afterwards: parseLadder asserts nothing about a
+  // signature, `stepFor` does, so a parsed step must still verify.
+  const verified = parseListings([parsed.steps[0] as unknown as Event], PK)[0]
+  assert.ok(verified, 'a parsed rung must still survive the storefront parser that stepFor uses')
+})
+
+test('M1: a corrupt or oversized payload reads as NO ladder rather than throwing', () => {
+  // Never throws: this runs inside the watcher's tick, and the watcher is the only thing
+  // republishing stock. A bad payload costs one unwatched item, not the process.
+  for (const bad of [
+    undefined, null, 42, '', 'not json', '[]', '"a string"', 'null',
+    '{}', // no units, no steps
+    JSON.stringify({ units: 1 }), // no steps
+    JSON.stringify({ units: 1.5, steps: [] }),
+    JSON.stringify({ units: -1, steps: [] }),
+    JSON.stringify({ units: 100_000, steps: [] }), // over MAX_STEPS
+    JSON.stringify({ units: 0, steps: {} }), // steps not an array
+    JSON.stringify({ units: 1, steps: [null] }),
+    JSON.stringify({ units: 1, steps: ['a string'] }),
+    JSON.stringify({ units: 1, steps: [{ id: 'x' }] }), // no sig
+    // A step with no `pubkey` is the defect this file's round-trip test caught in the first
+    // draft of `parseLadder`: without it `stepFor`'s verification cannot run at all.
+    JSON.stringify({ units: 1, steps: [{ id: 'x', sig: 'y', kind: 30402, created_at: 1, tags: [], content: '' }] }),
+    JSON.stringify({ units: 1, steps: [{ id: 'x', sig: 'y', kind: 30402, created_at: 1, tags: 'no', content: '' }] }),
+    JSON.stringify({ units: 1, steps: [{ id: 'x', sig: 'y', kind: 30402, created_at: 1, tags: [[1]], content: '' }] }),
+    JSON.stringify({ units: 1, steps: [{ id: 'x', sig: 'y', kind: 30402, created_at: 1.5, tags: [], content: '' }] }),
+    JSON.stringify({ ...realRung(1), noffer: 'n'.repeat(3_000) }),
+    'x'.repeat(65_536), // over NIP-44's own plaintext ceiling, so it was never a NIP-44 payload
+  ]) {
+    assert.equal(parseLadder(bad), null, `should refuse: ${String(bad).slice(0, 60)}`)
+  }
+})
+
+test('M1: a ladder whose step count disagrees with its own units is refused once, not every tick', () => {
+  // `stepFor` indexes `steps[units - target - 1]`. A disagreement here throws there instead, one
+  // tick at a time, for the rest of the sale. So it dies at the parse.
+  const rung = realRung(3)
+  assert.equal(parseLadder(JSON.stringify({ ...rung, units: 4 })), null)
+  assert.equal(parseLadder(JSON.stringify({ ...rung, steps: rung.steps.slice(0, 2) })), null)
+  // The honest zero case: no units, no rungs, and that parses fine. A stock-0 item is published
+  // sold and has no ladder to walk.
+  assert.deepEqual(parseLadder(JSON.stringify({ units: 0, steps: [] })), { units: 0, noffer: undefined, steps: [] })
+})
+
+test('M1: the ladder survives a real NIP-44 round trip to a DIFFERENT key', () => {
+  // The whole reason M1 needs a third key: the watcher decrypts, so encrypt-to-self would require
+  // the watcher to hold the seller's private key. Proven here with two separate keys rather than
+  // asserted: seller encrypts to watcher, watcher decrypts with (its own private, seller public).
+  const watcherSk = generateSecretKey()
+  const watcherPk = getPublicKey(watcherSk)
+  assert.notEqual(watcherPk, PK)
+
+  const rung = realRung(2)
+  const toWatcher = nip44.v2.utils.getConversationKey(sk, watcherPk)
+  const ciphertext = nip44.v2.encrypt(JSON.stringify(rung), toWatcher)
+
+  const atWatcher = nip44.v2.utils.getConversationKey(watcherSk, PK)
+  const parsed = parseLadder(nip44.v2.decrypt(ciphertext, atWatcher))
+  assert.ok(parsed)
+  assert.equal(parsed.steps.length, 2)
+  assert.equal(parsed.noffer, NOFFER)
+
+  // And a third party who is neither seller nor watcher cannot open it, which is what stops the
+  // rungs advertising the lowest stock on every item.
+  const strangerSk = generateSecretKey()
+  assert.throws(() => nip44.v2.decrypt(ciphertext, nip44.v2.utils.getConversationKey(strangerSk, PK)))
+})
+
+test('M1: precedence — the relay wins when it decrypts, the file is the cold-start fallback', () => {
+  const relay = realRung(3) as unknown as Rung
+  const file = realRung(1) as unknown as Rung
+
+  // The four rules from the design, in order.
+  assert.deepEqual(chooseLadder(relay, file, false), { rung: relay, source: 'relay', degraded: false })
+  assert.deepEqual(chooseLadder(null, file, false), { rung: file, source: 'file', degraded: false })
+  assert.deepEqual(chooseLadder(null, null, false), { rung: null, source: 'none', degraded: false })
+
+  // THE BRANCH THAT MATTERS. A failed read must not read as a stale ladder
+  // (`watch-sales.ts:204`), so the file wins and `degraded` is what makes it loud.
+  assert.deepEqual(chooseLadder(null, file, true), { rung: file, source: 'file', degraded: true })
+  // Even when the relay did produce something: the read may have been partial, and nothing here
+  // knows how much was missing.
+  assert.deepEqual(chooseLadder(relay, file, true), { rung: file, source: 'file', degraded: true })
+  // With no file at all, an authentic relay copy still beats not watching the item.
+  assert.deepEqual(chooseLadder(relay, null, true), { rung: relay, source: 'relay', degraded: true })
+  // And with neither, the item is not watched and is named in the startup report.
+  assert.deepEqual(chooseLadder(null, null, true), { rung: null, source: 'none', degraded: true })
 })
