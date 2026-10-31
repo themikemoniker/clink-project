@@ -1736,3 +1736,205 @@ invalidate.
     the same lesson as findings §13.11 ("a 200 is not evidence") pointed at our own output rather
     than at a server's.
 
+
+---
+
+## 14. The first real refund — item 6, paid 2026-08-25
+
+**`payDebit`'s `{"res":"ok"}` branch has executed on the wire.** Every debit driven before this
+was one the node refused (§13.29), which proves a cap and proves nothing about the happy path.
+This is the transcript, and it is the last thing milestone B's claim was waiting on.
+
+### What was decided before anything spent
+
+Two decisions were taken by the operator rather than defaulted, both recorded here because the
+next person will otherwise assume they were inherited:
+
+1. **The kill switch was proven first, and the grant re-armed after it.** `check-refund.ts` ends
+   by calling `ResetDebit` on purpose, so proving the switch destroys the live grant. The
+   alternative — arming a spend path whose off-switch is unexecuted code — was declined.
+2. **The frequency cap was re-cut from 8,000 to 2,000 sats/day.** Spec §12 had asked for this
+   twice and it had been inherited twice. The account was at 9,000 sats (8,946 payable) against
+   an 8,000/day rule, so the cap bound before the balance for the first time without anybody
+   choosing it. 2,000 admits the single 1,000-sat refund plus one retry and bounds a runaway at
+   two payments a day rather than eight. 1,000 was rejected for sitting exactly on
+   `checkFrequencyCap`'s boundary on a one-shot oversell.
+
+### The pointer, resolved free before the oversell existed
+
+```
+resolvePointer('<an address at coinos.io>', 1000)
+  -> { ok: true, invoiceSats: 1000, bolt11_chars: 396, ms: 785 }
+```
+
+785 ms, both LNURL hops, `invoiceSats` matching exactly. (§13.27's companion measurement on
+2026-08-24 was 1,540 ms against the same host — so the number is host latency, not a constant.)
+**The returned BOLT11 was deliberately not logged**: an LNURL-pay invoice's description metadata
+routinely carries `["text/identifier","name@host"]`, which is the buyer's pointer. Printing the
+invoice would defeat the same rule that keeps the pointer out of the journal.
+
+### The oversell, and the refund
+
+`mugs` was sold out 3/3, and a depleted offer stays payable (§13.17), so one more settlement is
+an oversell rather than a sale.
+
+```
+# yardsale-2026-08-mugs: OVERSOLD — 4 settled against 3 unit(s). Refund owed.
+# yardsale-2026-08-mugs: refunding 1000 sats to a Lightning address…
+#   REFUNDED 1000 sats.
+# 2026-08-25T16:43:35.121Z yardsale-2026-08-mugs: 4 sold -> stock 0 (SOLD), 3/4 relays
+```
+
+**Three independent witnesses, because the log line is not one:**
+
+| | |
+|---|---|
+| the journal | `state: "paid"`, `pointer: "address"`, `preimage: true`, `note: "the node acknowledged"` |
+| the node | `1 outgoing payment(s) — 2026-08-25T16:43:31.000Z 1000 OUTGOING_INVOICE-1` |
+| the balance | 10,000 → **8,990**: the 1,000 back, plus **10 sats of routing fee** |
+| the buyer | the wallet showed 1,000 sats received — confirmed by the operator |
+
+Not `pending`, not `queued`. **`paid`** is the only state that is the thing (spec §7.3), and the
+buyer's wallet is the half no script on this machine can see.
+
+**The journal leaks neither of the two values it must not.** Verified by grep rather than by
+reading the design doc: zero occurrences of the address or its host, and the two `lnbc` strings
+are both the *settled* invoice — our own node's, which carries no buyer identity — as the row key
+and as `invoice`. `pointer` is the kind and `preimage` is a boolean.
+
+### What this run also proved, for free
+
+- **Item 9's startup reconcile arms correctly from cold.** With no journal and zero outgoing
+  payments, `refuseToStart` evaluated false and the watcher armed, which is the path nothing had
+  ever taken because nothing had ever written a row. The *prompting* half is still unrun: it
+  needs a `pending` row, and this refund never produced one.
+- **The receipt path re-confirmed §5 on a second, independent payment.** Payload `{"res":"ok"}`,
+  no `preimage` (a MUST at `clink-offers.md:327-333` that the reference server skips), and
+  `clink_version` present on the receipt where §2 records it absent on the response.
+
+### 32. `check-buy.ts --pay` could not wait for a payment, because its timeout was `unref`'d
+
+Found by being the first thing to actually wait. `check-buy.ts:131` built the 15-minute window as
+`setTimeout(…).unref()` — a timer that explicitly declines to hold the event loop open — on the
+assumption that the relay subscription would hold it instead. It does not. The moment that socket
+went idle Node found nothing left to run and exited **13** with
+`Detected unsettled top-level await`, with `# waiting up to 15 minutes for the kind 21001 receipt…`
+printed directly above it.
+
+It survived slice 2 only because that payer was fast, which is the whole hazard: a race that is
+won every time until the one time it is not.
+
+**The number that makes it matter:** Lightning.Pub issues these invoices with a **900-second
+expiry** (`lncli decodepayreq` → `"expiry": "900"`), so the wait window and the invoice lifetime
+are the same fifteen minutes by design. A harness that dies at second zero of that window can
+never observe a settlement a human has to walk to a phone for. The first invoice of this session
+expired unpaid because of it.
+
+Fixed by dropping `.unref()`. **No unit test**: reproducing it needs a fifteen-minute wall clock
+and an idle WebSocket, which does not belong in an otherwise-offline suite — the same reasoning
+spec §12 records for the `ENOTFOUND` branch.
+
+### 33. Node state cannot remember a refund, so `sales-report.ts` reported one owed forever
+
+`sales-report.ts:187` derived its oversell from `settled > units`, both read from the node. The
+node stores **no link from a payment back to the sale that caused it** — the same fact
+`--outgoing` already prints as a caveat and `/docs/known-defects.md` records — so once that
+comparison is true it is true permanently, whatever was actually paid back. Four seconds after
+the refund above settled, the seller's only money-reporting tool said:
+
+```
+# OVERSOLD yardsale-2026-08-mugs: 4 settled against 3 unit(s). Refund owed.
+```
+
+It would have said it every day from then on. **This is the exact failure spec §7.3 refuses to
+ship when it declines to make `refund_pointer` optional** — *"a deliberate design choice would
+arrive at the seller's terminal disguised as an unresolved bug, forever"* — reached from the
+other direction, by a report rather than by a design.
+
+Fixed by reading `.refunds.json` and subtracting rows journalled `paid`, and by naming any
+`queued`/`pending`/`failed` rows separately, because those are three different things a human
+does three different things about. **It degrades in the safe direction**: an absent or unparseable
+journal falls back to the old warning and says why, rather than claiming a refund was paid
+because a file failed to open. Both branches were driven with the live journal moved aside and a
+verified copy in hand.
+
+### 34. The flyer's QR exists only in deployed bytes, and `withQR` fails silently without its marker
+
+Measured in a real browser on 2026-08-25 — the first time the `@media print` block had ever run.
+
+Slice 5 moved the QR encode from build time to **deploy time**: `builder/src/deploy.ts` `withQR`
+substitutes the `<!--QR-->` comment in `index.html` for a `<symbol id="qr">` on the way to
+Blossom, so the page ships no QR encoder. Correct, and `vite.config.ts:11-13` says so. The
+consequence nobody had looked at:
+
+```
+storefront/dist/index.html   raw <!--QR--> present, 0 × <symbol id="qr">
+in the browser, print media  8 tear-off tabs, 8 × <use href="#qr">, 0 symbols to resolve against
+```
+
+So **every tear-off tab renders an empty box in anything served from `dist/`**, which includes
+`vite preview` — and `shots/capture.ts` shoots `07-print-flyer.png` from exactly that, never
+injects the QR, and captions it *"QR included. The storefront QR is a build-time SVG symbol."*
+`shots/clink-yard-sale.pdf` was generated 2026-08-21 02:18, **four hours after** the commit that
+moved the encode (`c0463e0`, 2026-08-20 22:16). ⚑ Needs a human eye on page 8 of that PDF; it
+could not be rendered on this machine (no `poppler`, and installing was not asked for).
+
+Two code comments still assert the superseded answer and are the reason this took a browser to
+find: `storefront/index.html:12` and `storefront/src/render.ts:214`.
+
+**The seam worth guarding, and it is now asserted.** `withQR` opens
+`if (!html.includes('<!--QR-->')) return html`. Renaming or tidying that comment out of
+`index.html` fails no build, fails no deploy, logs nothing, and ships a flyer whose every QR is
+blank — permanently and silently. `shots/storefront.smoke.test.ts` asserts the marker or the
+symbol is present.
+
+### 35. `--revoke` on a key with no grant reports success on the second run
+
+Found while closing out the two branches of item 2's kill switch that `check-refund.ts` does not
+reach — `--npub`, and the `exit 1` when the node reports no grant. Both work. The behaviour
+underneath them is asymmetric in a way worth writing down:
+
+- `ResetDebit` (`--reset`) is idempotent. No grant, no row created, `exit 1`.
+- `BanDebit` (`--revoke`) **creates a banned row as a side effect** — it fails closed
+  (`debitStorage.ts:43-47`). So the first run correctly prints `THE NODE REPORTS NO GRANT FOR
+  THIS KEY` and exits 1; the row now exists, `ours.length` is no longer 0, and a **second run
+  prints `BANNED, and the node agrees` and exits 0.**
+
+Re-running a switch after a non-zero exit is the natural operator response, and what it gets is a
+success line about a grant that was never live. The end state is safe — no authority is granted
+either way — but the *report* is wrong, which is a milder relative of the exact defect item 2
+existed to fix. Caught only because the exit code was checked rather than the printed line: the
+first measurement of this session read `exit 0` and would have recorded a false pass.
+
+### 36. `withQR` is a first-occurrence replace, so a second marker is worse than none
+
+Found immediately after §34, by fixing §34 — which makes it the most useful thing in this section.
+
+The correction to `storefront/index.html` explained the marker's importance by **quoting it** in
+the comment above it. Two consequences, neither visible in the diff:
+
+- **HTML comments do not nest**, so the `-->` inside the quoted marker terminated the comment
+  early and the remaining prose leaked into `<body>` as text.
+- **The built page then carried the marker twice**, and `builder/src/deploy.ts` `withQR` ends in
+  `html.replace('<!--QR-->', …)`. `String.prototype.replace` with a **string** pattern substitutes
+  the **first** occurrence only. The first occurrence was now inside a comment, so a deploy would
+  have injected the `<symbol>` there and left the real marker untouched — a flyer with eight blank
+  tabs, produced by the act of documenting why the flyer must not have eight blank tabs.
+
+**The assertion written in item 8 did not catch it.** It tested `hasMarker || hasSymbol`, and with
+two markers `hasMarker` is true, so the suite stayed green through a live instance of exactly the
+failure it was written to prevent. It now asserts **at most one**, and that was verified the only
+way worth verifying it — by duplicating the marker on purpose, watching the assertion fail with
+the right message, and restoring:
+
+```
+2 copies of the QR marker in the page — withQR replaces only the first, so the <symbol>
+would be injected at the wrong one and every tear-off tab would still print blank
+```
+
+⇒ Two things worth carrying. **A guard that can only see absence cannot see duplication**, and
+those are different failures of the same seam. And **`String.replace` with a string pattern is a
+first-occurrence operation** — anywhere this codebase substitutes a unique marker, uniqueness is
+an assumption that nothing was checking. The seam was re-verified end to end after the fix: marker
+consumed, `<symbol id="qr">` present and outside the comment, +9,877 bytes (~2 KB gzip, which is
+where `/docs/status.md`'s 2.4 KB deployed-HTML figure comes from).

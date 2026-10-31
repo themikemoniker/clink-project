@@ -145,9 +145,20 @@ backup is actually for.
 | **Redo the work** | `.offers.json`, `.merida-key.offers.json`, `.nmanage`, `.merida-key.nmanage` | Which offer belongs to which item, and the Manage grant pointer. | `node mint-offers.ts` (idempotent, reuses by label) and `node authorize-manage.ts`. |
 | **Recreated by nothing** | `.refunds.json` | The **only** durable record of which oversells have been refunded. The node has no "already refunded" field and CLINK's `k1` is in memory with a five-minute TTL (findings §13.28). Losing it can pay a buyer twice. | Nothing recreates it. Item 9's startup reconcile is the mitigation and it is a prompt, not a recovery: `--refunds` now **refuses to start** when this file is absent and the node reports outgoing payments. |
 
-`.refunds.json` does not exist yet on this machine, because no refund has been paid. It appears
-the first time `watch-sales.ts --refunds` writes a row, and from that moment it is the most
-irreplaceable file in the project.
+~~`.refunds.json` does not exist yet on this machine, because no refund has been paid.~~
+**IT EXISTS AS OF 2026-08-25.** Item 6 refunded a real 1,000-sat oversell on
+`yardsale-2026-08-mugs`, and `watch-sales.ts --refunds` wrote the row that proves it —
+`state: paid`, `pointer: address`, `preimage: true`. From this moment it is **the most
+irreplaceable file in the project**, and two things follow immediately:
+
+- **Back it up more often than the rest of this archive.** Everything else in the tar can be
+  recreated by redoing work. This cannot be recreated by anything.
+- **Losing it is now a hard refusal, not a silent risk.** With the node reporting a non-zero
+  outgoing payment count, `--refunds` **will not start** without this file — correctly, because
+  starting would recompute an already-refunded oversell and pay it again. That refusal names the
+  way out, and the way out involves a human checking the node's outgoing payments by hand.
+
+First archive taken **2026-08-25**: `~/lamppost-backup-2026-08-25.tar.gz`, 13 files, `chmod 600`.
 
 ### Back up
 
@@ -161,9 +172,24 @@ tar -czf ~/lamppost-backup-$(date +%F).tar.gz   .builder-key .deploy-test-key .d
 chmod 600 ~/lamppost-backup-$(date +%F).tar.gz
 ```
 
-`.refunds.json` is listed through `ls` because it does not exist until the first refund, and
-`tar` fails the whole archive on a missing file. **When it does exist, back up more often than
-this**: everything else in the archive can be recreated by redoing work, and that one cannot.
+`.refunds.json` is listed through `ls` because it did not exist until the first refund, and `tar`
+fails the whole archive on a missing file. **It exists now** (2026-08-25), so it can be named
+directly on this machine — but leave the `ls` guard in for `.merida-key.refunds.json`, which
+still does not: the second seller has no refund grant and cannot be given one
+(`/docs/known-defects.md`).
+
+**Verify the archive rather than trusting a silent `tar`.** A backup nobody has opened is a
+hypothesis. This is the check that was actually run on 2026-08-25 and it takes one command:
+
+```bash
+A=~/lamppost-backup-$(date +%F).tar.gz
+tar -tzf $A                                    # 13 files expected
+tar -xzOf $A .refunds.json | cmp - spike/.refunds.json && echo "journal: byte-identical"
+```
+
+`cmp` against the live file is the point: `tar` exits 0 for an archive containing an empty or
+truncated journal just as happily as for a good one, and the journal is the member whose loss
+cannot be undone by redoing work.
 
 ⚑ **The one step this does not close.** `spike/.dev-key` is also backed up to
 `~/.lamppost-key-backup/dev-key-2026-08-21.hex`, and **that copy is on this machine only** — so a
@@ -213,7 +239,19 @@ the first. The two republishes are relay no-ops: the rungs were already the live
 
 ## 5a. The kill switch, and what changed on 2026-08-24
 
-This is the block somebody reads at 3am, so the short version first:
+**READ THIS ONE LINE FIRST, ADDED 2026-08-25: trust the exit code, not the success line.**
+Item 6 executed every branch of this switch for the first time, and found one that misreports.
+`--revoke` on a key the node has **no grant for** correctly says `THE NODE REPORTS NO GRANT FOR
+THIS KEY` and exits 1 — but `BanDebit` fails closed by *creating* a banned row, so **running it a
+second time prints `BANNED, and the node agrees` and exits 0.** Re-running after a non-zero exit
+is the natural thing to do at 3am, and what it tells you is that it stopped something that was
+never live. `--reset` does not behave this way; it is idempotent and exits 1 every time.
+
+The state is safe either way — no spend authority exists in any of those cases — but **verify
+with `--show`, which reads the node and invents nothing**, rather than believing either script's
+last line. Ledger row in `/docs/known-defects.md`, mechanism in `/docs/spike-findings.md` §35.
+
+The rest of this block is the 2026-08-24 rebuild, and it holds. The short version first:
 
 ```bash
 cd spike

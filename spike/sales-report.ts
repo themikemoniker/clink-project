@@ -57,6 +57,7 @@ const KEY = arg('key', '.dev-key')
 const suffixed = (name: string) => join(HERE, KEY === '.dev-key' ? name : `${KEY}${name}`)
 const KEY_FILE = join(HERE, KEY)
 const LADDER_FILE = suffixed('.ladder.json')
+const JOURNAL_FILE = suffixed('.refunds.json')
 const JSON_OUT = process.argv.includes('--json')
 const OUTGOING = process.argv.includes('--outgoing')
 
@@ -69,6 +70,37 @@ const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const ladder: Record<string, { units: number }> = existsSync(LADDER_FILE)
   ? JSON.parse(readFileSync(LADDER_FILE, 'utf8'))
   : {}
+
+// THE REFUND JOURNAL, READ ONLY TO SUBTRACT. Item 6 (2026-08-25) watched this script print
+// `OVERSOLD … Refund owed.` about an oversell that had been refunded four seconds earlier, and it
+// would have printed it every day from then on. The oversell is derived from `settled > units`,
+// which is node state, and the node stores NO link from a payment back to the sale that caused it
+// (/docs/known-defects.md) — so once that comparison is true it is true forever, whatever was
+// actually paid. `spike/.refunds.json` is the only thing that knows, which is the same reason
+// /docs/spec.md §7.3 gives for the journal existing at all.
+//
+// Worth saying because it is the shape of a bug rather than a missing feature: a permanent false
+// alarm on the seller's only money tool is what §7.3 refuses to ship when it declines to make
+// `refund_pointer` optional — *"a deliberate design choice would arrive at the seller's terminal
+// disguised as an unresolved bug, forever"*. Same outcome, arrived at from the other direction.
+//
+// This is a read. It pays nothing, writes nothing, and a missing or unreadable journal degrades
+// to exactly the old behaviour rather than to silence — never claim a refund was paid because a
+// file failed to parse.
+type JournalRow = { d?: string; state?: string }
+let journal: Record<string, JournalRow> = {}
+let journalUnreadable = ''
+if (existsSync(JOURNAL_FILE)) {
+  try {
+    const parsed = JSON.parse(readFileSync(JOURNAL_FILE, 'utf8'))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) journal = parsed
+    else journalUnreadable = 'it is not an object'
+  } catch (err) {
+    journalUnreadable = String(err).slice(0, 120)
+  }
+}
+const journalled = (label: string, state: string) =>
+  Object.values(journal).filter(r => r?.d === label && r?.state === state).length
 
 const { appPub, relays, rpc, close } = connectPub(
   sk,
@@ -185,7 +217,25 @@ if (JSON_OUT) {
     console.log('# some settled invoices carry no refund pointer — an oversell on those cannot be paid back')
   }
   const over = rows.filter(r => r.units !== undefined && r.settled > r.units)
-  for (const r of over) console.log(`# OVERSOLD ${r.label}: ${r.settled} settled against ${r.units} unit(s). Refund owed.`)
+  for (const r of over) {
+    const oversells = r.settled - r.units!
+    const paid = journalled(r.label, 'paid')
+    const outstanding = oversells - paid
+    const head = `${r.label}: ${r.settled} settled against ${r.units} unit(s)`
+    if (outstanding <= 0) {
+      console.log(`# oversold ${head} — all ${paid} refunded, per ${JOURNAL_FILE}`)
+      continue
+    }
+    console.log(`# OVERSOLD ${head}. ${outstanding} refund(s) owed${paid ? `, ${paid} already paid` : ''}.`)
+    // `queued` is money a human has to hand over; `pending` is money that may or may not have
+    // left. Neither is owed-and-unstarted, and a seller looking at this line needs the difference.
+    for (const state of ['queued', 'pending', 'failed'] as const) {
+      const n = journalled(r.label, state)
+      if (n) console.log(`#   ${n} row(s) ${state} in the journal — these are counted in the ${outstanding} above`)
+    }
+    if (!existsSync(JOURNAL_FILE)) console.log(`#   no ${JOURNAL_FILE}, so nothing here knows what has already been refunded`)
+    else if (journalUnreadable) console.log(`#   ${JOURNAL_FILE} could not be read (${journalUnreadable}) — assuming nothing was refunded`)
+  }
   if (!existsSync(LADDER_FILE)) console.log(`# no ${LADDER_FILE}, so "sold of how many" is unknown — that number is only in the ladder`)
 }
 
