@@ -653,7 +653,7 @@ an edit made while the watcher is running.
   whose publish failed. Build the check; it is just no longer the only thing standing between an
   edit and a silent oversell.
 - **M1 added one case to build, which did not exist before it.** The watcher now accepts a
-  replacement ladder from a live subscription (`watch-sales.ts:793`) and does **not** re-run
+  replacement ladder from a live subscription (`watch-sales.ts:799`) and does **not** re-run
   `isStale` on it. That is defensible today, because a ladder arriving over a relay was cut from
   the listing published in the same run, but it is an assumption rather than a check, and it is
   the one path where a stale ladder can now enter a *running* watcher. Per-tick staleness closes

@@ -20,6 +20,7 @@ import {
   MAX_RUNGS,
   nofferOf,
   parseRung,
+  soldCounts,
   targetStock,
   unitsOf,
 } from './ladder.ts'
@@ -267,4 +268,72 @@ test('a ladder d maps back to the item it belongs to, and other 30078s are not o
   assert.equal(listingDOf('Lightning.Pub'), undefined)
   assert.equal(listingDOf(''), undefined)
   assert.equal(listingDOf('lamppost-ladder-'), undefined, 'the prefix alone names no item')
+})
+
+// The watcher's tick awaits the node (GetUserOfferInvoices), maybe a refund, and a publish before
+// it writes the sold count, and the ladder subscription can fire during any of them. A timer
+// stands in for those awaits, as refund.test.ts `fakeTick` does, so the interleaving is real.
+const awaitNode = () => new Promise(resolve => setTimeout(resolve, 5))
+
+test('a tick in flight when a new ladder arrives cannot write its count back', async () => {
+  const counts = soldCounts()
+  const tick = async () => {
+    const gen = counts.generation('lamp') // top of tick, before the first await
+    await awaitNode()
+    return counts.record('lamp', gen, 1) // the count computed against the OLD rung
+  }
+  const newLadder = async () => {
+    await new Promise(resolve => setTimeout(resolve, 1)) // lands while the tick is awaiting
+    counts.invalidate('lamp')
+  }
+  const [recorded] = await Promise.all([tick(), newLadder()])
+  assert.equal(recorded, false, 'the stale count is refused')
+  assert.equal(counts.get('lamp'), undefined, 'so the next tick finds no count and recomputes')
+})
+
+test('and the same interleaving on a bare Map keeps the stale count, so the race is real', async () => {
+  // What watch-sales.ts did before: `lastSold.delete` in the callback, `lastSold.set` after the
+  // await. The next tick sees count 1 again and skips the new ladder.
+  const lastSold = new Map<string, number>()
+  const tick = async () => {
+    await awaitNode()
+    lastSold.set('lamp', 1)
+  }
+  const newLadder = async () => {
+    await new Promise(resolve => setTimeout(resolve, 1))
+    lastSold.delete('lamp')
+  }
+  await Promise.all([tick(), newLadder()])
+  assert.equal(lastSold.get('lamp'), 1, 'second tick skipped new ladder')
+})
+
+test('an item replaced while another item is awaiting keeps its round generation, and is refused', async () => {
+  // The tick walks the array it started with, so it reaches B's OLD entry after B was replaced.
+  // Generations taken together at the top of the round are what make that write refusable.
+  const counts = soldCounts()
+  const round = ['a', 'b'].map(d => ({ d, gen: counts.generation(d) }))
+  const results: Record<string, boolean> = {}
+  const tick = async () => {
+    for (const { d, gen } of round) {
+      await awaitNode()
+      results[d] = counts.record(d, gen, 2)
+    }
+  }
+  const replaceB = async () => {
+    await new Promise(resolve => setTimeout(resolve, 1)) // while a's await is pending
+    counts.invalidate('b')
+  }
+  await Promise.all([tick(), replaceB()])
+  assert.equal(results.b, false, 'b was recorded against a ladder that no longer exists')
+  assert.equal(counts.get('b'), undefined)
+  assert.equal(results.a, true, 'a was not replaced, so its count stands')
+  assert.equal(counts.get('a'), 2)
+})
+
+test('with no new ladder, a tick records its count and the next tick sees it', async () => {
+  const counts = soldCounts()
+  const gen = counts.generation('lamp')
+  await awaitNode()
+  assert.equal(counts.record('lamp', gen, 3), true)
+  assert.equal(counts.get('lamp'), 3)
 })

@@ -238,3 +238,37 @@ export const chooseLadder = (
       : 'no ladder on the relays and none on disk, so this item is not watched',
   }
 }
+
+/**
+ * The watcher's last-acted-on settled count per item, with a generation that a new ladder bumps.
+ *
+ * Kept beside the rung, not inside it: the rung is the payload the seller published, and nothing
+ * that is merely the watcher's bookkeeping goes inside it.
+ *
+ * Why a generation and not a bare Map: a tick awaits the node, maybe a refund, and a publish before
+ * it writes the count, and a new ladder can arrive over the subscription during any of them.
+ * Deleting the count from a bare Map is undone when that tick resumes with the OLD rung and writes
+ * it back; the next tick then sees an unchanged count and skips the new ladder. So a tick takes the
+ * generation before its first await, and `record` refuses the write once a newer ladder has
+ * invalidated the item. A refused write leaves no count, so the next tick recomputes.
+ */
+export const soldCounts = () => {
+  const sold = new Map<string, number>()
+  const gens = new Map<string, number>()
+  const generation = (d: string): number => gens.get(d) ?? 0
+  return {
+    generation,
+    get: (d: string): number | undefined => sold.get(d),
+    /** A new ladder replaced this item's: forget the count and outdate every generation taken. */
+    invalidate: (d: string): void => {
+      sold.delete(d)
+      gens.set(d, generation(d) + 1)
+    },
+    /** Writes only if no ladder has replaced this item's since `gen` was taken. */
+    record: (d: string, gen: number, count: number): boolean => {
+      if (gen !== generation(d)) return false
+      sold.set(d, count)
+      return true
+    },
+  }
+}

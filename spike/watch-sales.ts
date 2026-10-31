@@ -55,7 +55,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { decodeNoffer } from '../storefront/src/offer.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
-import { chooseLadder, isStale, LADDER_KIND, listingDOf, nofferOf, parseRung, targetStock } from './ladder.ts'
+import { chooseLadder, isStale, LADDER_KIND, listingDOf, nofferOf, parseRung, soldCounts, targetStock } from './ladder.ts'
 import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
 import {
   inFlightGuard,
@@ -407,8 +407,10 @@ const publish = async (ev: Event) => {
 }
 
 // The last settled-invoice count we acted on, per item. Publishing is driven by this changing,
-// so a poll that says the same thing as the last poll costs one RPC and nothing else.
-const lastSold = new Map<string, number>()
+// so a poll that says the same thing as the last poll costs one RPC and nothing else. Each write
+// carries the generation the tick took before its first await; a new ladder bumps it, so a tick
+// that resumes holding the old rung cannot write its count back over the invalidation.
+const counts = soldCounts()
 
 // --- slice 7: the refund ---------------------------------------------------------------------
 //
@@ -632,7 +634,11 @@ const summarise = async () => {
 }
 
 const tick = async () => {
-  for (const { d, rung, offerId } of watching) {
+  // Every generation in the same synchronous span as reading `watching`, before the first await.
+  // The loop walks the array as it was when the tick started, so taking B's generation when the
+  // loop reaches it would already be the NEW ladder's while the entry is still the old one.
+  const round = watching.map(w => ({ ...w, gen: counts.generation(w.d) }))
+  for (const { d, rung, offerId, gen } of round) {
     let rows: Settled[]
     try {
       // structs.proto:893-896 — { offer_id, include_unpaid }. include_unpaid:false makes the
@@ -653,7 +659,7 @@ const tick = async () => {
       // refund. The pointer to send it to is in this item's stored `payer_data` — which is why
       // this watcher does NOT delete the depleted offer. See the note under `watching` above.
       //
-      // Run BEFORE the `lastSold` early-out below, because a refund can fail on a tick where the
+      // Run BEFORE the `counts` early-out below, because a refund can fail on a tick where the
       // settled count has not moved: a queued LNURL host comes back up, a `failed` row passes its
       // retry window. Availability is driven by the count changing; refunds are driven by the
       // journal, and they are different clocks.
@@ -661,11 +667,11 @@ const tick = async () => {
       if (REFUNDS) await refundOversells(d, rows, rung.units)
     }
 
-    if (lastSold.get(d) === sold) continue
+    if (counts.get(d) === sold) continue
 
     const target = targetStock(rung.units, sold)
     if (target === rung.units) {
-      lastSold.set(d, sold) // nothing has sold; the seeded listing is already right
+      counts.record(d, gen, sold) // nothing has sold; the seeded listing is already right
       continue
     }
 
@@ -685,7 +691,7 @@ const tick = async () => {
       console.log(`# ${d}: no relay accepted stock ${target} — will retry`)
       continue
     }
-    lastSold.set(d, sold)
+    counts.record(d, gen, sold)
     console.log(`# ${new Date().toISOString()} ${d}: ${sold} sold -> stock ${target}${target === 0 ? ' (SOLD)' : ''}, ${ok}/${RELAYS.length} relays`)
   }
 }
@@ -810,8 +816,10 @@ pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: Math.fl
     const had = watching.find(w => w.d === item)
     watching = [...watching.filter(w => w.d !== item), next]
     // The publish loop is driven by this count CHANGING, so a stale entry here would sit on a new
-    // ladder until the item next sold. Dropping it makes the next tick recompute from the node.
-    lastSold.delete(item)
+    // ladder until the item next sold. Invalidating drops it AND bumps the item's generation, so a
+    // tick already awaiting the node with the old rung has its write refused and the next tick
+    // recomputes from the node.
+    counts.invalidate(item)
     console.log(
       `# ${item}: NEW LADDER over the relay, ${next.rung.units} unit(s). ` +
         (had ? 'Replaces the one held for it.' : 'Now watching it.') +
