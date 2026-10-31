@@ -128,7 +128,14 @@ if (WAIT_FOR_PAYMENT && paid.ok) {
   console.log(paid.bolt11)
   console.log(`\nlightning:${paid.bolt11}`)
   console.log(`\n# waiting up to 15 minutes for the kind 21001 receipt…`)
-  const timeout = new Promise<'timeout'>(r => setTimeout(() => r('timeout'), 15 * 60_000).unref())
+  // NOT `.unref()`, and that is the whole point of this line. It was, until item 6 (2026-08-25),
+  // on the assumption that the relay subscription would hold the event loop open for us. It does
+  // not: once that socket goes idle Node finds nothing left to run, exits **13** with
+  // `Detected unsettled top-level await`, and the "waiting up to 15 minutes" line above it is a
+  // lie — the process is gone before a human can open a wallet. It survived slice 2 only because
+  // the payer happened to be fast. An unref'd timer is a timer that cannot keep a promise alive,
+  // so the one thing sized to the invoice's own 15-minute expiry has to be the thing that refs.
+  const timeout = new Promise<'timeout'>(r => setTimeout(() => r('timeout'), 15 * 60_000))
   const outcome = await Promise.race([settled, timeout])
   check(outcome !== 'timeout', 'settlement receipt arrived, readable by the payer key alone')
   if (outcome === 'timeout') {

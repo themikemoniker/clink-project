@@ -243,7 +243,7 @@ made, not duration.
 | | When it is done you can say | Tasks | |
 |---|---|---|---|
 | **A** | Safe to point at a real node | ~~1, 2, 3, 4, 5, 9, 10, 24, 25~~ + 13's quorum and count | **done 2026-08-24**, one ⚑ step open |
-| **B** | Nothing on the critical path is unexecuted | ~~8~~, 6, 7 | ⚑ (**8 done 2026-08-25**); 6 and 7 both need the machine with the node and the key |
+| **B** | Nothing on the critical path is unexecuted | ~~6~~, ~~8~~, **7 (publish/deploy/sign half)** | **6 and 8 done 2026-08-25** (6 on the machine with the node: a real 1,000-sat refund; 8 on the second machine); 7's render half done, its publish/deploy/sign half ⚑ on a human at a browser with the key |
 | **C** | A sale you can change from your phone | M1, 11, M2, **M3 (delete only)** | **M3's fiat half done 2026-08-26**; its delete needs a re-publish, so it needs the key |
 | **D** | Runs unattended for a weekend | ~~13~~, 12, 14 | **13 closed 2026-08-26**, its last bullet with it |
 | **E** | A stranger can set it up | ~~16~~, ~~18~~, 15, 17, 19, 26, **27 (buy side only)** | ⚑ (**16 done 2026-08-25**, and 17's `noBuyReason` half with it; **18 done 2026-08-26**, and its premise was wrong); **27's first bullet done 2026-08-26** — what is left of 27 is a decision, not a fix |
@@ -458,8 +458,29 @@ Code that has never executed is not a feature. Two of these have been carried ac
 slices. ~~Item 6 genuinely must wait for A~~ — **A closed on 2026-08-24, so item 6 is unblocked**;
 item 7 should already be underway.
 
-**6. Pay one real refund, end to end ⚑** *(needed 1, 2 and 4 — **all three landed 2026-08-24**)*
-**It is now safe to run.** The watcher cannot pay the same buyer twice, the kill switch cannot lie
+**~~6. Pay one real refund, end to end~~ — DONE 2026-08-25, and the two decisions it forced were
+the point of it.** A 1,000-sat oversell on `mugs` (4 settled against 3 units) refunded end to end
+to a `coinos.io` address. `payDebit`'s `{"res":"ok"}` branch has executed on the wire, so **no
+branch of the refund path is unexecuted.** Journal row terminal at `paid`, node reporting one
+outgoing payment of 1,000 sats at 16:43:31Z, balance 10,000 → 8,990 — the 1,000 back plus **10
+sats of routing fee** — and the buyer's wallet showed it, which is the half no script here can see.
+Transcript in `docs/spike-findings.md` §14.
+- **The kill switch was proven BEFORE the spend path armed, not after.** Every branch of item 2's
+  rebuild has now run: the read-back, `--npub`, and the `exit 1` on no-grant. `check-refund.ts`
+  ends by destroying the live grant on purpose, so this cost the whole re-authorisation dance —
+  which is the trade that was made deliberately rather than defaulted.
+- **The cap was re-cut 8,000 → 2,000 sats/day.** Spec §12 had asked twice and it had been
+  inherited twice; the account had walked past it to 9,000. The new grant is `debit_id 4`,
+  expiring **2026-09-24** rather than 2026-09-20.
+- **Two defects found by running it**, both fixed: `check-buy.ts --pay` could not wait for a
+  payment at all (an `unref`'d timer against a 900-second invoice expiry — findings §32), and
+  `sales-report.ts` said `Refund owed` about a refunded oversell and would have said it forever
+  (findings §33). A third, milder one is a ledger row: `--revoke` reports success on a second run.
+- **Item 9's reconcile armed correctly from cold** — no journal, zero outgoing, `refuseToStart`
+  false. Its *prompting* half is still unrun: that needs a `pending` row, and this refund never
+  produced one.
+
+Original scoping follows. **It is now safe to run.** The watcher cannot pay the same buyer twice, the kill switch cannot lie
 about having stopped, and the pointer a stranger supplies can no longer aim the watcher at a
 private address or feed it an unbounded body. Two things to know before the run:
 - **Item 9's reconcile is built but has never been exercised**, because nothing has ever written a
@@ -490,8 +511,23 @@ proves is the *payment*, not the resolution.
 - Net cost is routing fees. Record the transcript in `docs/spike-findings.md` and close the two
   ledger rows that name these branches.
 
-**7. The browser verification run ⚑**
-Slices 4 through 9 shipped markup that has **never been rendered**: the sticker sheet has never
+**7. The browser verification run ⚑ — HEADLESS HALF DONE 2026-08-25, human half open.**
+Item 8's harness rendered it, so this is now two halves with a clear line between them.
+
+**Ran, and asserted:** the index off the live relays (9 items, sold ones stamped not hidden), the
+detail view, the Buy form and its `required` refund pointer, the `@media print` block, the
+tear-off tabs, the hostname fallback, and the console on every page. **What it found:** the
+flyer's QR is deploy-time only, so everything served from `dist/` — including every screenshot in
+the submission PDF — renders eight empty tear-off boxes under a caption claiming otherwise
+(findings §34, ledger row). Two code comments still assert the superseded build-time answer.
+
+**Still needs a human at a browser, and a green suite must not be read as covering it:** the
+nos2x prompt count across the publish sequence, the publish itself (it mints a real offer and
+publishes to four public relays), the ladder download, the Deploy button, printing the sheet on
+paper, and tapping the `geo:` link. A `window.nostr` shim was declined deliberately — it holds a
+private key in a page, which `/CLAUDE.md` rule 2 reaches directly.
+
+Original scoping follows. Slices 4 through 9 shipped markup that has **never been rendered**: the sticker sheet has never
 been printed, the `@media print` block has never run, `noBuyReason` and `missingItemNote` have
 never painted, the `geo:` link has never been tapped. `docs/prompts/browser-verify-and-deploy.md`
 is the script for one sitting that covers all of it.
@@ -549,6 +585,14 @@ not the money path. The two are only coupled in the sentence that said item 8 "n
   `geo:` link points **5.9 km** from the sale. Slice 9 corrected the geohash in `spike/fixture.ts`
   and never republished, so the relays still serve `9ewmr4z`. See `docs/known-defects.md`, "Added
   by item 8". **Fixing it is a republish and therefore item 7's machine, not this one.**
+- **Reconciled 2026-10-31 with milestone-b's own item 8** (`shots/`, written the same day on the
+  machine with the node). This suite is item 8 wherever the two overlap; `shots/storefront.smoke.test.ts`
+  keeps the three assertions this one does not make (printing reveals the flyer footer, the `<!--QR-->`
+  marker survives, no console errors beyond relay noise) and `shots/builder.smoke.test.ts` keeps its
+  five. The three that duplicated this suite were dropped. They run **by hand**
+  (`node --test *.smoke.test.ts` in `shots/`), not from `npm test`: they read the live relays, and
+  every package's `npm test` is a gate run unattended. Measured 2026-10-31: the August sale no longer
+  loads from the relays, so the two storefront assertions that need it time out.
 
 **~~23. One real payment into the second seller's sub-account~~ — ALREADY DONE, and nothing knew.**
 This was written on 2026-08-23 as an open item, on the strength of

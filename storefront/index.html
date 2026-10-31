@@ -9,8 +9,9 @@
   </head>
   <body>
     <div id="app"></div>
-    <!-- The storefront QR, encoded at build time so the page ships no QR library.
-         Defined once and referenced by every tear-off tab via <use>. -->
+    <!-- The storefront QR, injected at DEPLOY time by builder/src/deploy.ts withQR, so the page
+         ships no encoder. Do not rename the marker below: withQR skips silently without it and
+         every tear-off tab prints blank. Findings 34. -->
     <!--QR-->
     <script type="module" src="/src/main.ts"></script>
   </body>

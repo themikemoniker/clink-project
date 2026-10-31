@@ -6,6 +6,29 @@ goes stale — where it disagrees with `/docs/spike-findings.md`, the findings w
 
 Last updated: **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
 
+**Milestone B, on the machine with the node (2026-08-25; reconciled into main 2026-10-31).** Milestone B ran on
+2026-08-25. **Item 6 is done: a 1,000-sat oversell on `mugs` was refunded end to end to a real
+wallet**, so `payDebit`'s `{"res":"ok"}` branch has executed and **no branch of the refund path is
+unexecuted**. **Item 8 is done**: on this branch it is the second machine's `storefront/smoke.test.ts` and
+`builder/smoke.test.ts`, with the eight `shots/` assertions those do not make kept alongside (README item 8).
+**Item 7 is half done**: everything a machine can render has been rendered and asserted; the nos2x
+prompt count, the publish sequence, the Deploy button, printing on paper and the `geo:` tap still
+need a human. So milestone B's claim — *nothing on the critical path is unexecuted* — **is true of
+the money path and not yet true of the browser.** Say it that way rather than claiming B.
+
+**What changed on the node, and it matters before anything spends again:** the refund grant is now
+`debit_id 4` at **2,000 sats/day** (re-cut from 8,000 — spec §12 asked twice and it had been
+inherited twice), expiring **2026-09-24**. **It lapsed on that date and is left lapsed**: it fails closed, and
+re-arming it is a full authorization at the desk (`--cap 2000` explicitly) before refund watching is turned on. The account holds **8,990 sats**. `mugs` is **4/3** and
+`spike/.refunds.json` now exists with one `paid` row — from here on, a lost journal alongside a
+non-zero outgoing count makes `--refunds` **refuse to start**. It is backed up to
+`~/lamppost-backup-2026-08-25.tar.gz`, verified byte-identical. ⚑ Still on this machine only.
+
+**And the finding that reaches a judge:** the flyer's QR is injected at **deploy** time, so
+anything served from `dist/` — including every screenshot in `shots/clink-yard-sale.pdf` — renders
+eight **empty** tear-off boxes, under a caption saying *"QR included"*. Findings §34, and a ledger
+row. Page 8 of that PDF wants a human eye.
+
 **READ THIS PARAGRAPH BEFORE ACTING ON ANYTHING BELOW.** Milestone A landed as ten commits
 (`ac87512`..`a934056`) and then a review of that branch found **five defects it had introduced**,
 two of which were the losses milestone A claims to close. They are fixed in `ba1b0fb`, `b83b783`
@@ -110,7 +133,32 @@ side (a decision first — see the roadmap), paying a BOLT12 offer at all (UNVER
 Phoenix address to prove the BIP-353 branch against `phoenixwallet.me` rather than against a
 published test vector.
 
-### Before item 6 runs
+### ~~Before item 6 runs~~ — ALL FOUR CLOSED 2026-08-25, and here is what each one actually cost
+
+Kept rather than deleted, because the reasoning is worth more than the checklist and three of the
+four turned out differently than written.
+
+1. **The pointer.** Resolved free first, as this list said: `{ok: true}`, exactly 1,000 sats, 785
+   ms against `coinos.io`. (The 2026-08-24 measurement was 1,540 ms on the same host — so that
+   number is latency, not a constant.) The returned BOLT11 was **deliberately not logged**: an
+   LNURL invoice's description metadata carries `["text/identifier","name@host"]`, which is the
+   pointer itself.
+2. ~~Hop 2 of the LNURL path has never run.~~ Already closed 2026-08-24.
+3. **The kill switch.** Proven **first**, and the grant re-armed after — the operator's decision,
+   not a default. Every branch of item 2's rebuild has now executed, including the two
+   `check-refund.ts` does not reach (`--npub`, and `exit 1` on no-grant). **A false pass was
+   nearly recorded here**: the first measurement read `exit 0` because `BanDebit` creates a banned
+   row as a side effect, so the second run found its own row and reported success. Ledger row.
+4. **The cap.** Re-cut **8,000 → 2,000 sats/day**. It admits the one 1,000-sat refund plus a
+   retry; 1,000 was rejected for sitting exactly on `checkFrequencyCap`'s boundary on a one-shot
+   oversell.
+
+The watcher was run from this session's non-TTY tool rather than a terminal, and that was checked
+rather than assumed: the reconcile prompt is gated on `pending.length > 0 && process.stdin.isTTY`,
+and on a first run with no journal there are no pending rows to prompt about. **That stops being
+true the moment a `pending` row exists** — then it needs a real terminal.
+
+Original list follows. Item 6 is the demo beat and it is one command, but four things first and two of them are decisions:
 
 1. **The pointer must be an LNURL-pay address.** `mugs` is sold out 3/3, so there is exactly
    **one** oversell available and no way to make another without restocking. Pointing it at a
@@ -214,8 +262,9 @@ now a deliberate boundary rather than an accident.
 | **Second seller** (2026-08-21) | `spike/.merida-key`, `npub1j7jwq…q900q`. kind 30405 `artesanias`, 8 items, 6 offers. nsite `https://npub1j7jwqfnwnkp3rk5lv9s7qlnfra609eepy42vmk80z5fq5nncxffq2q900q.nsite.lol/`, deployed 2026-08-21, **4 complete Blossom mirrors** (`blossom.band` refused the JS and HTML on content-type sniffing and fell out of the 10063 list; the photos it holds were uploaded before that). Proves findings §11: its offers live on its OWN custodial sub-account on the same Pub (`manage_id 2`), auto-created by `GetOrCreateNostrAppUser` on its first RPC. **It has been paid, and that was not noticed for two days**: `node sales-report.ts --key .merida-key` (2026-08-23) reports `artesanias-jabon` **800 sats, one settled invoice, 2026-08-21T22:13:28Z**. This row said `balance 0` and `docs/prompts/demo-day.md` §0.2 called the receive path the single largest unproven thing in the demo — both written hours before the payment landed, and neither correctable because `sales-report.ts` had no `--key` and could not see this account until one was added. It arrived **over the channel, not internally**: `lncli listchannels` reads 9,800 local against the two accounts' 9,000 + 800, and a `PayInternalInvoice` between accounts on one Pub leaves channel local untouched. So findings §11 is proven with money. Both keys are ours, so /docs/spec.md §3.1 says this is still model 1. `watch-sales.ts --key .merida-key` watches all 6 buyable items and republishes their stock; **no refund grant** — arm one with `authorize-refunds.ts` before `--refunds`, or an oversell here is logged and not paid |
 | Node | local Lightning.Pub 0.0.37 + LND, 1 private channel |
 | Node liquidity | **88,978 inbound / 9,800 outbound**, measured 2026-08-23 by `lncli listchannels` — drifts with every sale. Node health `{"status":"OK"}`, `synced_to_chain: true` (it was **not** synced on the evening of 2026-08-21; `docs/prompts/demo-day.md` §0.1 is that blocker and it has cleared) |
-| Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **9,000 sats** across **4 settled invoices** (`plants` 6,000, `mugs` 3×1,000), measured 2026-08-23 by `node spike/sales-report.ts` — 8,946 of it payable after the Pub's fee. Up from 8,000/3 as of 2026-08-21: `mugs`' third unit settled that evening. `sales-report.ts` prints it (`GetUserInfo`), so the number stops being a note here — **but only for this seller; the script has no `--key` and cannot report the second one** |
-| Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
+| Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **8,990 sats** across **5 settled invoices** (9,000 in, minus a 1,000-sat refund and 10 sats of routing fee — item 6, 2026-08-25). Was 9,000 across 4 (`plants` 6,000, `mugs` 3×1,000), measured 2026-08-23 by `node spike/sales-report.ts` — **8,936** of it payable after the Pub's fee (was 8,946 before the refund). Up from 8,000/3 as of 2026-08-21: `mugs`' third unit settled that evening. `sales-report.ts` prints it (`GetUserInfo`), so the number stops being a note here — and it **does** take `--key` (`sales-report.ts:56`), so it reports the second seller too. *(This row claimed the opposite until 2026-08-25; the flag landed in item 24 and this line was never corrected.)* |
+| Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **2,000 sats/day**, `debit_id 4`, expires **2026-09-24**. Re-cut from 8,000 by item 6 (spec §12 asked twice; it had been inherited twice), and re-armed after the kill switch was proven, which destroys the grant by design. `node spike/authorize-refunds.ts --show` |
+| Refund journal | **`spike/.refunds.json` EXISTS as of 2026-08-25** — one row, `yardsale-2026-08-mugs`, `state: paid`. It is the only durable record that a refund happened and **nothing regenerates it**. From now on, this file missing while the node reports outgoing payments makes `watch-sales.ts --refunds` **refuse to start** (correctly — it would recompute an already-paid oversell). Backed up in `~/lamppost-backup-2026-08-25.tar.gz`, verified byte-identical. ⚑ that archive is still on one machine |
 | Blossom | **four** servers, verified. `blossom.primal.net` answers a blob with a **302 to `r2a.primal.net/…/<hash>.txt`** — `fetch` follows it and `check-deploy.ts` passes, but a bare `curl` without `-L` returns 0 bytes and reads like a missing mirror. `blossom.band` now refuses the site's JS and HTML on content-type sniffing (it still holds the photos) and falls out of the kind 10063 list on its own — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
 | Storefront bundle | **32,140 bytes gzip JS** (32.14 KB) + 2,214 CSS + 2.4 HTML cold, + 3,915 QR chunk on Buy. Measured 2026-08-27 after M3's fiat half and the review that followed it, up 6 bytes from 32,134 (one exported currency predicate, spec §9.3; it cost 7 while `render.ts` still carried two literal copies of the regex it replaced, and 6 once they were deleted). Budget raised to 33 in slice 9, with reasoning: spec §9 and §9.2. **860 bytes of headroom left**, so the next render slice measures before it writes |
 | Builder bundle | **59.49 KB gzip cold** (+2.12 for slice 9), + a built storefront in `public/site` (~99 KB raw) |
@@ -224,7 +273,7 @@ Four items are buyable; the rest deliberately are not:
 
 | item | price | state |
 |---|---|---|
-| `mugs` | 1,000 sat | **SOLD OUT — 3/3, the last unit settled 2026-08-21T17:05Z.** It read `buyable` on the relays for an hour after that because no watcher was running; `watch-sales.ts --once` republished it. **There is no cheap item left on this sale** — the demo item is now the second seller's `jabon` at 800 sat |
+| `mugs` | 1,000 sat | **OVERSOLD 4/3 ON PURPOSE, 2026-08-25 — this was item 6, and the oversell is spent.** The fourth settlement was engineered against a depleted offer (a depleted offer stays payable, findings §13.17) and refunded end to end. **There is no second oversell without restocking**, which re-cuts the ladder and needs the watcher restarted. Was: **SOLD OUT — 3/3, the last unit settled 2026-08-21T17:05Z.** It read `buyable` on the relays for an hour after that because no watcher was running; `watch-sales.ts --once` republished it. **There is no cheap item left on this sale** — the demo item is now the second seller's `jabon` at 800 sat |
 | `plants` | 6,000 sat | paid 2026-08-21, and **the watcher has marked it sold on the relays** |
 | `lamp` | 30,000 sat | buyable, `stock 3` — the expensive one, still untouched |
 | `bike` | 180,000 sat | has an offer, but priced **above inbound** — invoice issues, payment cannot settle |
@@ -310,6 +359,10 @@ curl -s http://127.0.0.1:1776/api/health
 
 # the submission PDF — 10 screenshots and a cover, captioned
 cd shots
+npm test                                # 11 assertions in a REAL browser (item 8). Needs
+                                       # `npm run build` in storefront/ AND builder/ first.
+                                       # The slow suite: launches Chromium, reads public relays.
+                                       # Spends nothing and publishes nothing.
 npm run capture                        # needs both dist/ built and the node up for the Buy shot.
                                        # Sends a REAL kind 21001 request; requesting costs nothing
 ```
@@ -1503,6 +1556,40 @@ which for the first time includes markup that only exists on paper. See below.
   gateway field, so a sheet printed before the first deploy points at a site that does not exist.
 - **Never guess a CLINK kind, field, tag, or error code.** They are in `/docs/clink-notes.md`
   with citations. Write `UNVERIFIED` and ask.
+
+### Added 2026-08-25 by milestone B
+
+- **`npm test` IS FOUR DIRECTORIES NOW, not three.** `shots/` gained a suite in item 8
+  (`node --test *.test.ts`, 11 assertions). Every instruction in this repo that says "all three
+  directories" predates it. It is the slow one — it launches Chromium and reads four public
+  relays — and it needs `npm run build` in **both** `/storefront` and `/builder` first, or it
+  fails in `before()` naming the missing `dist/`.
+- **Anything served from `dist/` has NO flyer QR.** The encode moved to deploy time in slice 5, so
+  `vite preview`, the smoke suite and **every screenshot in `shots/clink-yard-sale.pdf`** show
+  eight empty tear-off boxes. `builder/src/deploy.ts` `withQR` is what fills them, on the way to
+  Blossom. Do not "fix" this by moving the encode back into the bundle — the page shipping no QR
+  encoder is the point (findings §34).
+- **`withQR` fails SILENTLY if the `<!--QR-->` comment is renamed.** `if (!html.includes(…)) return html`
+  — no error, no log, no failed build, and a flyer with blank QRs forever.
+  `shots/storefront.smoke.test.ts` is the only thing guarding that seam.
+- **`node authorize-refunds.ts --revoke` exits 0 on the SECOND run against a key with no grant.**
+  `BanDebit` fails closed by creating a banned row, so the second run finds its own row and
+  reports `BANNED, and the node agrees`. `--reset` does not do this. **Check the exit code, not
+  the printed line** — that is how it was caught, and the first measurement of it was a false pass.
+- **`check-buy.ts --pay` waits fifteen minutes, and the invoice expires in exactly fifteen.**
+  Lightning.Pub issues them with `"expiry": "900"`. Its timer used to be `.unref()`'d, so the
+  process exited at second zero with `Detected unsettled top-level await` (exit 13) while printing
+  "waiting up to 15 minutes" — fixed 2026-08-25, but if a run ever dies instantly again, that is
+  the shape. A dead process does not invalidate the invoice: it is live on the node either way,
+  and `lncli decodepayreq` tells you how long is left.
+- **The refund journal now exists, so `--refunds` can refuse to start.** Losing
+  `spike/.refunds.json` while the node reports outgoing payments is a hard refusal, by design.
+  Back it up more often than the rest of the archive — everything else in it can be recreated by
+  redoing work.
+- **A relay console error is the weather.** Two consecutive runs produced two entirely different
+  sets (`already in CLOSING or CLOSED state` ×3, then `relay.damus.io 503` ×2). Do not gate
+  anything on an exact console-error list; the smoke suite matches two narrow shapes and prints
+  what it filtered.
 
 ---
 

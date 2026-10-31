@@ -193,9 +193,19 @@ const main = async () => {
       page,
       '07-print-flyer.png',
       'The same page, printed as a flyer',
+      // CAPTION CORRECTED 2026-08-25 (item 7). It said "QR included. The storefront QR is a
+      // build-time SVG symbol" — both halves false since slice 5 moved the encode to DEPLOY time
+      // (builder/src/deploy.ts `withQR`). This shot comes from `vite preview`, i.e. `dist/`,
+      // where the raw `<!--QR-->` marker is still a comment and there is no `<symbol id="qr">`
+      // to resolve — so the tear-off tabs in THIS FRAME are empty boxes. Measured in a browser:
+      // 8 tabs, 8 `<use href="#qr">`, 0 symbols. The deployed site has them; this render does
+      // not. Do not re-photograph this against the gateway without reading findings §7 on the
+      // one-hour cache, and do not "fix" it by moving the encode back into the bundle — the page
+      // shipping no QR encoder is the point. Ledger row in /docs/known-defects.md.
       'No second template and no export step — one `@media print` block turns the sale into ' +
-        'the flyer that gets taped to a lamppost, QR included. The storefront QR is a ' +
-        'build-time SVG symbol, so printing costs no encoder in the bundle.',
+        'the flyer that gets taped to a lamppost. The QR is injected at deploy time rather ' +
+        'than bundled, so the page ships no encoder — and so this preview render shows the ' +
+        'tabs without it.',
     )
     await page.emulateMedia({ media: 'screen' })
 

@@ -211,8 +211,15 @@ export const renderIndex = (items: Item[], missingD?: string): HTMLElement => {
 // it to a lamppost, and each tab carries the storefront QR. The paper stays current because the
 // URL on it shows a page where sold items have already gone.
 //
-// The QR is a <use> of a <symbol> that vite.config.ts encoded at build time, so this ships no
-// QR library and repeating it across eight tabs costs eight <use> elements.
+// The QR is a <use> of a <symbol> that the DEPLOYER encodes — builder/src/deploy.ts `withQR`,
+// substituting the <!--QR--> marker in index.html on the way to Blossom. So this ships no QR
+// library and repeating it across eight tabs costs eight <use> elements.
+//
+// CONSEQUENCE, measured 2026-08-25 and not obvious from here: in anything served from `dist/`
+// — `vite preview`, the smoke suite, every screenshot in shots/ — there is no <symbol id="qr">
+// to resolve against, so all eight tabs render EMPTY boxes. That is correct behaviour for
+// un-deployed bytes, not a bug in this function. (This comment said "vite.config.ts encoded at
+// build time" until 2026-08-25; that was true before slice 5 moved it.)
 const TABS = 8
 
 export const renderFlyerFoot = (sale: Sale | undefined, siteUrl: string): HTMLElement => {
