@@ -1219,6 +1219,25 @@ and the item is really for sale.
    while the fattest single item, `jabon`, is **19,906 bytes, 30%** of it. Roughly 3.3x headroom
    on the worst real item is what makes per-item the cheap answer rather than the careful one.
 
+**What it cost the builder: +1,062 bytes gzip, and only the main chunk.** These are the gzip -9 sum
+over every `.js` and `.css` in `builder/dist/assets` that `npm --prefix builder run size` prints,
+not the vite report from `npm run build` that the earlier bullets quote. All builds ran on Linux
+(deux). Before is **66,169**, the lab supervisor's measurement at 819c3ab, reproduced byte for byte
+from a `git archive` of 819c3ab. After is **67,231**, measured on main. The main chunk went 60,391 ->
+61,453 gzip (166,000 -> 169,925 raw). The QR chunk (4,217) and the CSS (1,561) did not change by a
+byte. The 11 new lines in `builder/index.html` are emitted to `dist/`, so none of the 1,062 bytes
+are markup. The bytes come from 1112414's builder code: `watcherPubkey`
+(`builder/src/ladder-relay.ts:39`), `ladderEvent` (`:63`) and `publishLadder` (`:93`); `setWatcher` (`builder/src/main.ts:233`) and the new status copy
+at `:246`, `:252`, `:303`, `:414` and `:415`; and the two new steps in `builder/src/publish.ts:173`
+and `:197`. **One part is more than the job needs.** `watcherPubkey` calls nostr-tools' `decode`
+(`builder/src/ladder-relay.ts:43`), which brings in the whole nip19 TLV parser for nprofile, nevent
+and naddr. Its "missing TLV 0 for naddr" string is in the bundle after M1 and not before. Its share
+was not measured. None of the watcher-only code in `spike/ladder.ts` is in the bundle: that module's
+slice of the built chunk is `unitsOf`, `atStock`, `LADDER_KIND`, the `lamppost-ladder-` prefix,
+`ladderD` and `65535`, and no `chooseLadder` or `parseRung` string appears. The growth is accepted
+because the builder's budget is "Whatever it takes" (`docs/design.md:10`) and the bytes pay for what
+M1 removed: the file copy and the restart.
+
 **A failure mode this introduced, and closed.** A fresh clone mints a new `.watcher-key` while the
 builder is still encrypting to the old one. Without handling, that reads as "no ladder on the
 relays" and quietly falls back to a stale file. The watcher now counts ladder events from the
