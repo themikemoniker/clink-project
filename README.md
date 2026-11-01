@@ -648,12 +648,12 @@ an edit made while the watcher is running.
 - **M1 made the remedy automatic but not the detection, and that is exactly how it landed.** A
   stale ladder now heals itself on the next edit instead of stranding the seller, and the
   watcher's own STALE LADDER message says "publish the item again from the builder" rather than
-  "download `.ladder.json` and restart" (`watch-sales.ts:358-361`). The detection is still missing,
+  "download `.ladder.json` and restart" (`watch-sales.ts:366-369`). The detection is still missing,
   for the cases M1 does not cover: the relay did not deliver, or the seller edited from a device
   whose publish failed. Build the check; it is just no longer the only thing standing between an
   edit and a silent oversell.
 - **M1 added one case to build, which did not exist before it.** The watcher now accepts a
-  replacement ladder from a live subscription (`watch-sales.ts:799`) and does **not** re-run
+  replacement ladder from a live subscription (`watch-sales.ts:816`) and does **not** re-run
   `isStale` on it. That is defensible today, because a ladder arriving over a relay was cut from
   the listing published in the same run, but it is an assumption rather than a check, and it is
   the one path where a stale ladder can now enter a *running* watcher. Per-tick staleness closes
