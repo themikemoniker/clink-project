@@ -78,15 +78,35 @@ machine and its backup is on one disk (see "The one thing milestone A could not 
 
 **Reachable from here, and proven on 2026-08-25:** all three test suites, both builds, both size
 budgets, both dev servers, `check-admin.ts`, `check-deploy.ts`, item 7's **render-only** half, and
-item 8 in full. That is enough to keep the roadmap moving without the hardware; it is not enough
+item 8 in full. **Added 2026-08-26 by M1:** `check-ladder-relay.ts` in full (it generates both its
+keys and needs neither a node nor `.dev-key`), and `watch-sales.ts --watcher-key`, which mints and
+prints `spike/.watcher-key` before it reaches anything that needs the node. That key is therefore
+the one piece of gitignored state this machine CAN create for itself, and it did. That is enough to keep the roadmap moving without the hardware; it is not enough
 to close milestone B, which is by definition about things that have executed on real hardware.
 
 ### What the second machine has now closed (2026-08-26)
 
-Four roadmap items, one commit each, none of which needed a key: **18**, **27's first bullet**,
-**13's last bullet** and **M3's fiat half**, then the review of all four. Test counts moved
-75 / 70 / 42 -> **76 / 94 / 51**,
-all green, `tsc` clean in both apps. Reasoning is in spec §9.3; the short version:
+**M1, the gate for the rest of milestone C**, plus four roadmap items before it, none of which
+needed a key: **18**, **27's first bullet**, **13's last bullet** and **M3's fiat half**, then the
+review of all four. Test counts moved 75 / 70 / 42 -> 76 / 94 / 51 -> **76 / 98 / 55**, all green,
+`tsc` clean in both apps, storefront cold JS unchanged at **32,140 bytes gzip**.
+
+**Which relay is down changes, so do not chase it.** On 2026-08-25 `relay.damus.io` was
+answering 503 on the WebSocket handshake. On **2026-08-26** damus was fine and
+**`relay.nostr.band` was timing out on connect instead**, for events of every size from 200 bytes
+to 80 KB, so it is availability and not an event size limit. `check-ladder-relay.ts` reports
+3/4 either way and still passes: the design needs one relay to answer, not four. Expect some
+relay to be unreachable on any given day and treat 4/4 as the surprise.
+
+**M1** ends the file copy and the daemon restart: the availability ladder now travels as one
+NIP-44 encrypted kind 30078 per item, to a new `spike/.watcher-key` that owns nothing, spends
+nothing and signs nothing, and the watcher subscribes rather than reading a file at startup. The
+file is kept as the cold-start fallback. Reasoning and two new measurements are in spec §9.4.
+`node spike/check-ladder-relay.ts` proves the real four-relay round trip and needs no seller key;
+it passed all 19 checks here on 2026-08-26. **Still unproven and needing the keyed machine:**
+publishing a ladder as the real seller, and the live watcher picking it up mid-sale.
+
+The four earlier items, in spec §9.3; the short version:
 
 - **The nsite gateway does not lapse.** `max-age=3600` is what it tells clients, not how long it
   holds. The live site's manifest was replaced 2026-08-21T18:11:43Z and the gateway was serving the
