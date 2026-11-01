@@ -15,12 +15,17 @@ import {
   isStale,
   LADDER_KIND,
   ladderD,
+  ladderStamps,
   listingDOf,
   MAX_LADDER_PLAINTEXT,
   MAX_RUNGS,
   nofferOf,
   parseRung,
+  type Rung,
   soldCounts,
+  type Stamp,
+  stampOf,
+  supersedes,
   targetStock,
   unitsOf,
 } from './ladder.ts'
@@ -336,4 +341,114 @@ test('with no new ladder, a tick records its count and the next tick sees it', a
   await awaitNode()
   assert.equal(counts.record('lamp', gen, 3), true)
   assert.equal(counts.get('lamp'), 3)
+})
+
+// A delayed older ladder must not replace a newer one. Relays delay and replay, so the live
+// subscription can deliver the ladder from created_at 100 after the one from 200, and before
+// `supersedes` it replaced unconditionally while the startup read compared timestamps. Each event
+// is real and signed, so its id is a real id and the tie-break below is the one a relay would see.
+const ladderEvent = (created_at: number, units: number, tag = '') =>
+  finalizeEvent(
+    {
+      kind: LADDER_KIND,
+      created_at,
+      tags: [['d', ladderD('lamp')]],
+      // The payload as it reads after NIP-44 decryption. `tag` makes two events at one timestamp
+      // different events; parseRung ignores it.
+      content: JSON.stringify({ units, noffer: NOFFER, steps: [], tag }),
+    },
+    sk,
+  )
+
+// The subscription callback's sequence, in its order: parse, compare, offer check, replace, then
+// record the stamp. `offerOk` stands in for `withOffer`, which can drop a ladder after it compared
+// as newer.
+const deliver = (held: Map<string, Rung>, stamps: ReturnType<typeof ladderStamps>, ev: Event, offerOk = true): boolean => {
+  const rung = parseRung(ev.content)
+  if (!rung) return false
+  if (!supersedes(stamps.get('lamp'), ev)) return false
+  if (!offerOk) return false
+  held.set('lamp', rung)
+  stamps.adopted('lamp', ev)
+  return true
+}
+
+test('a delayed older ladder does not replace the newer one held', () => {
+  const newer = ladderEvent(200, 5)
+  const older = ladderEvent(100, 2)
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  assert.equal(deliver(held, stamps, newer), true)
+  assert.equal(deliver(held, stamps, older), false, 'the delayed older event is refused')
+  assert.equal(held.get('lamp')?.units, 5)
+  assert.equal(stamps.get('lamp')?.id, newer.id, 'and what is held is the 200 event, by id')
+})
+
+test('and the same two events through an unconditional replace roll the ladder back, so the race is real', () => {
+  // What the subscription callback did before: `watching = [...filter, next]`, no comparison.
+  const held = new Map<string, Rung>()
+  for (const ev of [ladderEvent(200, 5), ladderEvent(100, 2)]) held.set('lamp', parseRung(ev.content)!)
+  assert.equal(held.get('lamp')?.units, 2, 'newer units=5 replaced by delayed older units=2')
+})
+
+const permutations = <T>(xs: T[]): T[][] =>
+  xs.length <= 1
+    ? [xs]
+    : xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map(p => [x, ...p]))
+
+test('the startup read and the live subscription pick the same ladder, in every delivery order', () => {
+  const older = ladderEvent(100, 2)
+  const tieA = ladderEvent(200, 5, 'a')
+  const tieB = ladderEvent(200, 7, 'b')
+  const events = [older, tieA, tieB, tieA] // a delayed older one, a tie, and the same event twice
+  // Computed as listing.test.ts does, not hard-coded and not with the rule under test.
+  const winner = tieA.id < tieB.id ? tieA : tieB
+
+  // Startup: the whole array at once, folded as `readRelayLadders` folds it.
+  let at: Stamp | undefined
+  let startup: Rung | undefined
+  for (const ev of events) {
+    const rung = parseRung(ev.content)
+    if (rung && supersedes(at, ev)) {
+      at = stampOf(ev)
+      startup = rung
+    }
+  }
+  assert.equal(at?.id, winner.id, 'the tie at 200 goes to the lower id')
+  assert.equal(startup?.units, winner === tieA ? 5 : 7)
+
+  // Live: one at a time, in every order.
+  const orders = permutations(events)
+  assert.equal(orders.length, 24)
+  for (const order of orders) {
+    const held = new Map<string, Rung>()
+    const stamps = ladderStamps()
+    for (const ev of order) deliver(held, stamps, ev)
+    assert.equal(stamps.get('lamp')?.id, winner.id, `order ${order.map(e => e.created_at).join(',')}`)
+    assert.deepEqual(held.get('lamp'), startup)
+  }
+})
+
+test('the same event again is not newer, so a second relay delivering it changes nothing', () => {
+  const ev = ladderEvent(200, 5)
+  assert.equal(supersedes(stampOf(ev), ev), false)
+})
+
+test('with nothing held, any ladder is newer', () => {
+  assert.equal(supersedes(undefined, ladderEvent(100, 2)), true)
+})
+
+test('a newer ladder dropped by the offer check leaves the stamp with the ladder still held', () => {
+  // Order matters in the callback: compare, withOffer, replace, record. Recording before the
+  // offer check would stamp 300 beside the 100 ladder, and the good 200 one would then be refused.
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const first = ladderEvent(100, 2)
+  assert.equal(deliver(held, stamps, first), true)
+  assert.equal(deliver(held, stamps, ladderEvent(300, 9), false), false)
+  assert.equal(stamps.get('lamp')?.id, first.id)
+  const good = ladderEvent(200, 5)
+  assert.equal(deliver(held, stamps, good), true, 'older than the dropped one, newer than the held one')
+  assert.equal(held.get('lamp')?.units, 5)
+  assert.equal(stamps.get('lamp')?.id, good.id)
 })

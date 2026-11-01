@@ -55,7 +55,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { decodeNoffer } from '../storefront/src/offer.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
-import { chooseLadder, isStale, LADDER_KIND, listingDOf, nofferOf, parseRung, soldCounts, targetStock } from './ladder.ts'
+import { chooseLadder, isStale, LADDER_KIND, ladderStamps, listingDOf, nofferOf, parseRung, soldCounts, type Stamp, stampOf, supersedes, targetStock } from './ladder.ts'
 import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
 import {
   inFlightGuard,
@@ -230,9 +230,14 @@ const pool = new SimplePool()
 //      over a relay buys a rung no authority that arriving in a file did not.
 //
 // What that leaves genuinely new is the JSON inside, which `parseRung` bounds.
-const readRelayLadders = async (): Promise<{ ladders: Map<string, Rung>; failed: boolean; undecryptable: number }> => {
+const readRelayLadders = async (): Promise<{
+  ladders: Map<string, Rung>
+  at: Map<string, Stamp>
+  failed: boolean
+  undecryptable: number
+}> => {
   const ladders = new Map<string, Rung>()
-  const at = new Map<string, number>()
+  const at = new Map<string, Stamp>()
   let undecryptable = 0
   let events: Event[]
   try {
@@ -240,7 +245,7 @@ const readRelayLadders = async (): Promise<{ ladders: Map<string, Rung>; failed:
   } catch {
     // "The relays could not be read" and "the seller has published no ladder" are different
     // facts with different remedies, and this is the only place that can still tell them apart.
-    return { ladders, failed: true, undecryptable }
+    return { ladders, at, failed: true, undecryptable }
   }
   for (const ev of events) {
     const d = ev.tags.find(t => t[0] === 'd')?.[1]
@@ -264,12 +269,15 @@ const readRelayLadders = async (): Promise<{ ladders: Map<string, Rung>; failed:
     // timestamps are kept beside the ladders rather than stamped onto them: the rung is the
     // payload the builder sent and it goes on to be the thing this process publishes from, so
     // nothing that is merely bookkeeping belongs inside it.
-    if (ev.created_at >= (at.get(item) ?? 0)) {
-      at.set(item, ev.created_at)
+    //
+    // `supersedes` is the same rule the live subscription applies below. Two different events with
+    // equal created_at now resolve to the lowest id, not to whichever the relays returned last.
+    if (supersedes(at.get(item), ev)) {
+      at.set(item, stampOf(ev))
       ladders.set(item, rung)
     }
   }
-  return { ladders, failed: false, undecryptable }
+  return { ladders, at, failed: false, undecryptable }
 }
 
 const relay = await readRelayLadders()
@@ -411,6 +419,15 @@ const publish = async (ev: Event) => {
 // carries the generation the tick took before its first await; a new ladder bumps it, so a tick
 // that resumes holding the old rung cannot write its count back over the invalidation.
 const counts = soldCounts()
+// The stamp of the event behind each ladder in `watching`, so the subscription below orders a live
+// ladder by the same rule the startup read did. Only relay ladders that are actually watched get
+// one (`chooseLadder`: a relay ladder always wins, so a held item with a relay stamp is held from
+// the relay). An item from the file, or not held at all, has none, and its first live ladder wins.
+const stamps = ladderStamps()
+for (const { d } of watching) {
+  const at = relay.at.get(d)
+  if (at) stamps.adopted(d, at)
+}
 
 // --- slice 7: the refund ---------------------------------------------------------------------
 //
@@ -793,9 +810,9 @@ if (ONCE) {
 // after every edit; they would just no longer be carrying a file to it first.
 //
 // A ladder that arrives here has been re-cut by the builder from the listing it was published
-// with, so it supersedes whatever this process was holding for that item. It is NOT trusted any
-// further than the startup read was: same decrypt, same bounded parse, same `stepFor`
-// verification against the live listing before any rung is published.
+// with, so if its event is newer it replaces what this process holds for that item. It is NOT
+// trusted any further than the startup read was: same decrypt, same bounded parse, same newest
+// rule, same `stepFor` verification against the live listing before any rung is published.
 pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: Math.floor(Date.now() / 1000) }, {
   onevent: (ev: Event) => {
     const d = ev.tags.find(t => t[0] === 'd')?.[1]
@@ -811,10 +828,19 @@ pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: Math.fl
       console.log(`# ${item}: a ladder arrived that did not decrypt or did not parse. IGNORED, still watching what we had.`)
       return
     }
+    // Ordered after the parse, as at startup, so a corrupt newer event never shadows a good one. The
+    // same rule as `readRelayLadders`: a delayed older ladder, or the same one again from another
+    // relay, is not newer, so it neither replaces the rung nor re-invalidates the count.
+    const held = stamps.get(item)
+    if (!supersedes(held, ev)) {
+      console.log(`# ${item}: a ladder arrived from created_at ${ev.created_at}, not newer than the held one from ${held?.created_at}. IGNORED.`)
+      return
+    }
     const [next] = withOffer([[item, rung]])
-    if (!next) return // withOffer already said why
+    if (!next) return // withOffer already said why, and the stamp stays with the ladder still held
     const had = watching.find(w => w.d === item)
     watching = [...watching.filter(w => w.d !== item), next]
+    stamps.adopted(item, ev)
     // The publish loop is driven by this count CHANGING, so a stale entry here would sit on a new
     // ladder until the item next sold. Invalidating drops it AND bumps the item's generation, so a
     // tick already awaiting the node with the old rung has its write refused and the next tick

@@ -272,3 +272,40 @@ export const soldCounts = () => {
     },
   }
 }
+
+/** What the watcher remembers about the event a ladder came from: enough to order it, no more. */
+export type Stamp = { created_at: number; id: string }
+
+export const stampOf = (ev: Stamp): Stamp => ({ created_at: ev.created_at, id: ev.id })
+
+/**
+ * Is `ev` newer than the event behind the ladder we hold? The one rule for the startup query AND
+ * the live subscription, because relays delay and replay, and a rule that only one path applies
+ * lets an older ladder walk back in through the other one. Rolling a ladder back rolls back stock
+ * and, through `nofferOf`, possibly which offer is watched.
+ *
+ * Newer `created_at` wins and a tie breaks on the lowest id, compared as lowercase hex with `<`.
+ * That is the product's existing reading of NIP-01 for addressable events,
+ * storefront/src/listing.ts `newestPerAddress`, and seed-listings.ts says the same. So the same
+ * event received twice is not newer than itself.
+ */
+export const supersedes = (held: Stamp | undefined, ev: Stamp): boolean =>
+  !held || ev.created_at > held.created_at || (ev.created_at === held.created_at && ev.id < held.id)
+
+/**
+ * The stamp of the ladder held per item, beside the rung for the same reason the counts are.
+ *
+ * Comparing and recording are separate on purpose: a newer ladder can still be dropped before it
+ * is held (watch-sales.ts `withOffer`, "no decodable offer"), and a stamp recorded for a ladder
+ * that nothing holds would let it shadow every older one, including the one still being watched.
+ */
+export const ladderStamps = () => {
+  const stamps = new Map<string, Stamp>()
+  return {
+    get: (d: string): Stamp | undefined => stamps.get(d),
+    /** Call only once the ladder from `ev` has actually replaced the one held for `d`. */
+    adopted: (d: string, ev: Stamp): void => {
+      stamps.set(d, stampOf(ev))
+    },
+  }
+}
