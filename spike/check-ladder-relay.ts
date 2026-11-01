@@ -3,7 +3,8 @@
 // Same contract as check-deploy.ts and check-manage.ts: it imports the SHIPPED modules rather
 // than re-implementing them, so if this file and the builder ever disagree, this file is wrong.
 // `ladderEvent` here is the same function `builder/src/publish.ts` calls, and `parseRung` and
-// `chooseLadder` are the same ones `watch-sales.ts` uses.
+// `chooseLadder` are the same ones `watch-sales.ts` uses. Step 5's matching rule lives in
+// `replacement.ts` so that it can be tested offline (replacement.test.ts).
 //
 // THE REASON THIS EXISTS. `npm test` proves the encrypt/decrypt round trip and every branch of
 // the precedence rule offline, deterministically, in milliseconds. What it cannot prove is that a
@@ -24,6 +25,7 @@ import { ladderEvent, publishLadder, watcherPubkey } from '../builder/src/ladder
 import { chooseLadder, LADDER_KIND, ladderD, listingDOf, parseRung, type Rung } from './ladder.ts'
 import type { Signer } from '../builder/src/signer.ts'
 import { SALE_RELAYS } from './fixture.ts'
+import { replacementArrives } from './replacement.ts'
 
 const arg = (name: string, fallback: string) => {
   const i = process.argv.indexOf(`--${name}`)
@@ -137,23 +139,23 @@ check(chooseLadder(undefined, undefined, false).source === 'none', 'neither is n
 // --- 5. does a live subscription get pushed an update? ----------------------------------------
 // This is the half that removes the RESTART, so proving the query works is not enough.
 console.log('\n# 5. the live subscription')
-const pushed = await new Promise<boolean>(resolve => {
-  const timer = setTimeout(() => {
-    sub.close()
-    resolve(false)
-  }, 15_000)
-  const sub = pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: Math.floor(Date.now() / 1000) }, {
-    onevent: ev => {
-      if (listingDOf(ev.tags.find(t => t[0] === 'd')?.[1] ?? '') !== D) return
-      clearTimeout(timer)
-      sub.close()
-      resolve(true)
-    },
-  })
-  // Republish AFTER the subscription is open, which is what an edit looks like from here.
-  void ladderEvent(signer, WATCHER, D, { ...rung, units: 2 }).then(next => publishLadder(pool, next, RELAYS))
-})
-check(pushed, 'a re-published ladder reaches an open subscription with no restart')
+// An equal `created_at` is not a replacement: for addressable events the product keeps the lowest
+// id on a tie (storefront/src/listing.ts `newestPerAddress`), so a relay may keep the original and
+// never push `next`. Wait for the clock to pass the original's second before signing.
+while (Math.floor(Date.now() / 1000) <= event.created_at) await new Promise(r => setTimeout(r, 100))
+// Signed BEFORE subscribing, so its id is known before anything can arrive. The id is the proof:
+// the original has the same `d`, and `since` alone is not relied on to keep it out.
+const next = await ladderEvent(signer, WATCHER, D, { ...rung, units: 2 })
+const live = await replacementArrives(
+  pool,
+  RELAYS,
+  { kinds: [LADDER_KIND], authors: [SELLER], since: next.created_at },
+  next,
+  () => publishLadder(pool, next, RELAYS),
+  15_000,
+)
+check(live.accepted > 0, `${live.accepted}/${RELAYS.length} relays accepted the re-published ladder`)
+check(live.arrived, 'the re-published ladder (by id) reaches an open subscription with no restart')
 
 pool.close(RELAYS)
 console.log(`\n# ${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`)
