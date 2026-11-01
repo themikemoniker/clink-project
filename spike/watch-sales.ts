@@ -55,7 +55,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { decodeNoffer } from '../storefront/src/offer.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
-import { chooseLadder, isStale, LADDER_KIND, ladderStamps, listingDOf, nofferOf, parseRung, soldCounts, type Stamp, stampOf, supersedes, targetStock } from './ladder.ts'
+import { chooseLadder, isStale, LADDER_KIND, ladderStamps, ladderWindow, listingDOf, nofferOf, parseRung, soldCounts, type Stamp, stampOf, supersedes, targetStock } from './ladder.ts'
 import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
 import {
   inFlightGuard,
@@ -230,6 +230,11 @@ const pool = new SimplePool()
 //      over a relay buys a rung no authority that arriving in a file did not.
 //
 // What that leaves genuinely new is the JSON inside, which `parseRung` bounds.
+//
+// The live subscription's `since` is read here, before this query runs, and not when it opens:
+// everything between the two can take as long as a human at the refund prompt. ./ladder.ts
+// `ladderWindow` for why, and for the ids that keep the overlap from changing anything.
+const startupRead = ladderWindow(() => Math.floor(Date.now() / 1000))
 const readRelayLadders = async (): Promise<{
   ladders: Map<string, Rung>
   at: Map<string, Stamp>
@@ -254,6 +259,9 @@ const readRelayLadders = async (): Promise<{
     // decrypt to this key, so skipping by `d` first keeps them out of the undecryptable count
     // where they would look like a key mismatch.
     if (!item) continue
+    // Before the decrypt, so that an event which fails it is recorded too and is not reported a
+    // second time when the subscription hands it back.
+    startupRead.record(ev)
     let rung: Rung | undefined
     try {
       rung = parseRung(nip44.decrypt(ev.content, nip44.getConversationKey(watcherSk, SELLER)))
@@ -813,11 +821,19 @@ if (ONCE) {
 // with, so if its event is newer it replaces what this process holds for that item. It is NOT
 // trusted any further than the startup read was: same decrypt, same bounded parse, same newest
 // rule, same `stepFor` verification against the live listing before any rung is published.
-pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: Math.floor(Date.now() / 1000) }, {
+//
+// `since` is the clock from before the startup query, so a ladder published during the startup
+// work above is delivered here rather than lost. The price is that the startup query's own events
+// can come back, and those were already decided once: see `ladderWindow`.
+pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: startupRead.since }, {
   onevent: (ev: Event) => {
     const d = ev.tags.find(t => t[0] === 'd')?.[1]
     const item = d === undefined ? undefined : listingDOf(d)
     if (!item) return // the seller's private notes share this kind; they are not ours to read
+    // Silent, and before the decrypt. Startup already kept, outranked or refused this exact event
+    // (STALE, no offer, did not decrypt), and an item it refused holds no stamp for `supersedes`
+    // to refuse it with.
+    if (startupRead.seenAtStartup(ev)) return
     let rung: Rung | undefined
     try {
       rung = parseRung(nip44.decrypt(ev.content, nip44.getConversationKey(watcherSk, SELLER)))

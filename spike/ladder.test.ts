@@ -7,6 +7,7 @@
 // step is actually rejected rather than merely looking rejected.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { matchFilter } from 'nostr-tools/filter'
 import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools/pure'
 import { parseListings } from '../storefront/src/listing.ts'
 import {
@@ -16,6 +17,7 @@ import {
   LADDER_KIND,
   ladderD,
   ladderStamps,
+  ladderWindow,
   listingDOf,
   MAX_LADDER_PLAINTEXT,
   MAX_RUNGS,
@@ -451,4 +453,99 @@ test('a newer ladder dropped by the offer check leaves the stamp with the ladder
   assert.equal(deliver(held, stamps, good), true, 'older than the dropped one, newer than the held one')
   assert.equal(held.get('lamp')?.units, 5)
   assert.equal(stamps.get('lamp')?.id, good.id)
+})
+
+// The gap between the startup query and the subscription. Startup work between the two is
+// unbounded (the listings query, a human at the refund prompt, the first tick), and a `since` read
+// when the subscription opens drops whatever the seller published meanwhile. `matchFilter` decides
+// delivery against the subscription's own filter, so `since` means what nostr-tools makes it mean
+// (filter.js: `created_at < since` is dropped) rather than what this test assumes.
+const subFilter = (since: number) => ({ kinds: [LADDER_KIND], authors: [PK], since })
+
+// The whole live callback in its order: the startup check first, then `deliver`'s parse, compare,
+// offer check, replace and stamp, then the invalidation. `window` undefined is the callback without
+// the startup check.
+const deliverLive = (
+  window: ReturnType<typeof ladderWindow> | undefined,
+  held: Map<string, Rung>,
+  stamps: ReturnType<typeof ladderStamps>,
+  counts: ReturnType<typeof soldCounts>,
+  ev: Event,
+): boolean => {
+  if (window?.seenAtStartup(ev)) return false
+  if (!deliver(held, stamps, ev)) return false
+  counts.invalidate('lamp')
+  return true
+}
+
+test('a ladder published during startup work reaches the subscription', () => {
+  let now = 200
+  const window = ladderWindow(() => now) // made before the startup query, at t=200
+  const first = ladderEvent(100, 2)
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  // The startup query returns the 100 ladder and the item is watched on it.
+  window.record(first)
+  held.set('lamp', parseRung(first.content)!)
+  stamps.adopted('lamp', first)
+
+  const edited = ladderEvent(250, 5) // the seller publishes during startup work
+  now = 300 // the subscription opens
+  const relay = [first, edited]
+  for (const ev of relay.filter(ev => matchFilter(subFilter(window.since), ev))) {
+    deliverLive(window, held, stamps, counts, ev)
+  }
+  assert.equal(stamps.get('lamp')?.id, edited.id, 'the held ladder is the 250 event, by id')
+  assert.equal(held.get('lamp')?.units, 5, 'with the 250 event units')
+})
+
+test('and the same timeline with since read when the subscription opens loses it, so the gap is real', () => {
+  const first = ladderEvent(100, 2)
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  held.set('lamp', parseRung(first.content)!)
+  stamps.adopted('lamp', first)
+
+  const edited = ladderEvent(250, 5)
+  const now = 300 // what watch-sales.ts did: `since: Math.floor(Date.now() / 1000)` at subscribe
+  assert.equal(matchFilter(subFilter(now), edited), false, 'the 250 event is excluded by since=300')
+  for (const ev of [first, edited].filter(ev => matchFilter(subFilter(now), ev))) {
+    deliverLive(undefined, held, stamps, counts, ev)
+  }
+  assert.equal(stamps.get('lamp')?.id, first.id, 'still the 100 event')
+})
+
+test('a startup event the subscription hands back changes nothing, and a newer one still lands', () => {
+  const window = ladderWindow(() => 200)
+  // Returned by the startup query in the same second the window was taken, then refused as STALE,
+  // so no stamp is seeded for it (watch-sales.ts seeds stamps only for watched items).
+  const refused = ladderEvent(200, 3)
+  window.record(refused)
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  const gen = counts.generation('lamp')
+
+  assert.equal(matchFilter(subFilter(window.since), refused), true, 'since is inclusive, so it is redelivered')
+  assert.equal(deliverLive(window, held, stamps, counts, refused), false)
+  assert.equal(stamps.get('lamp'), undefined, 'nothing is held for the item')
+  assert.equal(held.has('lamp'), false)
+  assert.equal(counts.generation('lamp'), gen, 'and nothing was invalidated')
+
+  const republished = ladderEvent(260, 4)
+  assert.equal(deliverLive(window, held, stamps, counts, republished), true)
+  assert.equal(stamps.get('lamp')?.id, republished.id, 'a genuinely new ladder is adopted, by id')
+  assert.equal(counts.generation('lamp'), gen + 1, 'and invalidates as before')
+})
+
+test('and without the startup check the refused event is adopted, so the overlap is real', () => {
+  const refused = ladderEvent(200, 3)
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  assert.equal(supersedes(undefined, refused), true, 'nothing is held, so anything is newer')
+  assert.equal(deliverLive(undefined, held, stamps, counts, refused), true)
+  assert.equal(stamps.get('lamp')?.id, refused.id, 'the STALE-refused ladder walked back in')
 })
