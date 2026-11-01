@@ -505,7 +505,7 @@ is the script for one sitting that covers all of it.
   **Check the pubkey after any signer change**: the first import loaded a personal key, which
   would have published to an npub the storefront never reads while reporting success throughout.
 - **Do not carry the predicted signature count over.** `PERMS` is NIP-46 only (`signer.ts:143`);
-  `connectNip07` (`:90`) never sends it and NIP-07 has no perms handshake. So findings §8's
+  `connectNip07` (`:91`) never sends it and NIP-07 has no perms handshake. So findings §8's
   Amber/nsec.app measurements and q8's "Approve basic actions" risk describe a mechanism nos2x
   does not use, and **the predicted 1 was a bunker-path number.** Count nos2x's actual prompts
   across the publish sequence and record that instead — it is per-site and remembered, not granted.
