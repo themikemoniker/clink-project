@@ -259,11 +259,15 @@ export const chooseLadder = (
  * it back; the next tick then sees an unchanged count and skips the new ladder. So a tick takes the
  * generation before its first await, and `record` refuses the write once a newer ladder has
  * invalidated the item. A refused write leaves no count, so the next tick recomputes.
+ *
+ * The refund path asks the same question through `current`: after the node read, and before each
+ * refund row and each journal intent, so no buyer is paid against a rung a newer ladder replaced.
  */
 export const soldCounts = () => {
   const sold = new Map<string, number>()
   const gens = new Map<string, number>()
   const generation = (d: string): number => gens.get(d) ?? 0
+  const current = (d: string, gen: number): boolean => gen === generation(d)
   return {
     generation,
     get: (d: string): number | undefined => sold.get(d),
@@ -272,9 +276,11 @@ export const soldCounts = () => {
       sold.delete(d)
       gens.set(d, generation(d) + 1)
     },
+    /** True while no ladder has replaced this item's since `gen` was taken. */
+    current,
     /** Writes only if no ladder has replaced this item's since `gen` was taken. */
     record: (d: string, gen: number, count: number): boolean => {
-      if (gen !== generation(d)) return false
+      if (!current(d, gen)) return false
       sold.set(d, count)
       return true
     },

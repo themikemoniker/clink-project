@@ -31,6 +31,7 @@ import {
   targetStock,
   unitsOf,
 } from './ladder.ts'
+import { oversold, type Settled } from './refund.ts'
 
 const sk = generateSecretKey()
 const PK = getPublicKey(sk)
@@ -390,6 +391,67 @@ test('with no new ladder, a tick records its count and the next tick sees it', a
   await awaitNode()
   assert.equal(counts.record('lamp', gen, 3), true)
   assert.equal(counts.get('lamp'), 3)
+})
+
+// The refund path is the same race with money on it. watch-sales.ts `tick` reads the settled rows,
+// then `refundOversells` pays `oversold(rows, rung.units)`, one `payDebit` await per row. Units 1,
+// A paid first: B is owed under the old ladder. A ladder with units 2 lands mid-await: B is not.
+const sale = (invoice: string, paid_at_unix: number): Settled => ({ invoice, offer_id: 'o1', paid_at_unix, amount: 21 })
+const newLadder = (counts: ReturnType<typeof soldCounts>) => async () => {
+  await new Promise(resolve => setTimeout(resolve, 1)) // lands while the tick is awaiting
+  counts.invalidate('lamp')
+}
+
+test('a refund decided against a ladder replaced mid-await pays nobody', async () => {
+  const counts = soldCounts()
+  const rows = [sale('A', 1), sale('B', 2)]
+  const tick = async (): Promise<string[]> => {
+    const gen = counts.generation('lamp') // top of tick, before the first await
+    await awaitNode()
+    if (!counts.current('lamp', gen)) return []
+    return oversold(rows, 1).map(r => r.invoice)
+  }
+  const [refunded] = await Promise.all([tick(), newLadder(counts)()])
+  assert.deepEqual(refunded, [], 'nobody is refunded against the replaced rung')
+  assert.deepEqual(oversold(rows, 2), [], 'and the next tick, on the new rung, owes nobody either')
+})
+
+test('and the same interleaving without the check refunds B, so the race is real', async () => {
+  const counts = soldCounts()
+  const rows = [sale('A', 1), sale('B', 2)]
+  const tick = async (): Promise<string[]> => {
+    await awaitNode()
+    return oversold(rows, 1).map(r => r.invoice)
+  }
+  const [refunded] = await Promise.all([tick(), newLadder(counts)()])
+  assert.deepEqual(refunded, ['B'], 'B is paid a refund it is not owed under the ladder now held')
+  assert.equal(counts.generation('lamp'), 1, 'and the new ladder really did land during the await')
+})
+
+// `refundOversells` in miniature: the check at the top of each row, one await per payment.
+const refundLoop = async (counts: ReturnType<typeof soldCounts>, gen: number, rows: Settled[], units: number) => {
+  const paid: string[] = []
+  for (const row of oversold(rows, units)) {
+    if (!counts.current('lamp', gen)) return paid
+    await awaitNode() // payDebit
+    paid.push(row.invoice)
+  }
+  return paid
+}
+
+test('a ladder replaced between two refund payments stops the second', async () => {
+  const counts = soldCounts()
+  const rows = [sale('A', 1), sale('B', 2), sale('C', 3)]
+  const gen = counts.generation('lamp')
+  const [paid] = await Promise.all([refundLoop(counts, gen, rows, 1), newLadder(counts)()]) // during B's await
+  assert.deepEqual(paid, ['B'], 'B was already sent when the ladder landed; C was decided after it and is not')
+})
+
+test('with no new ladder, every oversold buyer is refunded', async () => {
+  const counts = soldCounts()
+  const rows = [sale('A', 1), sale('B', 2), sale('C', 3)]
+  const paid = await refundLoop(counts, counts.generation('lamp'), rows, 1)
+  assert.deepEqual(paid, ['B', 'C'])
 })
 
 // A delayed older ladder must not replace a newer one. Relays delay and replay, so the live
