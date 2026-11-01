@@ -220,9 +220,10 @@ one of these standing.
 drift you actually walk through, do not open a documentation project inside a build slice.
 
 - **"One 24242 auth for the whole batch"** survives in three places, all contradicted by
-  `spec.md:266` ("Dead — measured false in slice 1"), findings §9 (`spike-findings.md:809`:
+  `spec.md:266` ("Dead — measured false in slice 1"), findings §9 (`spike-findings.md:869`:
   "one signed kind 24242 auth per blob. Do not batch.") and findings §13.11:
-  - `docs/spec.md:508` — the §7.1 flow diagram
+  - ☑ `docs/spec.md:528` — the §7.1 flow diagram. **FIXED 2026-10-31.** It now reads "one signed
+    24242 auth per blob, no batch", which agrees with `spec.md:1332` and findings §9.
   - `docs/spec.md:1080` — the §11 question 9 row: "**Batching is permitted**"
   - `docs/spike-findings.md:1056` — the §12 corrections table: "one signature covers upload + mirroring"
 - ☑ **React. FIXED 2026-08-21.** `spec.md` said both "no React, Tailwind or shadcn/ui" and, 116

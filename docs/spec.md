@@ -525,7 +525,7 @@ consequences to design around, both from `/docs/spike-findings.md` §11:
 
 ```
 Seller in builder app
-  → uploads photos            → Blossom (ONE signed 24242 auth for the whole batch)
+  → uploads photos            → Blossom (one signed 24242 auth per blob, no batch)
   → authors items             → kind 30402 events, signed, published to relays
   → app generates static site → files hashed, uploaded to Blossom
   → app publishes manifest    → kind 15128, signed
