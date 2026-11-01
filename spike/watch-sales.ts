@@ -461,8 +461,11 @@ for (const { d } of watching) {
 // this run pays is in the journal. See the reconcile block below `summarise`.
 let outgoingAtStart: Outgoing[] = []
 
-const refundOversells = async (d: string, rows: Settled[], units: number) => {
+// `gen` is the tick's round generation. Each row is checked against it, because each paid row is
+// an await and a new ladder can land between one buyer's payment and the next one's decision.
+const refundOversells = async (d: string, rows: Settled[], units: number, gen: number) => {
   for (const row of oversold(rows, units)) {
+    if (!counts.current(d, gen)) return // a new ladder: no journal row, the next tick recomputes
     const done = settledByUs(journal, row.invoice)
     if (done) {
       // `pending` is the dangerous one and it never resolves itself: we sent a payment and never
@@ -519,6 +522,7 @@ const refundOversells = async (d: string, rows: Settled[], units: number) => {
     console.log(`# ${d}: refunding ${sats} sats to ${said}…`)
 
     const resolved = await resolvePointer(pointer ?? '', sats)
+    if (!counts.current(d, gen)) return // replaced while resolving: write nothing, pay nothing
     if (!resolved.ok) {
       // `queue: true` means a human is needed — no usable pointer, or the buyer's own node/host
       // declined in a way retrying will not fix. `queue: false` is a transient host failure and
@@ -674,6 +678,12 @@ const tick = async () => {
       console.log(`# ${new Date().toISOString()} ${d}: ${String(err).slice(0, 120)}`)
       continue
     }
+    // `rows` were read against `rung`; a ladder adopted during that await makes both the refund
+    // and the publish below wrong. `gen` is the round's, never a fresh read, which always matches.
+    if (!counts.current(d, gen)) {
+      console.log(`# ${d}: ladder replaced while reading the node — recomputing next tick`)
+      continue
+    }
     // `oversold(rows, 0)` is every distinct settled invoice for this item, deduped on the invoice
     // string — the settled invoice IS the idempotency key (spec §8).
     const sold = oversold(rows, 0).length
@@ -689,8 +699,9 @@ const tick = async () => {
       // retry window. Availability is driven by the count changing; refunds are driven by the
       // journal, and they are different clocks.
       console.log(`# ${d}: OVERSOLD — ${sold} settled against ${rung.units} unit(s). Refund owed.`)
-      if (REFUNDS) await refundOversells(d, rows, rung.units)
+      if (REFUNDS) await refundOversells(d, rows, rung.units, gen)
     }
+    if (!counts.current(d, gen)) continue // replaced during the refunds: do not publish the old rung
 
     if (counts.get(d) === sold) continue
 
