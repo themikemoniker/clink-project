@@ -28,8 +28,8 @@
 // An item with no `stock` tag is one unit — that is what "for sale, then gone" means, and it
 // is how storefront/src/listing.ts already reads it (`stock: undefined` = "the seller did not
 // say", with `status` carrying the sold/not-sold answer).
-// `Event` is a type-only import, erased at build time, so it costs the bundle nothing.
-import type { Event } from 'nostr-tools/pure'
+// `validateEvent` is the only value import, and nostr-tools is `"sideEffects": false`, so it shakes.
+import { validateEvent, type Event } from 'nostr-tools/pure'
 
 export const unitsOf = (stock: string | undefined): number =>
   stock === undefined ? 1 : Number(stock)
@@ -178,6 +178,14 @@ export type Rung = { units: number; noffer?: string; steps: Event[] }
  * signature verifies, and that is `stepFor`'s job at the moment of publishing, against the live
  * listing. Verifying here as well would be the same work done twice and would still not be the
  * check that matters, because the ladder can go stale between arriving and being used.
+ *
+ * Shape means every consumer that reads a step BEFORE `stepFor` can do so safely: `nofferOf`
+ * walks `tags`, and `isStale` takes the max of `created_at`. So each step must pass nostr-tools'
+ * `validateEvent` (numeric `kind`, string `content`, numeric `created_at`, 64-hex `pubkey`, `tags`
+ * a list of lists of strings; it does not look at `id` or `sig`, which `stepFor` verifies). On top
+ * of that, and stricter than the library, `created_at` must be a non-negative safe integer: the
+ * library takes any number, and `JSON.parse('1e999')` is `Infinity`, which would make `isStale`
+ * answer "not stale" for ever. That bound is ours.
  */
 export const parseRung = (plaintext: string): Rung | undefined => {
   if (typeof plaintext !== 'string' || plaintext.length > MAX_LADDER_PLAINTEXT) return undefined
@@ -191,7 +199,7 @@ export const parseRung = (plaintext: string): Rung | undefined => {
   const { units, noffer, steps } = value as Record<string, unknown>
   if (typeof units !== 'number' || !Number.isInteger(units) || units < 0) return undefined
   if (!Array.isArray(steps) || steps.length > MAX_RUNGS) return undefined
-  if (steps.some(s => !s || typeof s !== 'object' || Array.isArray(s))) return undefined
+  if (!steps.every(s => validateEvent(s) && Number.isSafeInteger(s.created_at) && s.created_at >= 0)) return undefined
   if (noffer !== undefined && typeof noffer !== 'string') return undefined
   return { units, ...(noffer === undefined ? {} : { noffer }), steps: steps as Event[] }
 }

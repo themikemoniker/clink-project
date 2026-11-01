@@ -191,7 +191,8 @@ test('a ladder payload that did not come from us reads as no ladder, and never t
   // the path is signature-verified before we look at it. Same bounds discipline as `parseNotes`
   // in builder/src/notes.ts, and the same contract — a corrupt payload is "no ladder", not an
   // exception that takes the watcher down mid-sale.
-  const good = { units: 3, noffer: 'noffer1abc', steps: [{ created_at: 1 }, { created_at: 2 }] }
+  // Compared as it travels: `finalizeEvent` marks a step `Symbol(verified)`, which no JSON carries.
+  const good = JSON.parse(JSON.stringify({ units: 3, noffer: 'noffer1abc', steps: ladderFor(tags('3'), 3) }))
   assert.deepEqual(parseRung(JSON.stringify(good)), good, 'a payload we wrote round-trips whole')
 
   assert.equal(parseRung('not json at all'), undefined)
@@ -213,6 +214,52 @@ test('a ladder payload that did not come from us reads as no ladder, and never t
   assert.equal(parseRung('x'.repeat(MAX_LADDER_PLAINTEXT + 1)), undefined, 'oversized plaintext')
   const tooMany = { units: 1, steps: Array.from({ length: MAX_RUNGS + 1 }, () => ({ created_at: 1 })) }
   assert.equal(parseRung(JSON.stringify(tooMany)), undefined, 'more rungs than any yard sale has')
+})
+
+test('a payload whose steps are not events reads as no ladder, and nothing downstream can throw on what does parse', () => {
+  // `nofferOf` and `isStale` both read the steps before `stepFor` verifies a signature: the first
+  // via `withOffer` at watcher startup, the second in the stale check. So a rung `parseRung`
+  // returns has to be safe for both. Every case has no `noffer`, so `nofferOf` really reaches the
+  // steps, and every built case is a real signed step with exactly one field broken.
+  const real: Event[] = JSON.parse(JSON.stringify(ladderFor(tags('3'), 3))) // as it travels, as above
+  const broken = (patch: Record<string, unknown>, drop?: string): string => {
+    const step: Record<string, unknown> = { ...real[0]!, ...patch }
+    if (drop) delete step[drop]
+    return JSON.stringify({ units: 1, steps: [step] })
+  }
+  const cases: [string, string][] = [
+    ['{"units":1,"steps":[{}]}', 'the item\'s repro: an object that is not an event'],
+    [broken({ tags: 'x' }), 'tags that are not a list'],
+    [broken({ tags: [null] }), 'a tag that is not a list'],
+    [broken({ tags: [['clink_offer', 5]] }), 'a tag value that is not a string'],
+    [broken({}, 'created_at'), 'no created_at'],
+    [broken({ created_at: '1700000001' }), 'created_at as a string'],
+    // By hand: JSON.stringify(Infinity) is null, and JSON.parse('1e999') is Infinity.
+    [broken({ created_at: 0 }).replace('"created_at":0', '"created_at":1e999'), 'created_at past any safe integer'],
+  ]
+  assert.ok(cases[6]![0].includes('"created_at":1e999'), 'the 1e999 case was really written')
+
+  for (const [payload, why] of cases) {
+    const rung = parseRung(payload)
+    // The whole path, not just the parser: whatever does get through must not throw downstream.
+    if (rung !== undefined) {
+      assert.doesNotThrow(() => nofferOf(rung), `nofferOf on ${why}`)
+      assert.doesNotThrow(() => isStale(rung.steps, 1_700_000_000), `isStale on ${why}`)
+    }
+    assert.equal(rung, undefined, why)
+  }
+
+  // And what does parse is still judged: steps strictly older than the listing are stale.
+  const old = parseRung(JSON.stringify({ units: 3, steps: real }))!
+  assert.equal(isStale(old.steps, 1_700_000_004), true, 'every step is older than the listing')
+  assert.equal(isStale(old.steps, 1_700_000_003), false, 'equal is not stale')
+
+  // A real signed ladder, with and without `noffer`, round-trips whole and yields its offer.
+  for (const rung of [{ units: 3, steps: real }, { units: 3, noffer: NOFFER, steps: real }]) {
+    const parsed = parseRung(JSON.stringify(rung))
+    assert.deepEqual(parsed, rung)
+    assert.equal(nofferOf(parsed!), NOFFER)
+  }
 })
 
 test('precedence: the relay wins when it decrypts, the file is the cold-start fallback', () => {
