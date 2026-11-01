@@ -224,8 +224,11 @@ drift you actually walk through, do not open a documentation project inside a bu
   "one signed kind 24242 auth per blob. Do not batch.") and findings §13.11:
   - ☑ `docs/spec.md:528` — the §7.1 flow diagram. **FIXED 2026-10-31.** It now reads "one signed
     24242 auth per blob, no batch", which agrees with `spec.md:1332` and findings §9.
-  - `docs/spec.md:1080` — the §11 question 9 row: "**Batching is permitted**"
-  - `docs/spike-findings.md:1056` — the §12 corrections table: "one signature covers upload + mirroring"
+  - `docs/spec.md` §11, the question 9 row: "**Batching is permitted**"
+  - ☑ `docs/spike-findings.md:1131` — the §12 corrections table, §5 row. **FIXED 2026-10-31**
+    (brief `findings-12-s5-row-batching`). It said "one signature covers upload + mirroring"; it
+    now says batching is dead, one signed auth per blob, and agrees with `spec.md:266` and
+    findings §9.
 - ☑ **React. FIXED 2026-08-21.** `spec.md` said both "no React, Tailwind or shadcn/ui" and, 116
   lines later, "the builder, which is React and can afford the SDK". Slice 6 owned the React
   decision, so it owned the drift: the second claim is struck and corrected, the §9 "revisit at
