@@ -11,6 +11,7 @@ import { matchFilter } from 'nostr-tools/filter'
 import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools/pure'
 import { parseListings } from '../storefront/src/listing.ts'
 import {
+  admitLive,
   atStock,
   chooseLadder,
   isStale,
@@ -458,31 +459,43 @@ test('with no new ladder, every oversold buyer is refunded', async () => {
 // subscription can deliver the ladder from created_at 100 after the one from 200, and before
 // `supersedes` it replaced unconditionally while the startup read compared timestamps. Each event
 // is real and signed, so its id is a real id and the tie-break below is the one a relay would see.
-const ladderEvent = (created_at: number, units: number, tag = '') =>
+const ladderEvent = (created_at: number, units: number, tag = '', steps: Event[] = []) =>
   finalizeEvent(
     {
       kind: LADDER_KIND,
       created_at,
       tags: [['d', ladderD('lamp')]],
       // The payload as it reads after NIP-44 decryption. `tag` makes two events at one timestamp
-      // different events; parseRung ignores it.
-      content: JSON.stringify({ units, noffer: NOFFER, steps: [], tag }),
+      // different events; parseRung ignores it. `steps` defaults to none, which `isStale` reads as
+      // stale against any defined listing time, so only tests that pass real steps pass `publishedAt`.
+      content: JSON.stringify({ units, noffer: NOFFER, steps, tag }),
     },
     sk,
   )
 
-// The subscription callback's sequence, in its order: parse, compare, offer check, replace, then
-// record the stamp. `offerOk` stands in for `withOffer`, which can drop a ladder after it compared
-// as newer.
-const deliver = (held: Map<string, Rung>, stamps: ReturnType<typeof ladderStamps>, ev: Event, offerOk = true): boolean => {
+// The subscription callback's sequence, in its order: parse, `admitLive` (compare, then staleness
+// against `publishedAt`, the listing time startup read), offer check, replace, then record the
+// stamp. `offerOk` stands in for `withOffer`, which can drop a ladder after it compared as newer.
+// `publishedAt` undefined is "no live listing", which `isStale` never judges.
+type Outcome = 'unparsed' | 'older' | 'stale' | 'no-offer' | 'adopted'
+const deliverWhy = (
+  held: Map<string, Rung>,
+  stamps: ReturnType<typeof ladderStamps>,
+  ev: Event,
+  offerOk = true,
+  publishedAt?: number,
+): Outcome => {
   const rung = parseRung(ev.content)
-  if (!rung) return false
-  if (!supersedes(stamps.get('lamp'), ev)) return false
-  if (!offerOk) return false
+  if (!rung) return 'unparsed'
+  const admitted = admitLive(stamps.get('lamp'), ev, rung.steps, publishedAt)
+  if (admitted !== 'newer') return admitted
+  if (!offerOk) return 'no-offer'
   held.set('lamp', rung)
   stamps.adopted('lamp', ev)
-  return true
+  return 'adopted'
 }
+const deliver = (held: Map<string, Rung>, stamps: ReturnType<typeof ladderStamps>, ev: Event, offerOk = true): boolean =>
+  deliverWhy(held, stamps, ev, offerOk) === 'adopted'
 
 test('a delayed older ladder does not replace the newer one held', () => {
   const newer = ladderEvent(200, 5)
@@ -580,11 +593,12 @@ const deliverLive = (
   stamps: ReturnType<typeof ladderStamps>,
   counts: ReturnType<typeof soldCounts>,
   ev: Event,
-): boolean => {
-  if (window?.seenAtStartup(ev)) return false
-  if (!deliver(held, stamps, ev)) return false
-  counts.invalidate('lamp')
-  return true
+  publishedAt?: number,
+): Outcome | 'seen' => {
+  if (window?.seenAtStartup(ev)) return 'seen'
+  const outcome = deliverWhy(held, stamps, ev, true, publishedAt)
+  if (outcome === 'adopted') counts.invalidate('lamp')
+  return outcome
 }
 
 test('a ladder published during startup work reaches the subscription', () => {
@@ -628,8 +642,8 @@ test('and the same timeline with since read when the subscription opens loses it
 
 test('a startup event the subscription hands back changes nothing, and a newer one still lands', () => {
   const window = ladderWindow(() => 200)
-  // Returned by the startup query in the same second the window was taken, then refused as STALE,
-  // so no stamp is seeded for it (watch-sales.ts seeds stamps only for watched items).
+  // Returned by the startup query in the same second the window was taken, then refused for no
+  // decodable offer, so no stamp is seeded for it (watch-sales.ts stamps watched and STALE items).
   const refused = ladderEvent(200, 3)
   window.record(refused)
   const held = new Map<string, Rung>()
@@ -638,13 +652,13 @@ test('a startup event the subscription hands back changes nothing, and a newer o
   const gen = counts.generation('lamp')
 
   assert.equal(matchFilter(subFilter(window.since), refused), true, 'since is inclusive, so it is redelivered')
-  assert.equal(deliverLive(window, held, stamps, counts, refused), false)
+  assert.equal(deliverLive(window, held, stamps, counts, refused), 'seen')
   assert.equal(stamps.get('lamp'), undefined, 'nothing is held for the item')
   assert.equal(held.has('lamp'), false)
   assert.equal(counts.generation('lamp'), gen, 'and nothing was invalidated')
 
   const republished = ladderEvent(260, 4)
-  assert.equal(deliverLive(window, held, stamps, counts, republished), true)
+  assert.equal(deliverLive(window, held, stamps, counts, republished), 'adopted')
   assert.equal(stamps.get('lamp')?.id, republished.id, 'a genuinely new ladder is adopted, by id')
   assert.equal(counts.generation('lamp'), gen + 1, 'and invalidates as before')
 })
@@ -655,6 +669,124 @@ test('and without the startup check the refused event is adopted, so the overlap
   const stamps = ladderStamps()
   const counts = soldCounts()
   assert.equal(supersedes(undefined, refused), true, 'nothing is held, so anything is newer')
-  assert.equal(deliverLive(undefined, held, stamps, counts, refused), true)
-  assert.equal(stamps.get('lamp')?.id, refused.id, 'the STALE-refused ladder walked back in')
+  assert.equal(deliverLive(undefined, held, stamps, counts, refused), 'adopted')
+  assert.equal(stamps.get('lamp')?.id, refused.id, 'the refused ladder walked back in')
+})
+
+// A live ladder gets the checks startup gave it. Startup refuses an item as STALE when every rung is
+// older than its live listing, and before `refusedAtStartup` that item held no stamp, so any live
+// ladder for it, older or just as stale, was adopted and its rungs published as silent no-ops.
+// `PUBLISHED` is the live listing's created_at as startup read it (watch-sales.ts `live`). Steps are
+// real signed 30402s from `ladderFor`, so `isStale` judges real created_at values.
+const PUBLISHED = 1_700_000_000
+const freshSteps = (units: number) => ladderFor(tags(String(units)), units, PUBLISHED) // PUBLISHED+1..
+const staleSteps = (units: number) => ladderFor(tags(String(units)), units, PUBLISHED - 100) // all < PUBLISHED
+
+test('an item startup refused as STALE refuses an older live ladder, and anything after it changes nothing', () => {
+  const window = ladderWindow(() => 200)
+  const refused = ladderEvent(200, 3, '', staleSteps(3))
+  window.record(refused)
+  assert.equal(isStale(parseRung(refused.content)!.steps, PUBLISHED), true, 'startup did refuse it as STALE')
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  stamps.refusedAtStartup('lamp', refused)
+  const gen = counts.generation('lamp')
+
+  const older = ladderEvent(150, 2, '', freshSteps(2))
+  assert.equal(isStale(parseRung(older.content)!.steps, PUBLISHED), false, 'so only the stamp can refuse it')
+  assert.equal(deliverLive(window, held, stamps, counts, older, PUBLISHED), 'older')
+  // And whatever arrives after the refusal: the same older event from another relay, the refused
+  // event itself handed back, and a later event cut from the same stale listing (a retried publish).
+  assert.equal(deliverLive(window, held, stamps, counts, older, PUBLISHED), 'older')
+  assert.equal(deliverLive(window, held, stamps, counts, refused, PUBLISHED), 'seen')
+  const retried = ladderEvent(250, 4, '', staleSteps(4))
+  assert.equal(deliverLive(window, held, stamps, counts, retried, PUBLISHED), 'stale')
+  assert.equal(held.has('lamp'), false, 'nothing is held')
+  assert.equal(stamps.get('lamp')?.id, refused.id, 'the stamp is still the refused event, by id')
+  assert.equal(counts.generation('lamp'), gen, 'and nothing was invalidated')
+})
+
+test('and without the startup stamp the same older ladder is adopted, so the hole is real', () => {
+  const older = ladderEvent(150, 2, '', freshSteps(2))
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  assert.equal(deliverLive(undefined, held, stamps, counts, older, PUBLISHED), 'adopted')
+  assert.equal(stamps.get('lamp')?.id, older.id, 'the 150 event picked the STALE item back up')
+})
+
+test('a stale live ladder is refused with nothing held, and redelivering it changes nothing', () => {
+  const ev = ladderEvent(300, 3, '', staleSteps(3))
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  const gen = counts.generation('lamp')
+  assert.equal(deliverLive(undefined, held, stamps, counts, ev, PUBLISHED), 'stale')
+  assert.equal(deliverLive(undefined, held, stamps, counts, ev, PUBLISHED), 'stale', 'from a second relay')
+  assert.equal(held.has('lamp'), false, 'nothing is held')
+  assert.equal(stamps.get('lamp'), undefined, 'and no stamp, so a fresh ladder can still land')
+  assert.equal(counts.generation('lamp'), gen, 'and nothing was invalidated')
+})
+
+test('and the old callback order, supersedes only, adopts that stale ladder, so the check is real', () => {
+  // What watch-sales.ts did before `admitLive`: parse, `supersedes`, replace, stamp. No `isStale`.
+  const ev = ladderEvent(300, 3, '', staleSteps(3))
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const rung = parseRung(ev.content)!
+  if (supersedes(stamps.get('lamp'), ev)) {
+    held.set('lamp', rung)
+    stamps.adopted('lamp', ev)
+  }
+  assert.equal(stamps.get('lamp')?.id, ev.id, 'the stale ladder is held')
+  assert.equal(isStale(held.get('lamp')!.steps, PUBLISHED), true, 'and every rung of it is older than the listing')
+})
+
+test('a watched item keeps its ladder when a newer but stale one arrives', () => {
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  const watched = ladderEvent(200, 3, '', freshSteps(3))
+  assert.equal(deliverLive(undefined, held, stamps, counts, watched, PUBLISHED), 'adopted')
+  const gen = counts.generation('lamp')
+
+  const newerStale = ladderEvent(300, 1, '', staleSteps(1))
+  assert.equal(supersedes(stamps.get('lamp'), newerStale), true, 'it is newer, so only isStale can refuse it')
+  assert.equal(deliverLive(undefined, held, stamps, counts, newerStale, PUBLISHED), 'stale')
+  assert.equal(held.get('lamp')?.units, 3, 'the held units are the watched ladder')
+  assert.equal(stamps.get('lamp')?.id, watched.id, 'the stamp is the watched event, by id')
+  assert.equal(counts.generation('lamp'), gen, 'and nothing was invalidated')
+})
+
+test('boundaries: a newest step equal to the listing is admitted, and so is any ladder with no listing', () => {
+  // Sold out: the live listing IS the last rung, so the newest step equals PUBLISHED.
+  const soldOut = ladderFor(tags('1'), 1, PUBLISHED - 1)
+  assert.equal(soldOut[0]!.created_at, PUBLISHED)
+  const atListing = ladderEvent(200, 1, '', soldOut)
+  assert.equal(admitLive(undefined, atListing, soldOut, PUBLISHED), 'newer')
+  assert.equal(deliver(new Map(), ladderStamps(), atListing), true)
+  assert.equal(deliverWhy(new Map(), ladderStamps(), atListing, true, PUBLISHED), 'adopted')
+  // One second further back is stale, so the boundary above is the real one.
+  assert.equal(admitLive(undefined, atListing, ladderFor(tags('1'), 1, PUBLISHED - 2), PUBLISHED), 'stale')
+
+  // No live listing: "the relay is down" is not "stale", even for steps that would be stale.
+  const noListing = ladderEvent(200, 3, '', staleSteps(3))
+  assert.equal(deliverWhy(new Map(), ladderStamps(), noListing, true, undefined), 'adopted')
+})
+
+test('an item refused as STALE still heals on a genuinely newer, fresh ladder', () => {
+  const refused = ladderEvent(200, 3, '', staleSteps(3))
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  stamps.refusedAtStartup('lamp', refused)
+  assert.equal(deliverLive(undefined, held, stamps, counts, ladderEvent(150, 2, '', freshSteps(2)), PUBLISHED), 'older')
+  const gen = counts.generation('lamp')
+
+  const healed = ladderEvent(260, 4, '', freshSteps(4))
+  assert.equal(deliverLive(undefined, held, stamps, counts, healed, PUBLISHED), 'adopted')
+  assert.equal(stamps.get('lamp')?.id, healed.id, 'the held ladder is the 260 event, by id')
+  assert.equal(held.get('lamp')?.units, 4)
+  assert.equal(counts.generation('lamp'), gen + 1, 'and the count is invalidated once')
 })
