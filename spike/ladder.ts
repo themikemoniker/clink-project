@@ -321,6 +321,13 @@ export const ladderStamps = () => {
     adopted: (d: string, ev: Stamp): void => {
       stamps.set(d, stampOf(ev))
     },
+    /**
+     * Nothing is held for `d`, but startup ruled on `ev` (refused it as STALE), so nothing older may
+     * win. Without it the item has no stamp and `supersedes` lets any live ladder in, older or not.
+     */
+    refusedAtStartup: (d: string, ev: Stamp): void => {
+      stamps.set(d, stampOf(ev))
+    },
   }
 }
 
@@ -333,11 +340,11 @@ export const ladderStamps = () => {
  * read here, when the window is made, which is before the startup query runs.
  *
  * Opening the window early means the subscription can hand back events the startup query already
- * returned, and startup did not keep all of them: an item refused as STALE holds no stamp, so
- * `supersedes` would take its own refused ladder back in as new, unchecked. Every event the startup
- * query returned is recorded by id, whatever startup then did with it, and the subscription drops
- * one of those before it decrypts anything. An event that is genuinely new is untouched by this and
- * still goes through `supersedes`, which stays the only ordering rule.
+ * returned, and startup did not keep all of them: an item refused for no decodable offer holds no
+ * stamp, so `supersedes` would take its own refused ladder back in as new, unchecked. Every event
+ * the startup query returned is recorded by id, whatever startup then did with it, and the
+ * subscription drops one of those before it decrypts anything. An event that is genuinely new is
+ * untouched by this and still goes through `admitLive`, whose ordering half is `supersedes`.
  */
 export const ladderWindow = (clock: () => number) => {
   const since = clock()
@@ -351,3 +358,23 @@ export const ladderWindow = (clock: () => number) => {
     seenAtStartup: (ev: { id: string }): boolean => ids.has(ev.id),
   }
 }
+
+/**
+ * May a ladder that arrived over the live subscription replace what is held for its item?
+ *
+ * The two checks startup gave it, in startup's order, so a live ladder is trusted no further than
+ * one read at startup. `'older'`: `supersedes` says it does not beat the event startup (or a
+ * previous live ladder) already ruled on, including one startup refused as STALE, which is what
+ * `ladderStamps.refusedAtStartup` is for. `'stale'`: `isStale` says it was cut from a listing older
+ * than `publishedAt`, so its rungs would publish as silent no-ops. Neither rule is restated here.
+ *
+ * `publishedAt` is the listing time the watcher knows, which is the one read at startup: a listing
+ * edited while the watcher runs is not seen by this (README item 11, per-tick staleness).
+ */
+export const admitLive = (
+  held: Stamp | undefined,
+  ev: Stamp,
+  steps: { created_at: number }[],
+  publishedAt: number | undefined,
+): 'older' | 'stale' | 'newer' =>
+  !supersedes(held, ev) ? 'older' : isStale(steps, publishedAt) ? 'stale' : 'newer'

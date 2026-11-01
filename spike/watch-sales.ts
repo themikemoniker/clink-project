@@ -55,7 +55,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { decodeNoffer } from '../storefront/src/offer.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
-import { chooseLadder, isStale, LADDER_KIND, ladderStamps, ladderWindow, listingDOf, nofferOf, parseRung, soldCounts, type Stamp, stampOf, supersedes, targetStock } from './ladder.ts'
+import { admitLive, chooseLadder, isStale, LADDER_KIND, ladderStamps, ladderWindow, listingDOf, nofferOf, parseRung, soldCounts, type Stamp, stampOf, supersedes, targetStock } from './ladder.ts'
 import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
 import {
   inFlightGuard,
@@ -430,11 +430,17 @@ const counts = soldCounts()
 // The stamp of the event behind each ladder in `watching`, so the subscription below orders a live
 // ladder by the same rule the startup read did. Only relay ladders that are actually watched get
 // one (`chooseLadder`: a relay ladder always wins, so a held item with a relay stamp is held from
-// the relay). An item from the file, or not held at all, has none, and its first live ladder wins.
+// the relay). An item refused above as STALE is stamped too, with the event startup refused, so no
+// older live ladder can pick it back up. An item from the file has no event and stays unstamped,
+// and so does one not held at all; its first live ladder that passes `admitLive` wins.
 const stamps = ladderStamps()
 for (const { d } of watching) {
   const at = relay.at.get(d)
   if (at) stamps.adopted(d, at)
+}
+for (const { d } of stale) {
+  const at = relay.at.get(d)
+  if (at) stamps.refusedAtStartup(d, at)
 }
 
 // --- slice 7: the refund ---------------------------------------------------------------------
@@ -842,8 +848,8 @@ pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: startup
     const item = d === undefined ? undefined : listingDOf(d)
     if (!item) return // the seller's private notes share this kind; they are not ours to read
     // Silent, and before the decrypt. Startup already kept, outranked or refused this exact event
-    // (STALE, no offer, did not decrypt), and an item it refused holds no stamp for `supersedes`
-    // to refuse it with.
+    // (STALE, no offer, did not decrypt). An item refused for no offer holds no stamp for
+    // `supersedes` to refuse it with, so this id check is what keeps that event out.
     if (startupRead.seenAtStartup(ev)) return
     let rung: Rung | undefined
     try {
@@ -856,11 +862,18 @@ pool.subscribe(RELAYS, { kinds: [LADDER_KIND], authors: [SELLER], since: startup
       return
     }
     // Ordered after the parse, as at startup, so a corrupt newer event never shadows a good one. The
-    // same rule as `readRelayLadders`: a delayed older ladder, or the same one again from another
-    // relay, is not newer, so it neither replaces the rung nor re-invalidates the count.
+    // same rules startup applied: `supersedes` as in `readRelayLadders`, so a delayed older ladder,
+    // or the same one again from another relay, is not newer; then `isStale` against the listing
+    // time read at startup, as for `stale` above. A refused ladder neither replaces the rung, moves
+    // the stamp, nor re-invalidates the count.
     const held = stamps.get(item)
-    if (!supersedes(held, ev)) {
+    const admitted = admitLive(held, ev, rung.steps, live.get(item))
+    if (admitted === 'older') {
       console.log(`# ${item}: a ladder arrived from created_at ${ev.created_at}, not newer than the held one from ${held?.created_at}. IGNORED.`)
+      return
+    }
+    if (admitted === 'stale') {
+      console.log(`# ${item}: a ladder arrived that was cut from a listing older than the live one, so its rungs would publish as silent no-ops. IGNORED.`)
       return
     }
     const [next] = withOffer([[item, rung]])
