@@ -224,7 +224,10 @@ drift you actually walk through, do not open a documentation project inside a bu
   "one signed kind 24242 auth per blob. Do not batch.") and findings §13.11:
   - ☑ `docs/spec.md:528` — the §7.1 flow diagram. **FIXED 2026-10-31.** It now reads "one signed
     24242 auth per blob, no batch", which agrees with `spec.md:1332` and findings §9.
-  - `docs/spec.md` §11, the question 9 row: "**Batching is permitted**"
+  - ☑ `docs/spec.md:1766` — §11, the question 9 row. **FIXED 2026-10-31** (brief
+    `spec-q9-batching-row`). It said "**Batching is permitted**"; it now says one signed kind
+    `24242` auth per blob, do not batch, keeps the superseded answer struck through, and agrees
+    with `spec.md:266` and findings §9.
   - ☑ `docs/spike-findings.md:1131` — the §12 corrections table, §5 row. **FIXED 2026-10-31**
     (brief `findings-12-s5-row-batching`). It said "one signature covers upload + mirroring"; it
     now says batching is dead, one signed auth per blob, and agrees with `spec.md:266` and
