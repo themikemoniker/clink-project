@@ -309,3 +309,31 @@ export const ladderStamps = () => {
     },
   }
 }
+
+/**
+ * The overlap between the startup ladder query and the live subscription that follows it.
+ *
+ * Between the two, the watcher queries the listings, may wait on a human at the refund prompt, and
+ * runs a first tick, for as long as those take. A `since` read when the subscription opens leaves
+ * every ladder the seller published in that time out of both results, for good. So the clock is
+ * read here, when the window is made, which is before the startup query runs.
+ *
+ * Opening the window early means the subscription can hand back events the startup query already
+ * returned, and startup did not keep all of them: an item refused as STALE holds no stamp, so
+ * `supersedes` would take its own refused ladder back in as new, unchecked. Every event the startup
+ * query returned is recorded by id, whatever startup then did with it, and the subscription drops
+ * one of those before it decrypts anything. An event that is genuinely new is untouched by this and
+ * still goes through `supersedes`, which stays the only ordering rule.
+ */
+export const ladderWindow = (clock: () => number) => {
+  const since = clock()
+  const ids = new Set<string>()
+  return {
+    since,
+    /** Call for every ladder event the startup query returned, kept or not. */
+    record: (ev: { id: string }): void => {
+      ids.add(ev.id)
+    },
+    seenAtStartup: (ev: { id: string }): boolean => ids.has(ev.id),
+  }
+}
