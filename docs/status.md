@@ -4,7 +4,7 @@
 the commands that reproduce it, and what is actually blocked. It is deliberately short and it
 goes stale — where it disagrees with `/docs/spike-findings.md`, the findings win.
 
-Last updated: **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
+Last updated: **2026-11-01**, after the merges to `main` on 2026-10-31 and 2026-11-01 (see "What landed on 2026-10-31 and 2026-11-01" below; its counts were measured on `93a2e88`). Before that, **2026-08-26**, after the dead-ends sweep (items 18, 27's first bullet, 13's last bullet and M3's fiat half) on the second machine. The paragraphs below it are from **2026-08-24**, after the milestone A review — A's claim holds, and item 6 has two gates left that the milestone-A commits did not know about.
 
 **READ THIS PARAGRAPH BEFORE ACTING ON ANYTHING BELOW.** Milestone A landed as ten commits
 (`ac87512`..`a934056`) and then a review of that branch found **five defects it had introduced**,
@@ -44,6 +44,88 @@ reads as the fix for something else, which is why the diff did not show them:
 was pre-existing rather than milestone A's: **a BIP-353 address is the same `user@domain` shape as
 an LNURL one**, so a Phoenix buyer's refund pointer is accepted at buy time and is useless at
 refund time. That is **roadmap item 27**, and it has a trap in it — see below.
+
+### What landed on 2026-10-31 and 2026-11-01
+
+Seven merges to `main`, each merged by the lab after review
+(`git log --first-parent --date=short 819c3ab^..93a2e88`). **The commit messages carry only
+`Lab-Item:` trailers and a title; what each one did below is read from its diff and the test names
+it added**, quoted exactly.
+
+- **Three doc corrections, all "one 24242 auth for the whole batch": #8 `819c3ab` (q51), #11
+  `a11e0c1` (q53), #12 `5daf708` (q85).** spec §7.1's flow diagram, spec §11's question 9 row and
+  findings §12's corrections table, §5 row now all say one signed auth per blob, do not batch, and
+  each is marked **FIXED 2026-10-31** in `docs/known-defects.md`'s "One 24242 auth for the whole
+  batch" list. Text only; no test.
+- **M1 reached `main` with #7 `c01b6eb`**, a batch of five. Everything the 2026-08-26 sections below
+  say about M1 (spec §9.4, `.watcher-key`, `check-ladder-relay.ts`) was on the second machine's
+  branch until q25's merge `d9b4926` brought it in, with the first of the batch's fixes to it:
+  - **q25 `d9b4926`:** a watcher tick that was awaiting the node when a new ladder arrived can no
+    longer write its old sold count back over the new ladder. `spike/ladder.test.ts` *"a tick in
+    flight when a new ladder arrives cannot write its count back"*, with its control *"and the
+    same interleaving on a bare Map keeps the stale count, so the race is real"*.
+  - **q26 `b55364d`:** a delayed, older ladder no longer replaces a newer one, and startup and the
+    live subscription order ladders by the same rule. `spike/ladder.test.ts` *"a delayed older
+    ladder does not replace the newer one held"* and *"the startup read and the live subscription
+    pick the same ladder, in every delivery order"*.
+  - **q27 `6bf8e52`:** a ladder published while startup work is still running is no longer lost
+    between the startup query and the subscription. `spike/ladder.test.ts` *"a ladder published
+    during startup work reaches the subscription"* and *"a startup event the subscription hands
+    back changes nothing, and a newer one still lands"*.
+  - **q28 `600e89b`:** a ladder payload whose steps are not events is refused at the parse, not
+    deeper in. `spike/ladder.test.ts` *"a payload whose steps are not events reads as no ladder,
+    and nothing downstream can throw on what does parse"*.
+  - **q62 `428889c`:** `check-ladder-relay.ts`'s live-subscription step now waits for the
+    re-published replacement **by id** (new `spike/replacement.ts`); before, any event for the
+    item counted, so the original arriving was enough to pass. `spike/replacement.test.ts` *"the
+    critic's reproduction: only the original arrives and 0 relays accept, so nothing is proven"*
+    and *"a rejected publish: the replacement delivered afterwards cannot change the result"*.
+- **#9 `0d4376a` (q44):** the refund path re-checks the tick's round generation after the node
+  read, after resolving each buyer's pointer and before each row, so no buyer is refunded against
+  a rung a newer ladder has replaced. `spike/ladder.test.ts` *"a refund decided against a ladder
+  replaced mid-await pays nobody"* and *"a ladder replaced between two refund payments stops the
+  second"*.
+- **#10 `317a58e` (q70):** doc only. spec §9.4 now discloses that M1 cost the builder **+1,062
+  bytes gzip** (66,169 -> 67,231 by `npm --prefix builder run size`, main chunk only), and flags
+  nostr-tools' nip19 `decode` behind `watcherPubkey` as more than the job needs, its share not
+  measured.
+- **#13 `93a2e88` (q54), merged 2026-11-01:** an item startup refused as STALE now keeps the stamp
+  of the ladder it refused, and a live ladder is admitted only through `admitLive`
+  (`spike/ladder.ts`), which applies startup's newest-event rule and then `isStale` against the
+  listing time read at startup. `spike/ladder.test.ts` *"an item startup refused as STALE refuses
+  an older live ladder, and anything after it changes nothing"* and *"a stale live ladder is
+  refused with nothing held, and redelivering it changes nothing"*. **Still open:** a listing
+  edited *while* the watcher runs is judged against its startup time (README item 11, per-tick
+  staleness).
+
+**Measured on `93a2e88`** (this branch's base, `origin/main` on 2026-11-02), Node v24.22.2, from
+the repo root. Every number is what the command printed; none is copied from an earlier run.
+
+```text
+npm --prefix storefront test       tests 76  pass 76  fail 0
+npm --prefix builder test          tests 98  pass 98  fail 0
+npm --prefix spike test            tests 89  pass 89  fail 0
+npm --prefix storefront run size   (gzip -9 bytes, the size script's own column, not vite's report)
+  dist/assets/index-CHaquRPk.js    86,455 raw  32,221 gzip   cold JS
+  dist/assets/index-CL59frq0.css    6,479 raw   2,214 gzip   CSS
+  dist/assets/index-BQaELXyb.js    10,317 raw   3,915 gzip   QR chunk, loaded on Buy
+```
+
+**The counts that moved.** Every test triple in this file is **storefront / builder / spike**:
+the measured 76 and 98 above match the first two places of the 2026-08-26 triple 76 / 98 / 55
+below, and the commands block's storefront `npm test` comment says 76. Since that triple, spike
+went **55 -> 89** and storefront and builder did not move; the commands block's spike comment,
+which still said 51, now says 89. Cold JS is **32,221 bytes gzip, 81 more than the 32,140**
+recorded on 2026-08-27, which leaves **779 bytes** under the 33 KB budget. That growth came in during the
+2026-10-31/11-01 merges and is **not yet attributed to a commit**. The storefront bundle row does
+not name the script that measured 32,140, so the 81 assumes it was this same `size` script.
+
+**Still unproven, unchanged by any of the above:** publishing a ladder as the real seller, the
+live watcher picking one up mid-sale, item 6 (one real refund) and item 7's publish-and-deploy
+half. All four need the keyed machine.
+
+**The inbound channel is a lease that expires 2026-11-19, and nothing watches it**
+(`docs/runbook.md`, "It is a lease"; findings §1, the lease row).
 
 ### THE SECOND MACHINE: read this before you plan anything (added 2026-08-25)
 
@@ -88,8 +170,10 @@ to close milestone B, which is by definition about things that have executed on 
 
 **M1, the gate for the rest of milestone C**, plus four roadmap items before it, none of which
 needed a key: **18**, **27's first bullet**, **13's last bullet** and **M3's fiat half**, then the
-review of all four. Test counts moved 75 / 70 / 42 -> 76 / 94 / 51 -> **76 / 98 / 55**, all green,
-`tsc` clean in both apps, storefront cold JS unchanged at **32,140 bytes gzip**.
+review of all four. Test counts moved 75 / 70 / 42 -> 76 / 94 / 51 -> **76 / 98 / 55** -> **76 / 98 / 89**
+(storefront / builder / spike, measured on `93a2e88` on 2026-11-02 after the merges above), all green,
+`tsc` clean in both apps, storefront cold JS unchanged at **32,140 bytes gzip** on 2026-08-26
+(**32,221** by `npm --prefix storefront run size` on `93a2e88`, see above).
 
 **Which relay is down changes, so do not chase it.** On 2026-08-25 `relay.damus.io` was
 answering 503 on the WebSocket handshake. On **2026-08-26** damus was fine and
@@ -103,7 +187,11 @@ NIP-44 encrypted kind 30078 per item, to a new `spike/.watcher-key` that owns no
 nothing and signs nothing, and the watcher subscribes rather than reading a file at startup. The
 file is kept as the cold-start fallback. Reasoning and two new measurements are in spec §9.4.
 `node spike/check-ladder-relay.ts` proves the real four-relay round trip and needs no seller key;
-it passed all 19 checks here on 2026-08-26. **Still unproven and needing the keyed machine:**
+it passed all 19 checks here on 2026-08-26. **That run predates q62 (#7, 2026-10-31), which
+changed the script**: on `93a2e88` it has 17 `check(` call sites (`spike/check-ladder-relay.ts`
+lines 85–158, three of them inside `if (mine)` blocks, so call sites are not necessarily checks
+run), and it **has not been re-run since q62**. Re-running it is the owner's step: it publishes
+to four public relays, throwaway keys or not. **Still unproven and needing the keyed machine:**
 publishing a ladder as the real seller, and the live watcher picking it up mid-sale.
 
 The four earlier items, in spec §9.3; the short version:
@@ -237,7 +325,7 @@ now a deliberate boundary rather than an accident.
 | Node account | app user `0db5acc4…`, owned by `spike/.dev-key`, holding **9,000 sats** across **4 settled invoices** (`plants` 6,000, `mugs` 3×1,000), measured 2026-08-23 by `node spike/sales-report.ts` — 8,946 of it payable after the Pub's fee. Up from 8,000/3 as of 2026-08-21: `mugs`' third unit settled that evening. `sales-report.ts` prints it (`GetUserInfo`), so the number stops being a note here — **but only for this seller; the script has no `--key` and cannot report the second one** |
 | Refund grant | **live** — `spike/.refund-key`, CLINK Debit, **8,000 sats/day**, expires 2026-09-20. `node spike/authorize-refunds.ts --show` |
 | Blossom | **four** servers, verified. `blossom.primal.net` answers a blob with a **302 to `r2a.primal.net/…/<hash>.txt`** — `fetch` follows it and `check-deploy.ts` passes, but a bare `curl` without `-L` returns 0 bytes and reads like a missing mirror. `blossom.band` now refuses the site's JS and HTML on content-type sniffing (it still holds the photos) and falls out of the kind 10063 list on its own — both nsites re-deployed 2026-08-21 and both report 4 complete mirrors. One thing still predates the slice-5 fix: the fixture's 21 photos, below |
-| Storefront bundle | **32,140 bytes gzip JS** (32.14 KB) + 2,214 CSS + 2.4 HTML cold, + 3,915 QR chunk on Buy. Measured 2026-08-27 after M3's fiat half and the review that followed it, up 6 bytes from 32,134 (one exported currency predicate, spec §9.3; it cost 7 while `render.ts` still carried two literal copies of the regex it replaced, and 6 once they were deleted). Budget raised to 33 in slice 9, with reasoning: spec §9 and §9.2. **860 bytes of headroom left**, so the next render slice measures before it writes |
+| Storefront bundle | **32,140 bytes gzip JS** (32.14 KB) + 2,214 CSS + 2.4 HTML cold, + 3,915 QR chunk on Buy. Measured 2026-08-27 after M3's fiat half and the review that followed it, up 6 bytes from 32,134 (one exported currency predicate, spec §9.3; it cost 7 while `render.ts` still carried two literal copies of the regex it replaced, and 6 once they were deleted). Budget raised to 33 in slice 9, with reasoning: spec §9 and §9.2. **860 bytes of headroom left**, so the next render slice measures before it writes. **2026-11-02: 32,140 -> 32,221 bytes gzip JS** (`index-CHaquRPk.js`; CSS 2,214 and QR chunk 3,915 unchanged), by `npm --prefix storefront run size` on `93a2e88`, **779 bytes of headroom left**. The 81 bytes came in during the 2026-10-31/11-01 merges and are not yet attributed to a commit |
 | Builder bundle | **59.49 KB gzip cold** (+2.12 for slice 9), + a built storefront in `public/site` (~99 KB raw) |
 
 Four items are buyable; the rest deliberately are not:
@@ -271,7 +359,7 @@ npm run dev         # http://localhost:5173
 
 # the money path, against the running node
 cd spike
-npm test                               # 51 tests, node --test — the ladder and the refund journal
+npm test                               # 89 tests (93a2e88, 2026-11-02; was 51), node --test — the ladder and the refund journal
 node check-buy.ts                      # decline -> invoice -> price-mismatch refusal. Free.
 node check-buy.ts <item> --pay --pointer <addr-or-noffer>   # COSTS REAL SATS.
                                        # --pay REFUSES without --pointer as of slice 8: a settled
