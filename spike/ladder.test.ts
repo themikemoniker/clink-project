@@ -6,6 +6,7 @@
 // narrowest form of the /CLAUDE.md rule-2 exception, and the only way to prove that a tampered
 // step is actually rejected rather than merely looking rejected.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { matchFilter } from 'nostr-tools/filter'
 import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools/pure'
@@ -453,6 +454,76 @@ test('with no new ladder, every oversold buyer is refunded', async () => {
   const rows = [sale('A', 1), sale('B', 2), sale('C', 3)]
   const paid = await refundLoop(counts, counts.generation('lamp'), rows, 1)
   assert.deepEqual(paid, ['B', 'C'])
+})
+
+// watch-sales.ts `tick` after the refunds: the recheck at :710, the count early-out, one await per publish.
+const tickTail = async (
+  counts: ReturnType<typeof soldCounts>,
+  gen: number,
+  rows: Settled[],
+  units: number,
+  published: number[],
+  recheck = true,
+) => {
+  await refundLoop(counts, gen, rows, units)
+  if (recheck && !counts.current('lamp', gen)) return
+  const sold = oversold(rows, 0).length
+  if (counts.get('lamp') === sold) return
+  const target = targetStock(units, sold)
+  await awaitNode() // publish
+  published.push(target)
+  counts.record('lamp', gen, sold)
+}
+
+test('a ladder landing during the refunds publishes nothing for the old rung', async () => {
+  const counts = soldCounts()
+  const rows = [sale('A', 1), sale('B', 2), sale('C', 3)]
+  const gen = counts.generation('lamp') // top of tick, before the first await
+  const published: number[] = []
+  await Promise.all([tickTail(counts, gen, rows, 1, published), newLadder(counts)()]) // during B's await
+  assert.deepEqual(published, [], 'no stock step is published against the replaced rung')
+  assert.equal(counts.get('lamp'), undefined, 'and no count is kept, so the next tick recomputes')
+  assert.equal(counts.generation('lamp'), 1, 'and the new ladder really did land during the refunds')
+})
+
+test("and the same interleaving without the recheck publishes the old rung's stock 0, so the race is real", async () => {
+  // `invalidate` deleted the count, so the `counts.get === sold` early-out cannot stand in for :710.
+  const counts = soldCounts()
+  const rows = [sale('A', 1), sale('B', 2), sale('C', 3)]
+  const gen = counts.generation('lamp')
+  const published: number[] = []
+  await Promise.all([tickTail(counts, gen, rows, 1, published, false), newLadder(counts)()])
+  assert.deepEqual(published, [0], 'the old rung\'s sold step goes out after the new ladder landed')
+})
+
+test('with no new ladder, the tick publishes the stock step after the refunds', async () => {
+  const counts = soldCounts()
+  const rows = [sale('A', 1), sale('B', 2), sale('C', 3)]
+  const published: number[] = []
+  await tickTail(counts, counts.generation('lamp'), rows, 1, published)
+  assert.deepEqual(published, [0])
+  assert.equal(counts.get('lamp'), 3)
+})
+
+test('tick rechecks the ladder generation between the refunds and the publish', () => {
+  // The models above cannot see watch-sales.ts, and `tick` cannot be imported: the file runs at
+  // import (see the note above `tmpJournal` in refund.test.ts). So this reads the source, and fails
+  // if the recheck is deleted or moved out from between the refunds and the publish.
+  const src = readFileSync(new URL('./watch-sales.ts', import.meta.url), 'utf8')
+  const start = src.indexOf('const tick = async () => {')
+  assert.ok(start >= 0, 'tick is where this test expects it')
+  const end = src.indexOf('\n}\n', start)
+  assert.ok(end > start, 'and its body ends')
+  const body = src.slice(start, end)
+
+  const refunds = body.indexOf('refundOversells(d, rows, rung.units, gen)')
+  assert.ok(refunds >= 0, 'tick refunds against the round generation')
+  // From `refunds`, because the post-read check (:689) has the same `counts.current(d, gen)` text.
+  const recheck = body.indexOf('if (!counts.current(d, gen)) continue', refunds)
+  assert.ok(recheck > refunds, 'the generation is rechecked after the refunds')
+  const publish = body.indexOf('publish(stepFor(')
+  assert.ok(publish >= 0, 'tick publishes a step')
+  assert.ok(recheck < publish, 'and before the publish')
 })
 
 // A delayed older ladder must not replace a newer one. Relays delay and replay, so the live
