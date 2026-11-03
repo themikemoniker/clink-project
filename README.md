@@ -653,10 +653,11 @@ an edit made while the watcher is running.
   whose publish failed. Build the check; it is just no longer the only thing standing between an
   edit and a silent oversell.
 - **M1 added one case to build, which did not exist before it.** The watcher now accepts a
-  replacement ladder from a live subscription (`watch-sales.ts:845`), and it re-runs `isStale` on
+  replacement ladder from a live subscription (`watch-sales.ts:837`), and it re-runs `isStale` on
   it against the listing times read at startup, after the same newest-event rule startup used
-  (`ladder.ts` `admitLive`). An item startup refused as STALE keeps the stamp of the event it
-  refused, so an older live ladder cannot pick it back up either. What is still missing is a
+  (`ladder.ts` `admitLive`). An item startup refused, as STALE or for no decodable offer, keeps the
+  stamp of the event it refused (`ladder.ts` `startupStamps`), so an older live ladder cannot pick
+  it back up either. What is still missing is a
   listing edited *while the watcher runs*: the startup listing times are never refreshed, so a
   live ladder is judged against the listing as it was at startup. Per-tick staleness closes that
   along with everything else in this item.
