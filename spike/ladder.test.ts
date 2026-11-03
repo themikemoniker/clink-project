@@ -28,6 +28,7 @@ import {
   type Rung,
   soldCounts,
   type Stamp,
+  startupStamps,
   stampOf,
   supersedes,
   targetStock,
@@ -713,8 +714,9 @@ test('and the same timeline with since read when the subscription opens loses it
 
 test('a startup event the subscription hands back changes nothing, and a newer one still lands', () => {
   const window = ladderWindow(() => 200)
-  // Returned by the startup query in the same second the window was taken, then refused for no
-  // decodable offer, so no stamp is seeded for it (watch-sales.ts stamps watched and STALE items).
+  // Returned by the startup query in the same second the window was taken, and nothing stamped for
+  // it: `ladderWindow` on its own. (watch-sales.ts seeds a stamp for every item startup ruled on,
+  // `startupStamps`; the id check is the layer that still holds where no stamp exists.)
   const refused = ladderEvent(200, 3)
   window.record(refused)
   const held = new Map<string, Rung>()
@@ -860,4 +862,58 @@ test('an item refused as STALE still heals on a genuinely newer, fresh ladder', 
   assert.equal(stamps.get('lamp')?.id, healed.id, 'the held ladder is the 260 event, by id')
   assert.equal(held.get('lamp')?.units, 4)
   assert.equal(counts.generation('lamp'), gen + 1, 'and the count is invalidated once')
+})
+
+// The other refusal reason. `withOffer` drops an item at startup when its ladder has no decodable
+// offer, and before `startupStamps` that item held no stamp: a delayed older ladder with a good
+// offer was `'newer'` than nothing and was adopted, rolling the item back past the ladder the seller
+// last published. `at` here is `readRelayLadders`' map and an empty `watched` is the `withOffer` drop.
+test('an item startup dropped for no decodable offer refuses an older live ladder', () => {
+  const window = ladderWindow(() => 300)
+  const dropped = ladderEvent(300, 3, '', freshSteps(3))
+  window.record(dropped)
+  const stamps = startupStamps(new Map([['lamp', stampOf(dropped)]]), [])
+  assert.equal(stamps.get('lamp')?.id, dropped.id, 'the stamp is the dropped 300 event, by id')
+  const held = new Map<string, Rung>()
+  const counts = soldCounts()
+  const gen = counts.generation('lamp')
+
+  const older = ladderEvent(200, 2, '', freshSteps(2))
+  assert.equal(isStale(parseRung(older.content)!.steps, PUBLISHED), false, 'so only the stamp can refuse it')
+  assert.equal(deliverLive(window, held, stamps, counts, older, PUBLISHED), 'older')
+  assert.equal(held.has('lamp'), false, 'nothing is held')
+  assert.equal(counts.generation('lamp'), gen, 'and nothing was invalidated')
+  assert.equal(deliverLive(window, held, stamps, counts, dropped, PUBLISHED), 'seen')
+  assert.equal(stamps.get('lamp')?.id, dropped.id, 'the stamp is still the dropped event')
+
+  const healed = ladderEvent(360, 4, '', freshSteps(4))
+  assert.equal(deliverLive(window, held, stamps, counts, healed, PUBLISHED), 'adopted')
+  assert.equal(stamps.get('lamp')?.id, healed.id, 'the item heals on the 360 event, by id')
+  assert.equal(held.get('lamp')?.units, 4)
+  assert.equal(counts.generation('lamp'), gen + 1)
+})
+
+test('and without the startup stamp the same 200 ladder is adopted, so the hole is real', () => {
+  const window = ladderWindow(() => 300)
+  const dropped = ladderEvent(300, 3, '', freshSteps(3))
+  window.record(dropped) // the id check alone, as before: it only knows the exact 300 event
+  const older = ladderEvent(200, 2, '', freshSteps(2))
+  const held = new Map<string, Rung>()
+  const stamps = ladderStamps()
+  const counts = soldCounts()
+  assert.equal(deliverLive(window, held, stamps, counts, older, PUBLISHED), 'adopted')
+  assert.equal(stamps.get('lamp')?.id, older.id, 'the 200 event is held, older than the one startup read')
+})
+
+test('a watched item is seeded as adopted, and a file-only item stays unstamped', () => {
+  const watchedEv = ladderEvent(300, 3, '', freshSteps(3))
+  const stamps = startupStamps(new Map([['lamp', stampOf(watchedEv)]]), ['lamp', 'vase'])
+  assert.deepEqual(stamps.get('lamp'), stampOf(watchedEv), 'the stamp is the watched event')
+  assert.equal(stamps.get('vase'), undefined, 'watched from the file, so no event to stamp')
+  assert.equal(stamps.get('mug'), undefined, 'absent from at and not watched')
+  // A failed relay read leaves `at` empty, so nothing is seeded.
+  assert.equal(startupStamps(new Map(), ['lamp']).get('lamp'), undefined)
+  // And the seeded stamp orders as a held one: the same event again and an older one are refused.
+  assert.equal(admitLive(stamps.get('lamp'), watchedEv, freshSteps(3), PUBLISHED), 'older')
+  assert.equal(admitLive(stamps.get('lamp'), ladderEvent(200, 2), freshSteps(2), PUBLISHED), 'older')
 })
