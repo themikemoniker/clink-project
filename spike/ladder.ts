@@ -195,6 +195,15 @@ export const parseRung = (plaintext: string): Rung | undefined => {
   } catch {
     return undefined
   }
+  return rungOf(value)
+}
+
+/**
+ * The shape check `parseRung` applies after `JSON.parse`, for a value that is already parsed. Same
+ * rule: a value that is not a well-formed ladder reads as no ladder. `MAX_RUNGS` is checked before
+ * any step is validated, so a huge array is refused without walking it.
+ */
+export const rungOf = (value: unknown): Rung | undefined => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const { units, noffer, steps } = value as Record<string, unknown>
   if (typeof units !== 'number' || !Number.isInteger(units) || units < 0) return undefined
@@ -202,6 +211,44 @@ export const parseRung = (plaintext: string): Rung | undefined => {
   if (!steps.every(s => validateEvent(s) && Number.isSafeInteger(s.created_at) && s.created_at >= 0)) return undefined
   if (noffer !== undefined && typeof noffer !== 'string') return undefined
   return { units, ...(noffer === undefined ? {} : { noffer }), steps: steps as Event[] }
+}
+
+/** What the seller's `.ladder.json` held: the entries that passed `rungOf`, and the keys that did not. */
+export type LadderFile = { ladders: Record<string, Rung>; rejected: string[]; unreadable: boolean }
+
+/**
+ * Bounded parse of the seller's ladder file, `{ [listingD]: { units, noffer?, steps } }` as
+ * `seed-listings.ts` and `builder/src/publish.ts` `ladderFile` write it. Never throws.
+ *
+ * The file is a different trust boundary from a relay payload: it is on the seller's own disk, but
+ * it can be hand-edited or truncated, and `nofferOf` and `isStale` read its steps at startup before
+ * `stepFor` verifies anything. So each entry passes the same `rungOf` a relay ladder passes, and a
+ * bad one costs only that item its file fallback. Text that is not a JSON object is `unreadable`.
+ *
+ * `MAX_LADDER_PLAINTEXT` is not applied: it is NIP-44's ceiling, and the file never went through
+ * NIP-44. `MAX_RUNGS` still is, inside `rungOf`.
+ *
+ * `ladders` has no prototype. The watcher looks items up by key, including keys that came from
+ * `.offers.json` or a relay, so on a plain `{}` a key like `constructor` or `toString` would find
+ * `Object.prototype`'s function and hand it on as a ladder. With no prototype a key that is not an
+ * own entry reads as `undefined`, and a key named `__proto__` is stored as an ordinary entry.
+ */
+export const parseLadderFile = (text: string): LadderFile => {
+  const ladders: Record<string, Rung> = Object.create(null)
+  const rejected: string[] = []
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return { ladders, rejected, unreadable: true }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ladders, rejected, unreadable: true }
+  for (const [d, entry] of Object.entries(value)) {
+    const rung = rungOf(entry)
+    if (rung) ladders[d] = rung
+    else rejected.push(d)
+  }
+  return { ladders, rejected, unreadable: false }
 }
 
 /** Where the ladder the watcher is about to use actually came from. */
