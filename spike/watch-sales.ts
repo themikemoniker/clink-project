@@ -55,7 +55,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { decodeNoffer } from '../storefront/src/offer.ts'
 import { parseListings } from '../storefront/src/listing.ts'
 import { REFUND_POINTER, SALE_RELAYS } from './fixture.ts'
-import { admitLive, chooseLadder, isStale, LADDER_KIND, ladderWindow, listingDOf, nofferOf, parseRung, soldCounts, type Stamp, startupStamps, stampOf, supersedes, targetStock } from './ladder.ts'
+import { admitLive, chooseLadder, isStale, LADDER_KIND, ladderWindow, listingDOf, nofferOf, parseLadderFile, parseRung, soldCounts, type Stamp, startupStamps, stampOf, supersedes, targetStock } from './ladder.ts'
 import { decodeNdebit, k1For, payDebit, type DebitPointer } from './ndebit.ts'
 import {
   inFlightGuard,
@@ -172,12 +172,12 @@ if (REFUNDS) {
 type Minted = { noffer: string; price_sats: number }
 type Rung = { units: number; noffer?: string; steps: Event[] }
 const minted: Record<string, Minted> = JSON.parse(readFileSync(OFFERS_FILE, 'utf8'))
-// M1: the file is now the FALLBACK, not the source. It is still read first because reading it
-// costs nothing and because it is what makes a cold start work before the seller has ever
-// published a ladder over a relay. It is no longer required to exist, and it is not deleted.
-const fileLadder: Record<string, Rung> = existsSync(LADDER_FILE)
-  ? JSON.parse(readFileSync(LADDER_FILE, 'utf8'))
-  : {}
+// M1: the file is the FALLBACK, read first because it is free and makes a cold start work; not required, not deleted.
+// Each entry passes the relay ladder's shape check (./ladder.ts `parseLadderFile`): a corrupt one costs its item the fallback, not the watcher.
+const fromFile = existsSync(LADDER_FILE) ? parseLadderFile(readFileSync(LADDER_FILE, 'utf8')) : undefined
+const fileLadder: Record<string, Rung> = fromFile?.ladders ?? Object.create(null) // no prototype: see parseLadderFile
+if (fromFile?.unreadable) console.log(`# ${LADDER_FILE} is not a readable ladder file, so it was ignored. Save it again from the builder, or re-run seed-listings.ts.`)
+if (fromFile?.rejected.length) console.log(`# ${LADDER_FILE}: not a well-formed ladder, so these items get no file fallback: ${fromFile.rejected.join(' ')}`)
 
 // WHY THIS DOES NOT DELETE A DEPLETED ITEM'S OFFER, against /docs/spec.md §7.4(a).
 // §7.4(a) makes "delete the offer on depletion" v1's strict mode, and it is one RPC from here —

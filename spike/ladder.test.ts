@@ -24,6 +24,7 @@ import {
   MAX_LADDER_PLAINTEXT,
   MAX_RUNGS,
   nofferOf,
+  parseLadderFile,
   parseRung,
   type Rung,
   soldCounts,
@@ -266,6 +267,71 @@ test('a payload whose steps are not events reads as no ladder, and nothing downs
     assert.deepEqual(parsed, rung)
     assert.equal(nofferOf(parsed!), NOFFER)
   }
+})
+
+test('a corrupt .ladder.json drops only its bad entries, and nothing downstream can throw on what is kept', () => {
+  // The seller's file reaches the same consumers a relay ladder does: `chooseLadder` per item, then
+  // `nofferOf` in `withOffer` and `isStale` in the stale check, all before `stepFor` verifies a
+  // signature. So every entry gets `rungOf`, and one bad entry must not take the others with it.
+  const real: Event[] = JSON.parse(JSON.stringify(ladderFor(tags('3'), 3))) // as it travels
+  const withOffer = { units: 3, noffer: NOFFER, steps: real }
+  const without = { units: 3, steps: real } // seed-listings.ts writes `noffer: undefined`, which JSON drops
+  const bad: Record<string, unknown> = {
+    'yardsale-empty-step': { units: 1, steps: [{}] },
+    'yardsale-steps-string': { steps: 'x' },
+    'yardsale-null': null,
+    'yardsale-number': 42,
+    'yardsale-array': [],
+    'yardsale-tags-string': { units: 1, steps: [{ ...real[0]!, tags: 'x' }] },
+    // On a plain `{}` these two would read back as Object.prototype's functions once dropped.
+    constructor: { units: 1, steps: [{}] },
+    toString: 'x',
+  }
+  const goodText = JSON.stringify({ 'yardsale-lamp': withOffer, 'yardsale-rug': without })
+  const mixed = parseLadderFile(JSON.stringify({ 'yardsale-lamp': withOffer, ...bad, 'yardsale-rug': without }))
+
+  assert.equal(mixed.unreadable, false)
+  for (const [d, rung] of Object.entries(mixed.ladders)) {
+    assert.doesNotThrow(() => nofferOf(rung), `nofferOf on ${d}`)
+    assert.doesNotThrow(() => isStale(rung.steps, 1_700_000_000), `isStale on ${d}`)
+    assert.equal(nofferOf(rung), NOFFER, `${d} still yields its offer`)
+  }
+  assert.deepEqual([...mixed.rejected].sort(), Object.keys(bad).sort(), 'every bad key is named, and only those')
+  assert.deepEqual(mixed.ladders['yardsale-lamp'], withOffer, 'a real entry with noffer comes back whole')
+  assert.deepEqual(mixed.ladders['yardsale-rug'], without, 'and one without noffer')
+  assert.deepEqual(Object.keys(mixed.ladders).sort(), ['yardsale-lamp', 'yardsale-rug'])
+  for (const d of Object.keys(bad)) {
+    assert.equal(Object.hasOwn(mixed.ladders, d), false, `${d} is not kept`)
+    // The watcher's own lookup, `fileLadder[d]`, then `chooseLadder`: a dropped item is unwatched.
+    assert.equal(mixed.ladders[d], undefined, `${d} reads as no file ladder`)
+    assert.equal(chooseLadder(undefined, mixed.ladders[d], false).source, 'none', `${d} takes the none branch`)
+  }
+
+  // Not a JSON object at all: the file is ignored whole, and says so, rather than throwing.
+  const truncated = goodText.slice(0, Math.floor(goodText.length / 2))
+  assert.equal(parseLadderFile(goodText).unreadable, false, 'the file it was cut from reads')
+  assert.throws(() => JSON.parse(truncated), 'and the cut really is not JSON')
+  for (const text of ['not json', '', truncated, '[]', 'null', '"str"']) {
+    const read = parseLadderFile(text)
+    assert.equal(read.unreadable, true, `unreadable: ${JSON.stringify(text.slice(0, 20))}`)
+    assert.deepEqual(Object.keys(read.ladders), [])
+    assert.deepEqual(read.rejected, [])
+  }
+
+  // A key literally named __proto__ is an own entry, not a prototype swap.
+  const proto = parseLadderFile(`{"__proto__":${JSON.stringify(without)}}`)
+  assert.deepEqual(Object.keys(proto.ladders), ['__proto__'])
+  assert.deepEqual(proto.ladders['__proto__'], without)
+  assert.equal(Object.getPrototypeOf(proto.ladders), null, 'the prototype is still none')
+
+  // No transport cap on the file: MAX_LADDER_PLAINTEXT is NIP-44's ceiling, and a file never went
+  // through NIP-44. The same entry over a relay is still refused.
+  const padded = { units: 1, steps: [{ ...real[0]!, content: 'x'.repeat(MAX_LADDER_PLAINTEXT) }] }
+  assert.ok(JSON.stringify(padded).length > MAX_LADDER_PLAINTEXT, 'the entry really is over the cap')
+  const big = parseLadderFile(JSON.stringify({ 'yardsale-big': padded }))
+  assert.deepEqual(big.ladders['yardsale-big'], padded, 'kept from a file')
+  assert.deepEqual(big.rejected, [])
+  assert.equal(parseRung(JSON.stringify(padded)), undefined, 'refused from a relay')
 })
 
 test('precedence: the relay wins when it decrypts, the file is the cold-start fallback', () => {
