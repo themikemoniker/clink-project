@@ -353,3 +353,72 @@ test('a fiat price may have a fractional part, because a peso is not a sat', asy
   assert.equal(await formValid(page), false)
   await page.close()
 })
+
+// --- G1.1 and G1.2: the front door in the seller's language -----------------------------------
+// `locale` sets navigator.language. `blocked` makes reading window.localStorage throw, as Chrome
+// does when site data is blocked, for the WHOLE real startup (L14).
+import { STRINGS } from './src/i18n.ts'
+const openIn = async (locale: string, blocked = false) => {
+  const context = await browser.newContext({ locale, viewport: { width: 360, height: 640 } })
+  const throws = () => Object.defineProperty(window, 'localStorage', { get: () => { throw new DOMException('blocked', 'SecurityError') } })
+  if (blocked) await context.addInitScript(throws)
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto(`${origin}/`)
+  await page.waitForSelector('main', { timeout: 15_000 })
+  const seen = () => page.evaluate(() => [document.documentElement.lang, document.querySelector('#nip07')!.textContent])
+  return { page, errors, context, seen, flip: () => page.locator('#lang-switch').click() }
+}
+const ES = ['es', STRINGS['s1.nip07']?.es]
+const EN = ['en', STRINGS['s1.nip07']?.en]
+
+test('es-MX gets Spanish, en-US English, and the switch flips both ways without losing input', async () => {
+  const en = await openIn('en-US')
+  assert.deepEqual(await en.seen(), EN)
+  assert.equal(await en.page.locator('#lang-switch').textContent(), 'Español')
+  await en.context.close()
+
+  const { page, errors, context, seen, flip } = await openIn('es-MX')
+  assert.deepEqual(await seen(), ES)
+  assert.equal(await page.title(), STRINGS.title?.es)
+  assert.equal(await page.locator('#lang-switch').textContent(), 'English')
+  assert.equal(await page.locator('#bunker-input').getAttribute('placeholder'), STRINGS['s1.placeholder']?.es)
+  assert.equal(await page.locator('label[for="bunker-input"] code').textContent(), 'bunker://')
+  assert.ok((await page.locator('#lang-switch').boundingBox())!.height >= 44)
+  await page.locator('#title').fill('Discos de salsa')
+  await flip()
+  assert.deepEqual(await seen(), EN)
+  await flip()
+  assert.deepEqual(await seen(), ES)
+  assert.equal(await page.locator('#title').inputValue(), 'Discos de salsa')
+  await flip() // remembered over the phone's language
+  await page.reload()
+  assert.deepEqual(await seen(), EN)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
+test('with storage blocked, the WHOLE startup runs to its last line, in Spanish, and the switch works', async () => {
+  const { page, errors, context, seen, flip } = await openIn('es-MX', true)
+  assert.equal(await page.evaluate(() => { try { return typeof localStorage } catch { return 'blocked' } }), 'blocked')
+  // refreshDeployCost, near the very end of startup, writes this: an earlier throw leaves it empty.
+  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  assert.ok(await page.locator('#perms').textContent())
+  assert.deepEqual(await seen(), ES)
+  await flip()
+  assert.deepEqual(await seen(), EN)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
+test('no horizontal scroll at 360 px with the new header, in either language', async () => {
+  for (const locale of ['es-MX', 'en-US']) {
+    const { page, context } = await openIn(locale)
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= 360), locale)
+    // A right float wider than its box overflows LEFT, which scrollWidth never sees.
+    const box = (await page.locator('#lang-switch').boundingBox())!
+    assert.ok(box.x >= 0 && box.x + box.width <= 360, `${locale}: ${JSON.stringify(box)}`)
+    await context.close()
+  }
+})

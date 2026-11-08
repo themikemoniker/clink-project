@@ -867,6 +867,16 @@ const refreshDeployCost = async () => {
 }
 
 // --- wiring ------------------------------------------------------------------------------------
+// G1.2. Imported here (imports hoist) so no line cited in docs/spec.md moves. Every startup read
+// of storage below goes through `load`, so a blocked storage cannot stop the page halfway (L14).
+import { applyLang, keep, LANG_KEY, load, pickLang } from './i18n.ts'
+let lang = pickLang(navigator.language, load(LANG_KEY))
+applyLang(document, lang)
+$('#lang-switch').addEventListener('click', () => {
+  lang = lang === 'es' ? 'en' : 'es'
+  keep(LANG_KEY, lang)
+  applyLang(document, lang)
+})
 $('#nip07').addEventListener('click', () => void connect(connectNip07))
 $('#bunker-url').addEventListener('click', () => {
   const input = $<HTMLInputElement>('#bunker-input').value
@@ -904,12 +914,12 @@ $('#deploy').addEventListener('click', () => void doDeploy())
 $('#perms').textContent = PERMS.join(', ')
 
 if (!hasNip07()) $('#nip07').setAttribute('disabled', 'true')
-const saved = localStorage.getItem(NODE_KEY)
+const saved = load(NODE_KEY)
 if (saved) {
   $<HTMLInputElement>('#node-input').value = saved
   setNode(saved, false)
 }
-const savedWatcher = localStorage.getItem(WATCHER_KEY)
+const savedWatcher = load(WATCHER_KEY)
 if (savedWatcher) {
   $<HTMLInputElement>('#watcher-input').value = savedWatcher
   setWatcher(savedWatcher, false)
@@ -918,4 +928,4 @@ showSigner()
 showSale()
 refreshCost()
 void refreshDeployCost()
-void resumeBunker().then(s => s && useSigner(s))
+void resumeBunker().catch(() => null).then(s => s && useSigner(s)) // blocked storage: no saved bunker
