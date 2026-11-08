@@ -250,7 +250,7 @@ const setWatcher = (raw: string, remember: boolean) => {
   watcher = pk
   $('#watcher-state').textContent =
     `Watcher ${pk.slice(0, 8)}… Ladders publish encrypted to this key, so no file has to move.`
-  if (remember) localStorage.setItem(WATCHER_KEY, trimmed)
+  if (remember) keep(WATCHER_KEY, trimmed)
   refreshCost()
 }
 

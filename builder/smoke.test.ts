@@ -412,6 +412,19 @@ test('with storage blocked, the WHOLE startup runs to its last line, in Spanish,
   await context.close()
 })
 
+// G2.3: a watcher paste with storage blocked cannot be remembered, but must still take effect for
+// this page load. A raw setItem throws before refreshCost, so #cost would lack the watcher term.
+test('with storage blocked, a pasted watcher key still counts its encrypted ladder', async () => {
+  const { page, errors, context } = await openIn('es-MX', true)
+  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  await page.locator('#watcher-input').fill('ab'.repeat(32)) // a fixed fake hex pubkey, not a key
+  await page.locator('#watcher-input').dispatchEvent('change')
+  assert.deepEqual(errors, [])
+  assert.match((await page.locator('#cost').textContent())!, /encrypted ladder/)
+  assert.match((await page.locator('#watcher-state').textContent())!, /abababab/)
+  await context.close()
+})
+
 test('no horizontal scroll at 360 px with the new header, in either language', async () => {
   for (const locale of ['es-MX', 'en-US']) {
     const { page, context } = await openIn(locale)
