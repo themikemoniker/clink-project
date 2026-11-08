@@ -217,3 +217,6 @@ output { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* G1.2: the language switch, one tap at the top of the page (44px from `button`). Last in the
    file so no style.css line cited elsewhere moves. */
 #lang-switch { float: right; }
+
+/* G1.4: a signer label or a stranger's `d` tag can be one unbroken word wider than a 360 px phone. */
+#whoami, .shrink li { overflow-wrap: anywhere; }
