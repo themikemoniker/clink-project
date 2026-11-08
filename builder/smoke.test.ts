@@ -435,3 +435,47 @@ test('no horizontal scroll at 360 px with the new header, in either language', a
     await context.close()
   }
 })
+
+// G1.4: the next three states a seller reaches, at 360 px, reached by writing to the DOM the way
+// main.ts does (no signer, no relay, fixed fake strings). Both checks, for the left-overflow reason
+// above, on each state's own elements only (the whole page is #25).
+const LONG = 'x'.repeat(60) // unbroken and far wider than 360 px, or the check proves nothing
+type State = [string, (p: import('playwright').Page) => Promise<unknown>, string[], string?]
+const states: State[] = [
+  ['signed in', p => p.evaluate(long => {
+    document.querySelector<HTMLElement>('#connect')!.hidden = true
+    document.querySelector<HTMLElement>('#signed-in')!.hidden = false
+    document.querySelector('#whoami')!.textContent = long + ' — ' + 'ab'.repeat(4) + '…' + 'cd'.repeat(4)
+  }, LONG), ['#signed-in', '#whoami', '#disconnect'], '#whoami'],
+  ['un-list warning', p => p.evaluate(long => {
+    document.querySelector<HTMLElement>('#sale-shrink')!.hidden = false
+    document.querySelector('#sale-shrink-what')!.textContent = 'This would un-list 2 items that your sale lists right now:'
+    document.querySelector('#sale-shrink-list')!.replaceChildren(...[long, long].map(d => {
+      const li = document.createElement('li')
+      li.textContent = d
+      return li
+    }))
+  }, LONG), ['#sale-shrink', '#sale-shrink-list li >> nth=0', '#sale-shrink-list li >> nth=1', 'label[for="sale-shrink-ok"]'], '#sale-shrink-list li >> nth=0'],
+  ['fiat price', p => intoFiat(p, 'MXN', '1234567.89'),
+    ['#item .row:has(#price-fiat)', '#price-fiat', '#price-fiat-amount', '#stock', '#price-fiat-note']],
+]
+
+test('no horizontal scroll at 360 px signed in, warning about an un-list, or priced in pesos', async () => {
+  for (const locale of ['es-MX', 'en-US']) {
+    for (const [name, into, selectors, long] of states) {
+      const { page, context, errors } = await openIn(locale)
+      await into(page)
+      const at = `${locale}, ${name}`
+      if (long) assert.ok((await page.locator(long).textContent())!.includes(LONG), `${at}: the long string is not there`)
+      const width = await page.evaluate(() => document.documentElement.scrollWidth)
+      assert.ok(width <= 360, `${at}: scrollWidth ${width}`)
+      for (const s of selectors) {
+        const box = await page.locator(s).boundingBox()
+        assert.ok(box && box.width > 0, `${at}: ${s} did not paint`)
+        assert.ok(box.x >= 0 && box.x + box.width <= 360, `${at}: ${s} ${JSON.stringify(box)}`)
+      }
+      assert.deepEqual(errors, [])
+      await context.close()
+    }
+  }
+})
