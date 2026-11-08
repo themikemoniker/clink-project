@@ -213,3 +213,7 @@ output { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
     shape-rendering: crispEdges;
   }
 }
+
+/* G1.2: the language switch, one tap at the top of the page (44px from `button`). Last in the
+   file so no style.css line cited elsewhere moves. */
+#lang-switch { float: right; }

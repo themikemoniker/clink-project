@@ -8,9 +8,9 @@
   </head>
   <body>
     <main>
-      <header>
-        <h1>Lamppost</h1>
-        <p class="lede">
+      <header><button type="button" id="lang-switch" data-i18n="lang.other">Español</button>
+        <h1 data-i18n="brand">Lamppost</h1>
+        <p class="lede" data-i18n="lede">
           Author a yard-sale item. It is signed by your own signer, its photo goes to Blossom, its
           offer is minted on your own node over CLINK, and the listing goes to public relays.
           Nothing here has a server of ours behind it.
@@ -19,20 +19,20 @@
 
       <!-- 1. signer ------------------------------------------------------------------- -->
       <section>
-        <h2>1 · Your signer</h2>
+        <h2 data-i18n="s1.h">1 · Your signer</h2>
         <div id="connect">
-          <p class="hint">
+          <p class="hint" data-i18n="s1.hint">
             Nothing in this app ever sees your key. It asks your signer to sign, and your signer
             decides.
           </p>
           <div class="row">
-            <button type="button" id="nip07">Browser extension (NIP-07)</button>
-            <button type="button" id="bunker-scan">Connect a bunker — one approval</button>
+            <button type="button" id="nip07" data-i18n="s1.nip07">Browser extension (NIP-07)</button>
+            <button type="button" id="bunker-scan" data-i18n="s1.scan">Connect a bunker — one approval</button>
           </div>
-          <label for="bunker-input">…or paste a <code>bunker://</code> URL or a NIP-05</label>
+          <label for="bunker-input"><span data-i18n="s1.paste">…or paste a</span> <code>bunker://</code> <span data-i18n="s1.pasteTail">URL or a NIP-05</span></label>
           <div class="row">
-            <input id="bunker-input" type="text" placeholder="bunker://… or you@example.com" autocomplete="off" spellcheck="false" />
-            <button type="button" id="bunker-url">Connect</button>
+            <input id="bunker-input" type="text" placeholder="bunker://… or you@example.com" data-i18n="s1.placeholder" data-i18n-attr="placeholder" autocomplete="off" spellcheck="false" />
+            <button type="button" id="bunker-url" data-i18n="s1.connect">Connect</button>
           </div>
 
           <div id="scan" hidden>
@@ -53,8 +53,8 @@
           </div>
         </div>
         <div id="signed-in" hidden>
-          <p>Signed in as <output id="whoami"></output></p>
-          <button type="button" id="disconnect">Disconnect</button>
+          <p><span data-i18n="s1.as">Signed in as</span> <output id="whoami"></output></p>
+          <button type="button" id="disconnect" data-i18n="s1.disconnect">Disconnect</button>
         </div>
       </section>
 
