@@ -663,24 +663,24 @@ const renderItems = () => {
       const why = document.createElement('span')
       why.className = 'hint'
       // M3 removed the fiat half of this. What is left is the `d`-prefix refusal, plus a currency
-      // this form cannot carry at all — a `price` tag whose currency is not letters, which no
+      // this form has no way to carry — a `price` tag whose currency is not letters, which no
       // tool of ours writes and a relay can still hand us.
       why.textContent =
         item.price && !isSats(item.price.currency) && !fiatCurrency(item.price.currency)
-          ? `Priced in something this form cannot carry, so republishing it here would change what it says.`
-          : `Published outside “${sale.d}”, so this form cannot address it without orphaning the original.`
+          ? fmt(lang, 'items.otherCurrency')
+          : fmt(lang, 'items.otherSale', { d: sale.d })
       row.append(why)
     }
 
     const label = document.createElement('label')
     label.htmlFor = `note-${item.d}`
-    label.textContent = 'Private note'
+    label.textContent = fmt(lang, 'note.label')
     const note = document.createElement('textarea')
     note.id = `note-${item.d}`
     note.rows = 2
     note.maxLength = MAX_NOTE
     note.value = notes[item.d] ?? ''
-    note.placeholder = 'What you paid for it. Who is coming to collect it. What to say if they haggle.'
+    note.placeholder = fmt(lang, 'note.placeholder')
     note.addEventListener('input', () => {
       notes[item.d] = note.value
     })
@@ -694,7 +694,7 @@ const loadPanel = async (withNotes = true) => {
   if (!signer) return
   $('#refresh-items').toggleAttribute('disabled', true)
   try {
-    $('#items-state').textContent = 'reading the relays…'
+    $('#items-state').textContent = fmt(lang, 'items.reading')
     const pubkey = await signer.getPublicKey()
     const loaded = await loadItems(pool, RELAYS, pubkey)
     owned = loaded.items
@@ -716,16 +716,16 @@ const loadPanel = async (withNotes = true) => {
     // away edits the seller has typed and not yet saved.
     if (withNotes) notes = await loadNotes(signer, pool, RELAYS)
     renderItems()
-    $('#items-state').textContent =
-      `${owned.length} item(s), read from ${answered.length}/${RELAYS.length} relays` +
-      (loaded.sale ? ` · sale “${loaded.sale.title}”` : ' · no sale published yet — section 3')
+    $('#items-state').textContent = fmt(lang, 'items.loaded', { n: String(owned.length), ok: String(answered.length),
+      all: String(RELAYS.length), sale: loaded.sale ? fmt(lang, 'items.sale', { title: loaded.sale.title }) :
+      fmt(lang, 'items.noSale') })
     $('#notes-wrap').hidden = owned.length === 0
     $('#stickers-wrap').hidden = owned.length === 0
-    $('#stickers-cost').textContent = `0 signatures. ${stickerItems(owned.map(o => o.item)).length} unsold item(s) get a sticker; sold ones do not, because the thing is gone.`
+    $('#stickers-cost').textContent = fmt(lang, 'stickers.cost', { n: String(stickerItems(owned.map(o => o.item)).length) })
     refreshSaleCost()
     $('#refresh-items').dataset.i18n = 'items.reload'; applyLang(document, lang) // stays "Reload" across a switch
     $('#notes-cost').textContent =
-      '1 signature, however many notes you changed — they are one encrypted event, not one each.'
+      fmt(lang, 'notes.cost')
   } catch (err) {
     // The read failed, so nothing below is safe to publish a replacement from. Both flags go back
     // rather than being left at whatever the last successful load said.
@@ -842,10 +842,10 @@ const doDeploy = async () => {
     const link = $<HTMLAnchorElement>('#site-url')
     link.href = result.url
     link.textContent = result.url
-    $('#deploy-detail').textContent =
-      `${result.files.length} files on ${result.servers.length} Blossom server(s), manifest on ` +
-      `${result.relaysOk}/${RELAYS.length} relays. Site version ${result.aggregate.slice(0, 12)}…. ` +
-      `The first request may time out while the gateway fetches the blobs — reload once.`
+    $('#deploy-detail').textContent = fmt(lang, 'deploy.detail', {
+      n: String(result.files.length), s: String(result.servers.length), ok: String(result.relaysOk),
+      all: String(RELAYS.length), v: result.aggregate.slice(0, 12),
+    })
   } catch (err) {
     say(err instanceof Error ? err.message : String(err), 'bad')
   } finally {

@@ -53,6 +53,19 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'items.reload': { en: 'Reload my items', es: 'Volver a cargar mis artículos' },
   'notes.save': { en: 'Save my private notes', es: 'Guardar mis notas privadas' },
   'notes.hint': { en: 'Notes are encrypted to your own key and published as one event. Nobody else can read them — not a relay, not us, not a buyer. Nothing of ours stores them either; they live on the same relays as the sale, which is why they survive you closing this tab.', es: 'Solo tú puedes leer tus notas, ni nosotros ni los compradores. Se guardan junto a tu venta, así que siguen ahí si cierras esta página.' },
+  // #74: panel 5's sentences that main.ts writes itself, and panel 7. `{sale}` is items.sale or items.noSale.
+  'items.reading': { en: 'reading the relays…', es: 'leyendo tu tienda…' },
+  'items.loaded': { en: '{n} item(s), read from {ok}/{all} relays · {sale}', es: '{n} artículo(s), leídos de {ok}/{all} servidores · {sale}' },
+  'items.sale': { en: 'sale “{title}”', es: 'venta “{title}”' },
+  'items.noSale': { en: 'no sale published yet — section 3', es: 'aún no publicas tu venta, ve a la sección 3' },
+  'items.otherCurrency': { en: 'Priced in something this form cannot carry, so republishing it here would change what it says.', es: 'Su precio está en algo que este formulario no maneja. Si lo publicas aquí, cambiaría lo que dice.' },
+  'items.otherSale': { en: 'Published outside “{d}”, so this form cannot address it without orphaning the original.', es: 'Se publicó fuera de “{d}”. Aquí no se puede cambiar sin dejar suelto el original.' },
+  'note.label': { en: 'Private note', es: 'Nota privada' },
+  'note.placeholder': { en: 'What you paid for it. Who is coming to collect it. What to say if they haggle.', es: 'Cuánto pagaste. Quién viene por él. Qué decir si regatean.' },
+  'stickers.cost': { en: '0 signatures. {n} unsold item(s) get a sticker; sold ones do not, because the thing is gone.', es: 'No tienes que aprobar nada. {n} artículo(s) sin vender llevan etiqueta. Los vendidos no, porque ya no están.' },
+  'notes.cost': { en: '1 signature, however many notes you changed — they are one encrypted event, not one each.', es: 'Lo apruebas una sola vez, aunque cambies muchas notas. Se guardan todas juntas.' },
+  'deployed.live': { en: 'Your sale is live at', es: 'Tu venta ya está en línea en' },
+  'deploy.detail': { en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.
