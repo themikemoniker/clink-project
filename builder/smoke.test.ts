@@ -506,3 +506,36 @@ test('no horizontal scroll at 360 px signed in, un-list warning, pesos, item row
     }
   }
 })
+
+// G1.3: one image per step at phone width. shots/steps.ts is what `npm run steps` in shots/ runs;
+// here it shoots the built page into a temp dir. The step count is read from every h2 in the
+// document, not from `main > section`, so a step the shooter misses cannot hide from this test.
+import { captureSteps } from '../shots/steps.ts'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename } from 'node:path'
+
+test('a steps run writes one PNG per numbered step, at most 360 px wide and under 150 000 bytes', async () => {
+  const { page, context, errors } = await openIn('es-MX')
+  const dir = await mkdtemp(join(tmpdir(), 'steps-'))
+  try {
+    const files = await captureSteps(page, dir)
+    const steps = await page.evaluate(() => [...document.querySelectorAll('h2')].filter(h => /^\s*\d/.test(h.textContent ?? '')).length)
+    assert.equal(steps, files.length, `${steps} numbered steps, ${files.length} images`)
+    assert.deepEqual(files.map(f => basename(f)), [1, 2, 3, 4, 5, 6, 7].map(n => `step-0${n}.png`))
+    const scroll = await page.evaluate(() => document.documentElement.scrollWidth)
+    assert.ok(scroll <= 360, `scrollWidth ${scroll}`)
+    for (const f of files) {
+      const png = await readFile(f)
+      assert.deepEqual([...png.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], `${f} is not a PNG`)
+      const width = png.readUInt32BE(16)
+      assert.ok(width > 0 && width <= 360, `${basename(f)}: ${width} px wide`)
+      assert.ok(png.length < 150_000, `${basename(f)}: ${png.length} bytes`)
+      console.log(`# ${basename(f)} ${width}x${png.readUInt32BE(20)} ${png.length} B`)
+    }
+    assert.deepEqual(errors, [])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+    await context.close()
+  }
+})
