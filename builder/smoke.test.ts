@@ -458,9 +458,36 @@ const states: State[] = [
   }, LONG), ['#sale-shrink', '#sale-shrink-list li >> nth=0', '#sale-shrink-list li >> nth=1', 'label[for="sale-shrink-ok"]'], '#sale-shrink-list li >> nth=0'],
   ['fiat price', p => intoFiat(p, 'MXN', '1234567.89'),
     ['#item .row:has(#price-fiat)', '#price-fiat', '#price-fiat-amount', '#stock', '#price-fiat-note']],
+  ['item row', p => p.evaluate(long => {
+    const el = (tag: string, cls = '', text = '') => Object.assign(document.createElement(tag), { className: cls, textContent: text })
+    const head = el('div', 'item-head')
+    head.append(el('strong', '', long), el('span', 'item-meta', long + ' · ' + long))
+    const row = el('div', 'row')
+    row.append(el('button', '', 'Edit'), el('button', '', 'Mark sold'))
+    const note = el('textarea') as HTMLTextAreaElement
+    note.value = long
+    const li = el('li')
+    li.append(head, row, el('label', '', 'Private note'), note)
+    document.querySelector('#items')!.replaceChildren(li)
+  }, LONG), ['#items li', '.item-head strong', '.item-meta', '#items button >> nth=0', '#items button >> nth=1', '#items textarea'], '.item-head strong'],
+  ['ladder result', p => p.evaluate(long => {
+    document.querySelector<HTMLElement>('#result')!.hidden = false
+    document.querySelector('#result-text')!.textContent = `${long} is live on 3/4 relays as ${long}, with a Buy button.`
+  }, LONG), ['#result-text', '#download-ladder'], '#result-text'],
+  ['status line', p => p.evaluate(long => {
+    const el = document.querySelector<HTMLElement>('#status')!
+    el.textContent = long + ' ' + long
+    el.dataset.tone = 'bad'
+  }, LONG), ['#status'], '#status'],
+  ['deployed panel', p => p.evaluate(long => {
+    document.querySelector<HTMLElement>('#deployed')!.hidden = false
+    const link = document.querySelector<HTMLAnchorElement>('#site-url')!
+    link.href = link.textContent = `https://${long}.nsite.lol/`
+    document.querySelector('#deploy-detail')!.textContent = `3 files on 2 Blossom server(s). Site version ${'ab'.repeat(32)}. ${long}`
+  }, LONG), ['#site-url', '#deploy-detail'], '#site-url'],
 ]
 
-test('no horizontal scroll at 360 px signed in, warning about an un-list, or priced in pesos', async () => {
+test('no horizontal scroll at 360 px signed in, un-list warning, pesos, item row, ladder result, status, deployed', async () => {
   for (const locale of ['es-MX', 'en-US']) {
     for (const [name, into, selectors, long] of states) {
       const { page, context, errors } = await openIn(locale)

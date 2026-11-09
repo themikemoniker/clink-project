@@ -218,5 +218,7 @@ output { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
    file so no style.css line cited elsewhere moves. */
 #lang-switch { float: right; }
 
-/* G1.4: a signer label or a stranger's `d` tag can be one unbroken word wider than a 360 px phone. */
-#whoami, .shrink li { overflow-wrap: anywhere; }
+/* G1.4: a signer label, a stranger's `d` tag, an item title, a gateway URL or an error can be one
+   unbroken word wider than a 360 px phone. A flex child also needs min-width: 0 to shrink. */
+#whoami, .shrink li, #result-text, #status, #site-url, #deploy-detail { overflow-wrap: anywhere; }
+.item-head > * { min-width: 0; overflow-wrap: anywhere; }
