@@ -211,21 +211,21 @@
 
       <!-- 5. the sale so far ---------------------------------------------------------- -->
       <section id="admin">
-        <h2>5 · Your sale so far</h2>
-        <p class="hint">
+        <h2 data-i18n="panel5.h">5 · Your sale so far</h2>
+        <p class="hint" data-i18n="panel5.hint">
           Read straight off the public relays with no credential at all — the same events any
           visitor sees, which is why this list can exist in a page that holds no key.
         </p>
         <div class="row">
-          <button type="button" id="refresh-items" disabled>Load my items</button>
+          <button type="button" id="refresh-items" data-i18n="items.load" disabled>Load my items</button>
           <output id="items-state"></output>
         </div>
         <ul id="items"></ul>
 
         <div id="notes-wrap" hidden>
           <p class="cost" id="notes-cost"></p>
-          <button type="button" id="save-notes">Save my private notes</button>
-          <p class="hint">
+          <button type="button" id="save-notes" data-i18n="notes.save">Save my private notes</button>
+          <p class="hint" data-i18n="notes.hint">
             Notes are encrypted to your own key and published as one event. Nobody else can read
             them — not a relay, not us, not a buyer. Nothing of ours stores them either; they live
             on the same relays as the sale, which is why they survive you closing this tab.

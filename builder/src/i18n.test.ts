@@ -32,13 +32,16 @@ test('inventory (G1.1): every key has en and es, and every data-i18n in index.ht
 // #55: four static texts in the un-list warning and the price row. None of these elements nests a
 // tag of its own name, so an element runs from its opening tag to the first closing tag that matches.
 const HTML = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
-const WIRED: Record<string, string> = { 'shrink.hint': 'publishing this list', 'shrink.ok': 'un-list them', 'price.hint': 'Sats only', 'price.fiatNote': 'priced in another currency' }
+const WIRED: Record<string, string> = { 'shrink.hint': 'publishing this list', 'shrink.ok': 'un-list them', 'price.hint': 'Sats only', 'price.fiatNote': 'priced in another currency',
+  // #60: panel 5's static text
+  'panel5.h': 'Your sale so far', 'panel5.hint': 'straight off the public relays', 'items.load': 'Load my items',
+  'notes.save': 'Save my private notes', 'notes.hint': 'encrypted to your own key' }
 const element = (keyPattern: string, flags = '') =>
   new RegExp(`<(\\w+)\\b[^>]*\\bdata-i18n="${keyPattern}"[^>]*>([\\s\\S]*?)</\\1>`, flags)
 const textOf = (html: string, key: string) => element(key.replaceAll('.', '\\.')).exec(html)?.[2]
 const unwired = (html: string) => html.replace(element('[^"]+', 'g'), '')
 
-test('inventory (#55): the un-list hint, its tick-box and both price notes are wired', () => {
+test('inventory (#55, #60): the un-list hint, its tick-box, both price notes and panel 5 are wired', () => {
   for (const [k, phrase] of Object.entries(WIRED)) {
     const text = textOf(HTML, k)
     assert.ok(text !== undefined, `index.html has no element with data-i18n="${k}"`)
@@ -52,6 +55,22 @@ test('inventory (#55, L1): the check sees a tick-box span with its data-i18n rem
   assert.notEqual(broken, HTML)
   assert.equal(textOf(broken, 'shrink.ok'), undefined)
   assert.ok(unwired(broken).includes('un-list them'))
+})
+
+test('inventory (#60, L1): removing any one of panel 5\'s data-i18n attributes is caught', () => {
+  for (const k of ['panel5.h', 'panel5.hint', 'items.load', 'notes.save', 'notes.hint']) {
+    const broken = HTML.replace(` data-i18n="${k}"`, '')
+    assert.notEqual(broken, HTML, `${k} is not in index.html`)
+    assert.equal(textOf(broken, k), undefined)
+    assert.ok(unwired(broken).includes(WIRED[k]!), `${k}: its English is not seen once unwired`)
+  }
+})
+
+test('main.ts (#60): "Reload my items" comes from the table, so a language switch keeps it', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.ok(STRINGS['items.reload']?.en === 'Reload my items', 'items.reload is not in STRINGS')
+  assert.ok(!src.includes("'Reload my items'"), 'main.ts still writes "Reload my items" itself')
+  assert.match(src, /\$\('#refresh-items'\)\.dataset\.i18n = 'items\.reload'; applyLang\(document, lang\)/)
 })
 
 test('inventory (L1): missing() goes red on a table with one es removed', () => {
