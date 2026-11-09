@@ -35,7 +35,9 @@ const HTML = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
 const WIRED: Record<string, string> = { 'shrink.hint': 'publishing this list', 'shrink.ok': 'un-list them', 'price.hint': 'Sats only', 'price.fiatNote': 'priced in another currency',
   // #60: panel 5's static text
   'panel5.h': 'Your sale so far', 'panel5.hint': 'straight off the public relays', 'items.load': 'Load my items',
-  'notes.save': 'Save my private notes', 'notes.hint': 'encrypted to your own key' }
+  'notes.save': 'Save my private notes', 'notes.hint': 'encrypted to your own key',
+  // #74: panel 7's fixed words, in a span outside the link
+  'deployed.live': 'Your sale is live at' }
 const element = (keyPattern: string, flags = '') =>
   new RegExp(`<(\\w+)\\b[^>]*\\bdata-i18n="${keyPattern}"[^>]*>([\\s\\S]*?)</\\1>`, flags)
 const textOf = (html: string, key: string) => element(key.replaceAll('.', '\\.')).exec(html)?.[2]
@@ -156,4 +158,60 @@ test('main.ts (#69): the waiting and scan lines go through the table, and so do 
   assert.ok(!src.includes('Scan the code with your signer'), 'main.ts still writes the scan line itself')
   assert.equal([...src.matchAll(/sayT\('status\.connectFail', 'bad', \{ msg: /g)].length, 2)
   assert.ok(!/say\(err instanceof Error/.test(src.slice(src.indexOf('const connect ='), src.indexOf('// --- node'))), 'a step-1 catch still prints err.message itself')
+})
+
+// #74: panel 5's sentences main.ts writes itself, and panel 7. Fake numbers and names only. Each
+// row is: key, vars, the exact English main.ts wrote before, and the values the Spanish must show.
+const SALE = 'Venta de prueba'
+const NEW74: [string, Record<string, string>, string, string[]][] = [
+  ['items.reading', {}, 'reading the relays…', []],
+  ['items.sale', { title: SALE }, `sale “${SALE}”`, [SALE]],
+  ['items.noSale', {}, 'no sale published yet — section 3', ['3']],
+  ['items.loaded', { n: '7', ok: '3', all: '4', sale: 'S' }, '7 item(s), read from 3/4 relays · S', ['7', '3/4', 'S']],
+  ['items.otherCurrency', {}, 'Priced in something this form cannot carry, so republishing it here would change what it says.', []],
+  ['items.otherSale', { d: 'otra-venta' }, 'Published outside “otra-venta”, so this form cannot address it without orphaning the original.', ['otra-venta']],
+  ['note.label', {}, 'Private note', []],
+  ['note.placeholder', {}, 'What you paid for it. Who is coming to collect it. What to say if they haggle.', []],
+  ['stickers.cost', { n: '5' }, '0 signatures. 5 unsold item(s) get a sticker; sold ones do not, because the thing is gone.', ['5']],
+  ['notes.cost', {}, '1 signature, however many notes you changed — they are one encrypted event, not one each.', []],
+  ['deploy.detail', { n: '12', s: '2', ok: '3', all: '4', v: 'abcdef012345' },
+    '12 files on 2 Blossom server(s), manifest on 3/4 relays. Site version abcdef012345…. The first request may time out while the gateway fetches the blobs — reload once.',
+    ['12', '2', '3/4', 'abcdef012345']],
+]
+
+test('fmt (#74): panel 5 and panel 7 sentences are word for word in English and filled in Spanish', () => {
+  for (const [k, vars, en, shown] of NEW74) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+    assert.ok(!/relay|blossom|manifest|nsec|signature|firma|hex/i.test(es), `${k}: jargon in "${es}"`)
+    for (const v of shown) assert.ok(es.includes(v), `${k}: es drops ${v}: "${es}"`)
+  }
+  // The loaded line, built the way main.ts builds it.
+  const line = fmt('en', 'items.loaded', { n: '2', ok: '4', all: '4', sale: fmt('en', 'items.noSale') })
+  assert.equal(line, '2 item(s), read from 4/4 relays · no sale published yet — section 3')
+  assert.deepEqual(missing([...NEW74.map(r => r[0]), 'deployed.live']), [])
+})
+
+test('fmt (#74, L1): each blanked es is caught, and the panel 7 span without its key is seen', () => {
+  for (const k of [...NEW74.map(r => r[0]), 'deployed.live']) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+  const broken = HTML.replace(' data-i18n="deployed.live"', '')
+  assert.notEqual(broken, HTML, 'deployed.live is not in index.html')
+  assert.equal(textOf(broken, 'deployed.live'), undefined)
+  assert.ok(unwired(broken).includes('Your sale is live at'))
+  // applyLang writes textContent, so the key must sit on the span, never on the <p> around the link.
+  assert.match(HTML, /<span data-i18n="deployed\.live">Your sale is live at<\/span> <a id="site-url"/)
+})
+
+test('main.ts (#74): panel 5 and panel 7 sentences go through the table', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  for (const gone of ["'reading the relays…'", "'Private note'", 'What you paid for it', 'unsold item(s) get a sticker',
+    '1 signature, however many', 'this form cannot', 'Site version', 'no sale published yet', 'item(s), read from'])
+    assert.ok(!src.includes(gone), `main.ts still writes "${gone}" itself`)
+  for (const [k] of NEW74) assert.ok(src.includes(`fmt(lang, '${k}'`), `main.ts never calls fmt(lang, '${k}')`)
 })
