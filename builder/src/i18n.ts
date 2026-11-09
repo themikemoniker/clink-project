@@ -35,6 +35,10 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   's1.connect': { en: 'Connect', es: 'Conectar' },
   's1.as': { en: 'Signed in as', es: 'Conectado como' },
   's1.disconnect': { en: 'Disconnect', es: 'Desconectar' },
+  'shrink.hint': { en: 'A kind 30405 is a replacement: publishing this list is what un-lists the rest, because nostr has no “remove one item” event. Un-listing is not deleting — those listings stay on the relays and your storefront still draws them, at the foot of the page and out of the sale’s order. And this is exactly what deliberately retiring an item looks like, which is why nobody can tell the two apart for you.', es: 'Al publicar esta lista, los demás artículos dejan de estar en la venta. Quitarlos no es borrarlos: siguen en tu tienda, al final de la página. Así se ve también quitar algo a propósito, y por eso solo tú sabes si fue tu intención.' },
+  'shrink.ok': { en: 'Yes, un-list them. I meant to.', es: 'Sí, quítalos de la venta. Lo quiero así.' },
+  'price.hint': { en: 'Sats only. There is no currency conversion anywhere in this app — that would need a price oracle, and an oracle is somebody else’s server. Price something in pesos by leaving the node field empty: it lists, it just has no Buy button.', es: 'Solo en sats. Esta app no convierte monedas. Para poner un precio en pesos, deja vacío el campo del nodo: el artículo se publica, pero sin botón de Comprar.' },
+  'price.fiatNote': { en: 'This item was priced in another currency, so it keeps that price and stays cash at the table — no Buy button, no offer on your node, whatever the node field says. You can change the amount. You cannot change the currency here, and nothing in this app converts one to the other.', es: 'Este artículo tiene precio en otra moneda, así que se paga en efectivo y no tiene botón de Comprar. Puedes cambiar la cantidad, pero aquí no puedes cambiar la moneda. Esta app no convierte monedas.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.

@@ -123,8 +123,8 @@
           <div id="sale-shrink" class="shrink" hidden>
             <p class="warn" id="sale-shrink-what"></p>
             <ul id="sale-shrink-list"></ul>
-            <p class="hint">
-              A kind 30405 is a <strong>replacement</strong>: publishing this list is what un-lists
+            <p class="hint" data-i18n="shrink.hint">
+              A kind 30405 is a replacement: publishing this list is what un-lists
               the rest, because nostr has no “remove one item” event. Un-listing is not deleting —
               those listings stay on the relays and your storefront still draws them, at the foot
               of the page and out of the sale’s order. And this is exactly what deliberately
@@ -132,7 +132,7 @@
             </p>
             <label class="row" for="sale-shrink-ok">
               <input type="checkbox" id="sale-shrink-ok" />
-              <span>Yes, un-list them. I meant to.</span>
+              <span data-i18n="shrink.ok">Yes, un-list them. I meant to.</span>
             </label>
           </div>
 
@@ -181,12 +181,12 @@
               <input id="stock" type="number" min="0" max="999" step="1" value="1" required />
             </span>
           </div>
-          <p class="hint">
+          <p class="hint" data-i18n="price.hint">
             Sats only. There is no currency conversion anywhere in this app — that would need a
             price oracle, and an oracle is somebody else’s server. Price something in pesos by
             leaving the node field empty: it lists, it just has no Buy button.
           </p>
-          <p class="warn" id="price-fiat-note" hidden>
+          <p class="warn" id="price-fiat-note" data-i18n="price.fiatNote" hidden>
             This item was priced in another currency, so it keeps that price and stays cash at the
             table — no Buy button, no offer on your node, whatever the node field says. You can
             change the amount. You cannot change the currency here, and nothing in this app
