@@ -551,9 +551,9 @@ const doPublishSale = async (event: SubmitEvent) => {
     // every subsequent publish ask again about items that are already gone.
     saleMembers = next
     showShrink([])
-    $('#sale-state').textContent =
-      `“${draft.title}” is live on ${relaysOk}/${RELAYS.length} relays as ${draft.d}, listing ${owned.length} item(s).` +
-      (draft.g ? ' Its neighbourhood is now a tappable map link on your storefront.' : '')
+    $('#sale-state').textContent = saleLive(lang, {
+      title: draft.title, ok: relaysOk, total: RELAYS.length, d: draft.d, items: owned.length, mapLink: !!draft.g,
+    })
   } catch (err) {
     say(err instanceof Error ? err.message : String(err), 'bad')
   } finally {
@@ -870,6 +870,7 @@ const refreshDeployCost = async () => {
 // of storage below goes through `load`, so a blocked storage cannot stop the page halfway (L14).
 import { applyLang, fmt, keep, LANG_KEY, load, pickLang } from './i18n.ts'
 import { unlistSay, unlistWhat } from './unlist-text.ts'
+import { saleLive } from './sale-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
 // #69: a status line from the table, and the last signed-in name, kept so the switch can re-write
 // them. Declared here, after every cited line; `say` clears `shown` so a later plain text stays.
