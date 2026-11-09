@@ -42,6 +42,13 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'shrink.ok': { en: 'Yes, un-list them. I meant to.', es: 'Sí, quítalos de la venta. Lo quiero así.' },
   'price.hint': { en: 'Sats only. There is no currency conversion anywhere in this app — that would need a price oracle, and an oracle is somebody else’s server. Price something in pesos by leaving the node field empty: it lists, it just has no Buy button.', es: 'Solo en sats. Esta app no convierte monedas. Para poner un precio en pesos, deja vacío el campo del nodo: el artículo se publica, pero sin botón de Comprar.' },
   'price.fiatNote': { en: 'This item was priced in another currency, so it keeps that price and stays cash at the table — no Buy button, no offer on your node, whatever the node field says. You can change the amount. You cannot change the currency here, and nothing in this app converts one to the other.', es: 'Este artículo tiene precio en otra moneda, así que se paga en efectivo y no tiene botón de Comprar. Puedes cambiar la cantidad, pero aquí no puedes cambiar la moneda. Esta app no convierte monedas.' },
+  // #60: panel 5's static text. `items.reload` has no HTML text: main.ts sets it after a load.
+  'panel5.h': { en: '5 · Your sale so far', es: '5 · Tu venta hasta ahora' },
+  'panel5.hint': { en: 'Read straight off the public relays with no credential at all — the same events any visitor sees, which is why this list can exist in a page that holds no key.', es: 'Esta lista se lee de los servidores públicos, igual que la ve cualquier visitante de tu tienda.' },
+  'items.load': { en: 'Load my items', es: 'Ver mis artículos' },
+  'items.reload': { en: 'Reload my items', es: 'Volver a cargar mis artículos' },
+  'notes.save': { en: 'Save my private notes', es: 'Guardar mis notas privadas' },
+  'notes.hint': { en: 'Notes are encrypted to your own key and published as one event. Nobody else can read them — not a relay, not us, not a buyer. Nothing of ours stores them either; they live on the same relays as the sale, which is why they survive you closing this tab.', es: 'Solo tú puedes leer tus notas, ni nosotros ni los compradores. Se guardan junto a tu venta, así que siguen ahí si cierras esta página.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.

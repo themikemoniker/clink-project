@@ -723,7 +723,7 @@ const loadPanel = async (withNotes = true) => {
     $('#stickers-wrap').hidden = owned.length === 0
     $('#stickers-cost').textContent = `0 signatures. ${stickerItems(owned.map(o => o.item)).length} unsold item(s) get a sticker; sold ones do not, because the thing is gone.`
     refreshSaleCost()
-    $('#refresh-items').textContent = 'Reload my items'
+    $('#refresh-items').dataset.i18n = 'items.reload'; applyLang(document, lang) // stays "Reload" across a switch
     $('#notes-cost').textContent =
       '1 signature, however many notes you changed — they are one encrypted event, not one each.'
   } catch (err) {
