@@ -348,7 +348,7 @@ const resetItem = () => {
   // last edited item's currency, which is the class of defect `resetItem` exists for — the
   // second-publish-under-the-first-item's-d bug in this same function.
   showFiat(null)
-  $('#publish').textContent = 'Publish this item'
+  editView = null; $('#publish').dataset.i18n = 'item.publish'; $('#publish').textContent = fmt(lang, 'item.publish')
   $('#editing-note').hidden = true
   $('#cancel-edit').hidden = true
   $('#photo-state').textContent =
@@ -647,13 +647,13 @@ const renderItems = () => {
     if (editable) {
       const edit = document.createElement('button')
       edit.type = 'button'
-      edit.textContent = 'Edit'
+      edit.dataset.i18n = 'item.edit'; edit.textContent = fmt(lang, 'item.edit')
       edit.addEventListener('click', () => editItem(own, editable))
       row.append(edit)
       if (!item.sold) {
         const sold = document.createElement('button')
         sold.type = 'button'
-        sold.textContent = 'Mark sold'
+        sold.dataset.i18n = 'item.markSold'; sold.textContent = fmt(lang, 'item.markSold')
         sold.addEventListener('click', () => editItem(own, { ...editable, stock: 0 }, true))
         row.append(sold)
       }
@@ -765,15 +765,15 @@ const editItem = (own: Owned, draft: Draft, markingSold = false) => {
   $('#photo-state').textContent = draft.blobs.length
     ? `${draft.blobs.map(b => `${b.w}px`).join(', ')} already on Blossom. Leave the file field empty to keep them.`
     : 'No photo on this item yet.'
-  $('#publish').textContent = markingSold ? `Mark “${draft.title}” sold` : `Publish changes to “${draft.title}”`
-  $('#editing-note').hidden = false
-  $('#editing-note').textContent = markingSold
-    ? 'Its Buy button disappears as soon as this publishes, because a sold listing carries no offer pointer. The offer itself stays on your node — deleting it would take the buyer’s stored refund pointer with it, and a payment that lands late still has to be refundable.'
-    : `Editing ${own.item.d}. It replaces the listing at the same address — nostr has no edit, only replacement — and re-cuts the availability ladder, so your watcher needs the new file afterwards.`
+  // #106: both texts hold {title} or {d}, so #publish drops its data-i18n here and `showEdit` re-writes them.
+  delete $('#publish').dataset.i18n; $('#editing-note').hidden = false
+  editView = markingSold ? { btn: 'edit.markSold', note: 'edit.soldNote', vars: { title: draft.title, d: own.item.d } }
+    : { btn: 'edit.publishChanges', note: 'edit.note', vars: { title: draft.title, d: own.item.d } }
+  showEdit()
   $('#cancel-edit').hidden = false
   refreshCost()
   $('#item').scrollIntoView({ behavior: 'smooth', block: 'start' })
-  say(markingSold ? 'Check it over, then publish.' : 'Loaded. Change what you need, then publish.', 'ok')
+  sayT(markingSold ? 'edit.check' : 'edit.loaded', 'ok')
 }
 
 const doSaveNotes = async () => {
@@ -877,6 +877,13 @@ let lang = pickLang(navigator.language, load(LANG_KEY))
 type Tone = 'ok' | 'busy' | 'bad'
 let shown: { key: string; tone: Tone; vars?: Record<string, string> } | null = null
 let who: { label: string; key: string } | null = null
+// #106: what #publish and #editing-note show mid-edit, so a switch re-writes them. `resetItem` clears it.
+let editView: { btn: string; note: string; vars: Record<string, string> } | null = null
+const showEdit = () => {
+  if (!editView) return
+  $('#publish').textContent = fmt(lang, editView.btn, editView.vars)
+  $('#editing-note').textContent = fmt(lang, editView.note, editView.vars)
+}
 const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) => {
   say(fmt(lang, key, vars), tone) // `lang` read now, not captured
   shown = { key, tone, vars }
@@ -888,6 +895,7 @@ $('#lang-switch').addEventListener('click', () => {
   applyLang(document, lang)
   if (shown) sayT(shown.key, shown.tone, shown.vars)
   if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
+  showEdit()
 })
 $('#nip07').addEventListener('click', () => void connect(connectNip07))
 $('#bunker-url').addEventListener('click', () => {

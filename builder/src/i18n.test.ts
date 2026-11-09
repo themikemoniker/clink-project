@@ -215,3 +215,74 @@ test('main.ts (#74): panel 5 and panel 7 sentences go through the table', () => 
     assert.ok(!src.includes(gone), `main.ts still writes "${gone}" itself`)
   for (const [k] of NEW74) assert.ok(src.includes(`fmt(lang, '${k}'`), `main.ts never calls fmt(lang, '${k}')`)
 })
+
+// #106: the edit-an-item flow. Fake title and slug only. Each row: key, vars, the exact English
+// main.ts wrote before, and the values the Spanish must show.
+const NEW106: [string, Record<string, string>, string, string[]][] = [
+  ['item.publish', {}, 'Publish this item', []],
+  ['item.edit', {}, 'Edit', []],
+  ['item.markSold', {}, 'Mark sold', []],
+  ['edit.publishChanges', { title: 'Silla roja' }, 'Publish changes to “Silla roja”', ['Silla roja']],
+  ['edit.markSold', { title: 'Silla roja' }, 'Mark “Silla roja” sold', ['Silla roja']],
+  ['edit.note', { d: 'yardsale-x-silla' }, 'Editing yardsale-x-silla. It replaces the listing at the same address — nostr has no edit, only replacement — and re-cuts the availability ladder, so your watcher needs the new file afterwards.', ['yardsale-x-silla']],
+  ['edit.soldNote', {}, 'Its Buy button disappears as soon as this publishes, because a sold listing carries no offer pointer. The offer itself stays on your node — deleting it would take the buyer’s stored refund pointer with it, and a payment that lands late still has to be refundable.', ['Comprar']],
+  ['edit.check', {}, 'Check it over, then publish.', []],
+  ['edit.loaded', {}, 'Loaded. Change what you need, then publish.', []],
+]
+
+test('fmt (#106): the edit flow is word for word in English and filled, plain Spanish', () => {
+  for (const [k, vars, en, shown] of NEW106) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+    assert.ok(!/nostr|relay|signer|blossom|kind|pointer|replacement|ladder|nsec|hex/i.test(es), `${k}: jargon in "${es}"`)
+    for (const v of shown) assert.ok(es.includes(v), `${k}: es drops ${v}: "${es}"`)
+  }
+  assert.deepEqual(missing(NEW106.map(r => r[0])), [])
+})
+
+test('fmt (#106, L1): each blanked es is caught by missing', () => {
+  for (const [k] of NEW106) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+test('inventory (#106): the Publish button is wired; only fixed texts carry a data-i18n', () => {
+  const text = textOf(HTML, 'item.publish')
+  assert.equal(text?.trim(), STRINGS['item.publish']!.en, 'index.html #publish has no data-i18n="item.publish"')
+  assert.ok(!unwired(HTML).includes('Publish this item'), '"Publish this item" is outside a data-i18n element')
+  // applyLang writes the raw table text, so a {title} or {d} key on a node would print the slot.
+  for (const k of [...HTML.matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1]!))
+    assert.ok(!STRINGS[k]!.en.includes('{'), `index.html puts ${k}, which has a {slot}, on a data-i18n node`)
+})
+
+test('inventory (#106, L1): the Publish button with its data-i18n removed is caught', () => {
+  const broken = HTML.replace(' data-i18n="item.publish"', '')
+  assert.notEqual(broken, HTML, 'item.publish is not in index.html')
+  assert.equal(textOf(broken, 'item.publish'), undefined)
+  assert.ok(unwired(broken).includes('Publish this item'))
+})
+
+test('main.ts (#106): the edit flow goes through the table and survives a language switch', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  for (const gone of ["'Edit'", "'Mark sold'", "'Publish this item'", 'Publish changes to', '” sold`', 'Check it over, then publish.',
+    'Loaded. Change what you need', 'Its Buy button disappears', 're-cuts the availability ladder'])
+    assert.ok(!src.includes(gone), `main.ts still writes "${gone}" itself`)
+  // The row buttons keep a key so applyLang re-writes them; the vars texts never get one.
+  assert.ok(src.includes("edit.dataset.i18n = 'item.edit'; edit.textContent = fmt(lang, 'item.edit')"), 'Edit row button')
+  assert.ok(src.includes("sold.dataset.i18n = 'item.markSold'; sold.textContent = fmt(lang, 'item.markSold')"), 'Mark sold row button')
+  assert.ok(!/dataset\.i18n = 'edit\./.test(src), 'a {title}/{d} key is put on a data-i18n node')
+  // resetItem gives #publish its fixed key back and forgets the edit; editItem takes the key away.
+  const reset = src.slice(src.indexOf('const resetItem ='), src.indexOf('// --- publish ---'))
+  assert.ok(reset.includes("editView = null; $('#publish').dataset.i18n = 'item.publish'; $('#publish').textContent = fmt(lang, 'item.publish')"), 'resetItem')
+  const edit = src.slice(src.indexOf('const editItem ='), src.indexOf('const doSaveNotes ='))
+  assert.ok(edit.includes("delete $('#publish').dataset.i18n"), 'editItem leaves item.publish on #publish, so a switch prints "Publish this item"')
+  for (const k of ['edit.markSold', 'edit.soldNote', 'edit.publishChanges', 'edit.note']) assert.ok(edit.includes(`'${k}'`), `editItem never uses ${k}`)
+  assert.ok(edit.includes("sayT(markingSold ? 'edit.check' : 'edit.loaded', 'ok')"), 'the loaded status is not re-translated on a switch')
+  const sw = src.slice(src.indexOf("$('#lang-switch').addEventListener"), src.indexOf("$('#nip07')"))
+  assert.ok(/applyLang\(document, lang\)[\s\S]*showEdit\(\)/.test(sw), 'the switch does not re-write the edit texts after applyLang')
+  assert.match(src, /const showEdit = \(\) => \{\n  if \(!editView\) return\n  \$\('#publish'\)\.textContent = fmt\(lang, editView\.btn, editView\.vars\)\n  \$\('#editing-note'\)\.textContent = fmt\(lang, editView\.note, editView\.vars\)/)
+})
