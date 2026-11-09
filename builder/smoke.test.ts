@@ -539,3 +539,49 @@ test('a steps run writes one PNG per numbered step, at most 360 px wide and unde
     await context.close()
   }
 })
+
+// #69: a step-1 line already on screen flips with the switch. With no window.nostr the #nip07
+// button starts disabled (hasNip07), so the test enables it the way a late-injecting extension
+// would leave it; connectNip07 then throws "No NIP-07 extension found…" (signer.ts).
+const statusOf = (p: import('playwright').Page) =>
+  p.evaluate(() => { const el = document.querySelector<HTMLElement>('#status')!; return [el.textContent, el.dataset.tone] })
+
+test('a failed connect shows Spanish without the error, and the switch re-writes the line both ways', async () => {
+  const { page, errors, context, flip } = await openIn('es-MX')
+  await page.evaluate(() => document.querySelector('#nip07')!.removeAttribute('disabled'))
+  await page.locator('#nip07').click()
+  await page.waitForFunction(() => document.querySelector<HTMLElement>('#status')!.dataset.tone === 'bad', null, { timeout: 5_000 })
+  const es = [STRINGS['status.connectFail']?.es, 'bad']
+  assert.deepEqual(await statusOf(page), es)
+  await flip()
+  const [en, tone] = await statusOf(page)
+  assert.match(en!, /^No NIP-07 extension found/)
+  assert.equal(tone, 'bad')
+  await flip()
+  assert.deepEqual(await statusOf(page), es)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
+test('the waiting line flips es to en and back while the signer has not answered', async () => {
+  const context = await browser.newContext({ locale: 'es-MX', viewport: { width: 360, height: 640 } })
+  // A fixed fake object, no key: connectNip07 awaits getPublicKey, which never settles here.
+  await context.addInitScript(() => {
+    const never = () => new Promise<never>(() => {})
+    Object.assign(window, { nostr: { getPublicKey: never, signEvent: never, nip44: { encrypt: never, decrypt: never } } })
+  })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto(`${origin}/`)
+  await page.waitForSelector('main', { timeout: 15_000 })
+  await page.locator('#nip07').click()
+  const es = [STRINGS['status.waiting']?.es, 'busy']
+  assert.deepEqual(await statusOf(page), es)
+  await page.locator('#lang-switch').click()
+  assert.deepEqual(await statusOf(page), ['Waiting for your signer…', 'busy'])
+  await page.locator('#lang-switch').click()
+  assert.deepEqual(await statusOf(page), es)
+  assert.deepEqual(errors, [])
+  await context.close()
+})

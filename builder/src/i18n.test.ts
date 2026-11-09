@@ -123,5 +123,37 @@ test('main.ts (#34): neither step-1 text bypasses the table', () => {
   const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
   assert.ok(!src.includes('Connected via'), 'main.ts still writes "Connected via" itself')
   assert.ok(!src.includes('.label} —'), 'main.ts still builds the signed-in name from a template')
-  assert.equal([...src.matchAll(/fmt\(lang, '(status\.connected|whoami)'/g)].length, 2)
+  assert.ok(src.includes("sayT('status.connected', 'ok', { label: s.label })"), 'the connected line is not in the table')
+  assert.ok(/fmt\(lang, 'whoami', \(who = /.test(src), 'the signed-in name is not kept for the switch')
+})
+
+// #69: the waiting, scan and failure lines. The failure's es must not carry the raw English error.
+const NEW69 = ['status.waiting', 'status.scan', 'status.connectFail']
+test('fmt (#69): waiting, scan and failure lines have Spanish, and the Spanish failure hides the error', () => {
+  for (const k of NEW69) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.notEqual(STRINGS[k]!.es, STRINGS[k]!.en, `${k} is untranslated`)
+    assert.ok(!/signer|bunker|nip-?\d|relay|nsec|hex/i.test(STRINGS[k]!.es), `${k}: jargon in "${STRINGS[k]!.es}"`)
+  }
+  assert.deepEqual(missing(NEW69), [])
+  const es = fmt('es', 'status.connectFail', { msg: 'boom' })
+  assert.ok(!es.includes('{') && !es.includes('boom'), es)
+  assert.equal(fmt('en', 'status.connectFail', { msg: 'boom' }), 'boom')
+  assert.equal(fmt('en', 'status.waiting'), 'Waiting for your signer…')
+  assert.equal(fmt('en', 'status.scan'), 'Scan the code with your signer. Approve every permission it lists.')
+})
+
+test('fmt (#69, L1): each blanked es is caught by missing', () => {
+  for (const k of NEW69) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: ' ' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+test('main.ts (#69): the waiting and scan lines go through the table, and so do both failures', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.ok(!src.includes('Waiting for your signer'), 'main.ts still writes the waiting line itself')
+  assert.ok(!src.includes('Scan the code with your signer'), 'main.ts still writes the scan line itself')
+  assert.equal([...src.matchAll(/sayT\('status\.connectFail', 'bad', \{ msg: /g)].length, 2)
+  assert.ok(!/say\(err instanceof Error/.test(src.slice(src.indexOf('const connect ='), src.indexOf('// --- node'))), 'a step-1 catch still prints err.message itself')
 })
