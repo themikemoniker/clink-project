@@ -133,7 +133,7 @@ const saveLadder = () => {
 
 // --- status line ---------------------------------------------------------------------------
 const say = (text: string, tone: 'ok' | 'busy' | 'bad' = 'busy') => {
-  const el = $('#status')
+  const el = $('#status'); shown = null // a non-table text: the switch leaves it alone (sayT, below)
   el.textContent = text
   el.dataset.tone = tone
 }
@@ -148,14 +148,14 @@ const showSigner = () => {
   $('#refresh-items').toggleAttribute('disabled', !signer)
   $('#save-notes').toggleAttribute('disabled', !signer)
   if (signer) void signer.getPublicKey().then(pk => {
-    $('#whoami').textContent = fmt(lang, 'whoami', { label: signer!.label, key: `${pk.slice(0, 8)}…${pk.slice(-8)}` })
+    $('#whoami').textContent = fmt(lang, 'whoami', (who = { label: signer!.label, key: `${pk.slice(0, 8)}…${pk.slice(-8)}` }))
   })
 }
 
 const useSigner = (s: Signer) => {
   signer = s
   showSigner()
-  say(fmt(lang, 'status.connected', { label: s.label }), 'ok')
+  sayT('status.connected', 'ok', { label: s.label })
   refreshCost()
   void s.getPublicKey().then(pk => {
     ladderKey = LADDER_KEY + pk
@@ -166,10 +166,10 @@ const useSigner = (s: Signer) => {
 
 const connect = async (fn: () => Promise<Signer>) => {
   try {
-    say('Waiting for your signer…')
+    sayT('status.waiting')
     useSigner(await fn())
   } catch (err) {
-    say(err instanceof Error ? err.message : String(err), 'bad')
+    sayT('status.connectFail', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   }
 }
 
@@ -193,12 +193,12 @@ const startScan = async () => {
   const { renderSVG } = await import('uqr')
   $('#connect-qr').innerHTML = renderSVG(uri, { border: 2 })
   $('#scan').hidden = false
-  say('Scan the code with your signer. Approve every permission it lists.')
+  sayT('status.scan')
   try {
     useSigner(await awaitBunkerScan(uri, scanAbort.signal))
     $('#scan').hidden = true
   } catch (err) {
-    if (!scanAbort.signal.aborted) say(err instanceof Error ? err.message : String(err), 'bad')
+    if (!scanAbort.signal.aborted) sayT('status.connectFail', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   }
 }
 
@@ -871,11 +871,22 @@ const refreshDeployCost = async () => {
 import { applyLang, fmt, keep, LANG_KEY, load, pickLang } from './i18n.ts'
 import { unlistSay, unlistWhat } from './unlist-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
+// #69: a status line from the table, and the last signed-in name, kept so the switch can re-write
+// them. Declared here, after every cited line; `say` clears `shown` so a later plain text stays.
+type Tone = 'ok' | 'busy' | 'bad'
+let shown: { key: string; tone: Tone; vars?: Record<string, string> } | null = null
+let who: { label: string; key: string } | null = null
+const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) => {
+  say(fmt(lang, key, vars), tone) // `lang` read now, not captured
+  shown = { key, tone, vars }
+}
 applyLang(document, lang)
 $('#lang-switch').addEventListener('click', () => {
   lang = lang === 'es' ? 'en' : 'es'
   keep(LANG_KEY, lang)
   applyLang(document, lang)
+  if (shown) sayT(shown.key, shown.tone, shown.vars)
+  if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
 })
 $('#nip07').addEventListener('click', () => void connect(connectNip07))
 $('#bunker-url').addEventListener('click', () => {
