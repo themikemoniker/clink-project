@@ -65,7 +65,17 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'stickers.cost': { en: '0 signatures. {n} unsold item(s) get a sticker; sold ones do not, because the thing is gone.', es: 'No tienes que aprobar nada. {n} artículo(s) sin vender llevan etiqueta. Los vendidos no, porque ya no están.' },
   'notes.cost': { en: '1 signature, however many notes you changed — they are one encrypted event, not one each.', es: 'Lo apruebas una sola vez, aunque cambies muchas notas. Se guardan todas juntas.' },
   'deployed.live': { en: 'Your sale is live at', es: 'Tu venta ya está en línea en' },
-  'deploy.detail': { en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
+  // #106: the edit-an-item flow. `edit.*` hold {title} or {d}, so they never sit on a data-i18n node.
+  'item.publish': { en: 'Publish this item', es: 'Publicar este artículo' },
+  'item.edit': { en: 'Edit', es: 'Cambiar' },
+  'item.markSold': { en: 'Mark sold', es: 'Ya se vendió' },
+  'edit.publishChanges': { en: 'Publish changes to “{title}”', es: 'Publicar cambios en “{title}”' },
+  'edit.markSold': { en: 'Mark “{title}” sold', es: 'Marcar “{title}” como vendido' },
+  'edit.note': { en: 'Editing {d}. It replaces the listing at the same address — nostr has no edit, only replacement — and re-cuts the availability ladder, so your watcher needs the new file afterwards.', es: 'Estás cambiando “{d}”. Al publicar, reemplaza al anuncio de antes. Luego revisa la sección 6.' },
+  'edit.soldNote': { en: 'Its Buy button disappears as soon as this publishes, because a sold listing carries no offer pointer. The offer itself stays on your node — deleting it would take the buyer’s stored refund pointer with it, and a payment that lands late still has to be refundable.', es: 'Al publicar, se quita su botón de Comprar. Tu nodo guarda el cobro por si hay que devolver un pago que llegue tarde.' },
+  'edit.check': { en: 'Check it over, then publish.', es: 'Revísalo y luego publícalo.' },
+  'edit.loaded': { en: 'Loaded. Change what you need, then publish.', es: 'Listo. Cambia lo que necesites y luego publícalo.' },
+  'deploy.detail':{ en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.
