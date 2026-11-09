@@ -491,7 +491,7 @@ const showShrink = (dropped: string[]) => {
     return
   }
   $('#sale-shrink-what').textContent =
-    `This would un-list ${dropped.length} item${dropped.length === 1 ? '' : 's'} that your sale lists right now:`
+    unlistWhat(lang, dropped.length)
   $('#sale-shrink-list').replaceChildren(
     ...dropped.map(d => {
       const li = document.createElement('li')
@@ -534,8 +534,7 @@ const doPublishSale = async (event: SubmitEvent) => {
   if (dropped.length && !$<HTMLInputElement>('#sale-shrink-ok').checked) {
     showShrink(dropped)
     return say(
-      `Publishing this would un-list ${dropped.length} item${dropped.length === 1 ? '' : 's'}. ` +
-        `Read the box above, then tick it if you meant to.`,
+      unlistSay(lang, dropped.length),
       'bad',
     )
   }
@@ -870,6 +869,7 @@ const refreshDeployCost = async () => {
 // G1.2. Imported here (imports hoist) so no line cited in docs/spec.md moves. Every startup read
 // of storage below goes through `load`, so a blocked storage cannot stop the page halfway (L14).
 import { applyLang, fmt, keep, LANG_KEY, load, pickLang } from './i18n.ts'
+import { unlistSay, unlistWhat } from './unlist-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
 applyLang(document, lang)
 $('#lang-switch').addEventListener('click', () => {
