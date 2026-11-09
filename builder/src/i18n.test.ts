@@ -29,6 +29,31 @@ test('inventory (G1.1): every key has en and es, and every data-i18n in index.ht
   for (const k of used) assert.ok(k in STRINGS, `index.html uses ${k}, which is not in STRINGS`)
 })
 
+// #55: four static texts in the un-list warning and the price row. None of these elements nests a
+// tag of its own name, so an element runs from its opening tag to the first closing tag that matches.
+const HTML = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
+const WIRED: Record<string, string> = { 'shrink.hint': 'publishing this list', 'shrink.ok': 'un-list them', 'price.hint': 'Sats only', 'price.fiatNote': 'priced in another currency' }
+const element = (keyPattern: string, flags = '') =>
+  new RegExp(`<(\\w+)\\b[^>]*\\bdata-i18n="${keyPattern}"[^>]*>([\\s\\S]*?)</\\1>`, flags)
+const textOf = (html: string, key: string) => element(key.replaceAll('.', '\\.')).exec(html)?.[2]
+const unwired = (html: string) => html.replace(element('[^"]+', 'g'), '')
+
+test('inventory (#55): the un-list hint, its tick-box and both price notes are wired', () => {
+  for (const [k, phrase] of Object.entries(WIRED)) {
+    const text = textOf(HTML, k)
+    assert.ok(text !== undefined, `index.html has no element with data-i18n="${k}"`)
+    assert.equal(text.replace(/\s+/g, ' ').trim(), STRINGS[k]!.en, `${k}: the HTML fallback is not the table's en`)
+    assert.ok(!unwired(HTML).includes(phrase), `"${phrase}" is in index.html outside a data-i18n element`)
+  }
+})
+
+test('inventory (#55, L1): the check sees a tick-box span with its data-i18n removed', () => {
+  const broken = HTML.replace(' data-i18n="shrink.ok"', '')
+  assert.notEqual(broken, HTML)
+  assert.equal(textOf(broken, 'shrink.ok'), undefined)
+  assert.ok(unwired(broken).includes('un-list them'))
+})
+
 test('inventory (L1): missing() goes red on a table with one es removed', () => {
   const broken = { ...STRINGS, 's1.nip07': { en: STRINGS['s1.nip07']!.en, es: '' } }
   assert.deepEqual(missing(Object.keys(broken), broken), ['s1.nip07'])
@@ -39,7 +64,7 @@ test('inventory (L1): missing() goes red on a table with one es removed', () => 
 
 test('the Spanish has no jargon', () => {
   for (const [k, v] of Object.entries(STRINGS))
-    for (const w of ['signer', 'bunker', 'nip-07', 'relay', 'nsec'])
+    for (const w of ['signer', 'bunker', 'nip-07', 'relay', 'nsec', ...(k in WIRED ? ['nostr', 'kind 30405', 'oracle'] : [])])
       assert.ok(!v.es.toLowerCase().includes(w), `${k}: es says "${w}"`)
 })
 
