@@ -35,6 +35,9 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   's1.connect': { en: 'Connect', es: 'Conectar' },
   's1.as': { en: 'Signed in as', es: 'Conectado como' },
   's1.disconnect': { en: 'Disconnect', es: 'Desconectar' },
+  // #34: written by main.ts. The es drops {label}: it is a technical name such as "NIP-07 extension".
+  'status.connected': { en: 'Connected via {label}.', es: 'Conectado.' },
+  whoami: { en: '{label} — {key}', es: '{key}' },
   'shrink.hint': { en: 'A kind 30405 is a replacement: publishing this list is what un-lists the rest, because nostr has no “remove one item” event. Un-listing is not deleting — those listings stay on the relays and your storefront still draws them, at the foot of the page and out of the sale’s order. And this is exactly what deliberately retiring an item looks like, which is why nobody can tell the two apart for you.', es: 'Al publicar esta lista, los demás artículos dejan de estar en la venta. Quitarlos no es borrarlos: siguen en tu tienda, al final de la página. Así se ve también quitar algo a propósito, y por eso solo tú sabes si fue tu intención.' },
   'shrink.ok': { en: 'Yes, un-list them. I meant to.', es: 'Sí, quítalos de la venta. Lo quiero así.' },
   'price.hint': { en: 'Sats only. There is no currency conversion anywhere in this app — that would need a price oracle, and an oracle is somebody else’s server. Price something in pesos by leaving the node field empty: it lists, it just has no Buy button.', es: 'Solo en sats. Esta app no convierte monedas. Para poner un precio en pesos, deja vacío el campo del nodo: el artículo se publica, pero sin botón de Comprar.' },
@@ -44,6 +47,10 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.
 export const missing = (keys: string[], table: Record<string, { en: string; es?: string }> = STRINGS) =>
   keys.filter(k => !table[k]?.es?.trim())
+
+// A table text with each {name} replaced. An unknown key falls back to itself; an unknown {x} stays.
+export const fmt = (lang: Lang, key: string, vars: Record<string, string> = {}) =>
+  (STRINGS[key]?.[lang] || STRINGS[key]?.en || key).replace(/\{(\w+)\}/g, (m, n: string) => vars[n] ?? m)
 
 const ATTRS = ['placeholder', 'aria-label', 'title']
 
