@@ -148,14 +148,14 @@ const showSigner = () => {
   $('#refresh-items').toggleAttribute('disabled', !signer)
   $('#save-notes').toggleAttribute('disabled', !signer)
   if (signer) void signer.getPublicKey().then(pk => {
-    $('#whoami').textContent = `${signer!.label} — ${pk.slice(0, 8)}…${pk.slice(-8)}`
+    $('#whoami').textContent = fmt(lang, 'whoami', { label: signer!.label, key: `${pk.slice(0, 8)}…${pk.slice(-8)}` })
   })
 }
 
 const useSigner = (s: Signer) => {
   signer = s
   showSigner()
-  say(`Connected via ${s.label}.`, 'ok')
+  say(fmt(lang, 'status.connected', { label: s.label }), 'ok')
   refreshCost()
   void s.getPublicKey().then(pk => {
     ladderKey = LADDER_KEY + pk
@@ -869,7 +869,7 @@ const refreshDeployCost = async () => {
 // --- wiring ------------------------------------------------------------------------------------
 // G1.2. Imported here (imports hoist) so no line cited in docs/spec.md moves. Every startup read
 // of storage below goes through `load`, so a blocked storage cannot stop the page halfway (L14).
-import { applyLang, keep, LANG_KEY, load, pickLang } from './i18n.ts'
+import { applyLang, fmt, keep, LANG_KEY, load, pickLang } from './i18n.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
 applyLang(document, lang)
 $('#lang-switch').addEventListener('click', () => {

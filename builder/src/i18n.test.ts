@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { keep, load, missing, pickLang, STRINGS } from './i18n.ts'
+import { fmt, keep, load, missing, pickLang, STRINGS } from './i18n.ts'
 
 test('pickLang: a stored choice wins, then any es* phone language, then English', () => {
   for (const nav of ['es', 'es-MX', 'ES-419']) assert.equal(pickLang(nav, null), 'es', nav)
@@ -76,4 +76,33 @@ test('load and keep never throw, even when reading the storage itself throws', (
   const fake = () => ({ getItem: (k: string) => box.get(k) ?? null, setItem: (k: string, v: string) => box.set(k, v) }) as unknown as Storage
   keep('lamppost.lang', 'es', fake)
   assert.equal(load('lamppost.lang', fake), 'es')
+})
+
+// #34: the two step-1 texts main.ts writes itself. Fake label and key only.
+const KEY = 'aaaaaaaa…bbbbbbbb'
+test('fmt (#34): "Connected via" and the signed-in name, in both languages', () => {
+  for (const k of ['status.connected', 'whoami']) assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+  const es = fmt('es', 'status.connected', { label: 'NIP-07 extension' })
+  assert.equal(es, STRINGS['status.connected']!.es)
+  assert.ok(!es.includes('{') && !es.includes('NIP-07'), es)
+  assert.equal(fmt('en', 'status.connected', { label: 'NIP-07 extension' }), 'Connected via NIP-07 extension.')
+  const who = fmt('es', 'whoami', { label: 'Fake bunker', key: KEY })
+  assert.equal(who, STRINGS.whoami!.es.replace('{key}', KEY))
+  assert.ok(!who.includes('{') && !who.includes('Fake bunker'), who)
+  assert.equal(fmt('en', 'whoami', { label: 'Fake bunker', key: KEY }), `Fake bunker — ${KEY}`)
+})
+
+test('fmt (#34, L1): a blanked es is caught; unknown keys and {x} neither throw nor print undefined', () => {
+  const broken = { ...STRINGS, 'status.connected': { en: STRINGS['status.connected']!.en, es: '' } }
+  assert.deepEqual(missing(Object.keys(broken), broken), ['status.connected'])
+  assert.doesNotThrow(() => fmt('es', 'no.such.key', { label: 'x' }))
+  assert.equal(fmt('es', 'no.such.key'), 'no.such.key')
+  assert.equal(fmt('en', 'whoami', { key: KEY }), `{label} — ${KEY}`)
+  assert.equal(fmt('en', 'status.connected', { label: '$& {label}' }), 'Connected via $& {label}.')})
+
+test('main.ts (#34): neither step-1 text bypasses the table', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.ok(!src.includes('Connected via'), 'main.ts still writes "Connected via" itself')
+  assert.ok(!src.includes('.label} —'), 'main.ts still builds the signed-in name from a template')
+  assert.equal([...src.matchAll(/fmt\(lang, '(status\.connected|whoami)'/g)].length, 2)
 })
