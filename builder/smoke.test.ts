@@ -601,3 +601,18 @@ test('the waiting line flips es to en and back while the signer has not answered
   assert.deepEqual(errors, [])
   await context.close()
 })
+
+// #126: #cancel-edit is hidden until an edit starts, so the test clicks it from the page.
+test('the cancel-edit line shows Spanish and flips to English and back', async () => {
+  const { page, errors, context } = await openIn('es-MX')
+  await page.evaluate(() => document.querySelector<HTMLElement>('#cancel-edit')!.click())
+  const es = [STRINGS['edit.cancelled']?.es, 'ok']
+  assert.ok(es[0], 'edit.cancelled has no es')
+  assert.deepEqual(await statusOf(page), es)
+  await page.locator('#lang-switch').click()
+  assert.deepEqual(await statusOf(page), ['Back to a new item. Nothing was changed.', 'ok'])
+  await page.locator('#lang-switch').click()
+  assert.deepEqual(await statusOf(page), es)
+  assert.deepEqual(errors, [])
+  await context.close()
+})

@@ -340,3 +340,64 @@ test('main.ts (#63): metaLine goes through the table and the switch re-renders t
   const sw = src.slice(src.indexOf("$('#lang-switch').addEventListener"), src.indexOf("$('#nip07')"))
   assert.ok(sw.includes('if (owned.length) renderItems()'), 'the switch does not re-render the item rows')
 })
+
+// #126: the item checks, the notes lines, Disconnect and Cancel. Each row: key, vars, the exact
+// English main.ts wrote before (fake numbers only), and the values the Spanish must show.
+const NEW126: [string, Record<string, string>, string, string[]][] = [
+  ['item.noSlug', {}, 'Give the item a title, or a slug.', []],
+  ['item.noTitle', {}, 'Give the item a title.', []],
+  ['item.badPrice', {}, 'Price must be a whole number of sats.', []],
+  ['item.floor', {}, 'A buyable item must be at least 10 sats — the node will not invoice less. Set stock to 0, or clear the node field, to list it as cash-only.', ['10']],
+  ['item.badStock', {}, 'Stock must be 0–999.', ['999']],
+  ['err.generic', { msg: 'boom' }, 'boom', []],
+  ['notes.encrypting', {}, 'Encrypting to your own key…', []],
+  ['notes.saved', { ok: '3', all: '4' }, 'Notes saved on 3/4 relays. Only your key can read them.', ['3/4']],
+  ['notes.none', {}, 'No relay took your notes. Nothing was lost — press it again.', []],
+  ['status.disconnected', {}, 'Disconnected.', []],
+  ['edit.cancelled', {}, 'Back to a new item. Nothing was changed.', []],
+]
+// The old English as main.ts wrote it (the notes line was a template, the no-server line a throw).
+const OLD126 = ['Give the item a title, or a slug.', 'Give the item a title.', 'Price must be a whole number of sats.',
+  'A buyable item must be at least 10 sats', 'Stock must be 0–999.', 'Encrypting to your own key…', 'Notes saved on ',
+  'No relay took your notes', 'Disconnected.', 'Back to a new item. Nothing was changed.']
+const sayLeft = (src: string) =>
+  OLD126.filter(lit => [...src.matchAll(/\b(?:say|Error)\(([^\n]*)/g)].some(m => m[1]!.includes(lit)))
+
+test('fmt (#126): item checks, notes, Disconnect and Cancel are word for word in English and plain in Spanish', () => {
+  for (const [k, vars, en, shown] of NEW126) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.ok(es.trim(), `${k}: no es`)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!STRINGS[k]!.es.includes('{msg}') && !es.includes('boom'), `${k}: es shows the raw error`)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+    assert.ok(!/relay|signer|nsec|hex/i.test(es), `${k}: jargon in "${es}"`)
+    for (const v of shown) assert.ok(es.includes(v), `${k}: es drops ${v}: "${es}"`)
+  }
+  assert.deepEqual(missing(NEW126.map(r => r[0])), [])
+})
+
+test('fmt (#126, L1): each blanked es is caught by missing', () => {
+  for (const [k] of NEW126) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+test('main.ts (#126): none of the old English is inside a say( call, and each key is written through sayT', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(sayLeft(src), [])
+  for (const [k] of NEW126) assert.ok(src.includes(`sayT('${k}'`), `main.ts never calls sayT('${k}'`)
+  assert.equal([...src.matchAll(/sayT\('err\.generic', 'bad', \{ msg: err instanceof Error \? err\.message : String\(err\) \}\)/g)].length, 3)
+  const notes = src.slice(src.indexOf('const doSaveNotes ='), src.indexOf('// --- photos'))
+  assert.ok(notes.includes("if (ok === 0) { sayT('notes.none', 'bad'); return }"), 'the no-server notes case still throws')
+  assert.ok(!/say\(err instanceof Error/.test(notes), 'doSaveNotes still prints err.message itself')
+})
+
+test('main.ts (#126, L1): the say( finder sees each old literal put back', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  for (const lit of OLD126) assert.deepEqual(sayLeft(`${src}\n  say('${lit}', 'bad')`), [lit], lit)
+  assert.deepEqual(sayLeft("say(`Notes saved on ${ok}/${RELAYS.length} relays. Only your key can read them.`, 'ok')"), ['Notes saved on '])
+  assert.deepEqual(sayLeft("if (ok === 0) throw new Error('No relay took your notes. Nothing was lost — press it again.')"), ['No relay took your notes'])
+})
