@@ -69,6 +69,14 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'item.publish': { en: 'Publish this item', es: 'Publicar este artículo' },
   'item.edit': { en: 'Edit', es: 'Cambiar' },
   'item.markSold': { en: 'Mark sold', es: 'Ya se vendió' },
+  // #63: the meta line under each item. A stock count picks `.one` or `.other` through `countKey`.
+  'meta.left.one': { en: '{n} left', es: 'queda {n}' },
+  'meta.left.other': { en: '{n} left', es: 'quedan {n}' },
+  'meta.sold': { en: 'sold', es: 'vendido' },
+  'meta.gone': { en: '{s}/{u} gone', es: '{s}/{u} vendidos' },
+  'meta.buy': { en: 'Buy button', es: 'botón de Comprar' },
+  'meta.cash': { en: 'cash only', es: 'solo efectivo' },
+  'meta.noPrice': { en: 'no price', es: 'sin precio' },
   'edit.publishChanges': { en: 'Publish changes to “{title}”', es: 'Publicar cambios en “{title}”' },
   'edit.markSold': { en: 'Mark “{title}” sold', es: 'Marcar “{title}” como vendido' },
   'edit.note': { en: 'Editing {d}. It replaces the listing at the same address — nostr has no edit, only replacement — and re-cuts the availability ladder, so your watcher needs the new file afterwards.', es: 'Estás cambiando “{d}”. Al publicar, reemplaza al anuncio de antes. Luego revisa la sección 6.' },
@@ -85,6 +93,9 @@ export const missing = (keys: string[], table: Record<string, { en: string; es?:
 // A table text with each {name} replaced. An unknown key falls back to itself; an unknown {x} stays.
 export const fmt = (lang: Lang, key: string, vars: Record<string, string> = {}) =>
   (STRINGS[key]?.[lang] || STRINGS[key]?.en || key).replace(/\{(\w+)\}/g, (m, n: string) => vars[n] ?? m)
+
+// #63: `base.one` for exactly 1, else `base.other` (0 too). Two keys per count, no general rule.
+export const countKey = (base: string, n: number) => `${base}.${n === 1 ? 'one' : 'other'}`
 
 const ATTRS = ['placeholder', 'aria-label', 'title']
 

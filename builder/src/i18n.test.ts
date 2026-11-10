@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { fmt, keep, load, missing, pickLang, STRINGS } from './i18n.ts'
+import { countKey, fmt, keep, load, missing, pickLang, STRINGS } from './i18n.ts'
 
 test('pickLang: a stored choice wins, then any es* phone language, then English', () => {
   for (const nav of ['es', 'es-MX', 'ES-419']) assert.equal(pickLang(nav, null), 'es', nav)
@@ -285,4 +285,58 @@ test('main.ts (#106): the edit flow goes through the table and survives a langua
   const sw = src.slice(src.indexOf("$('#lang-switch').addEventListener"), src.indexOf("$('#nip07')"))
   assert.ok(/applyLang\(document, lang\)[\s\S]*showEdit\(\)/.test(sw), 'the switch does not re-write the edit texts after applyLang')
   assert.match(src, /const showEdit = \(\) => \{\n  if \(!editView\) return\n  \$\('#publish'\)\.textContent = fmt\(lang, editView\.btn, editView\.vars\)\n  \$\('#editing-note'\)\.textContent = fmt\(lang, editView\.note, editView\.vars\)/)
+})
+
+// #63: the meta line under each item row. Each row: language, stock count, the exact text.
+const LEFT: ['en' | 'es', number, string][] = [
+  ['en', 1, '1 left'], ['en', 3, '3 left'], ['en', 0, '0 left'],
+  ['es', 1, 'queda 1'], ['es', 3, 'quedan 3'], ['es', 0, 'quedan 0'],
+]
+const META63 = ['meta.left.one', 'meta.left.other', 'meta.sold', 'meta.gone', 'meta.buy', 'meta.cash', 'meta.noPrice']
+
+test('fmt (#63): the item meta line is word for word in English and follows the count in Spanish', () => {
+  for (const [lang, n, want] of LEFT)
+    assert.equal(fmt(lang, countKey('meta.left', n), { n: String(n) }), want, `${lang} stock ${n}`)
+  // The singular is its own text: without the `.one` branch, Spanish 1 would read "quedan 1".
+  assert.notEqual(fmt('es', 'meta.left.other', { n: '1' }), 'queda 1')
+  assert.equal(countKey('meta.left', 1), 'meta.left.one')
+  for (const n of [0, 2, 3, 10]) assert.equal(countKey('meta.left', n), 'meta.left.other', String(n))
+  const both: [string, Record<string, string>, string, string][] = [
+    ['meta.sold', {}, 'sold', 'vendido'],
+    ['meta.gone', { s: '2', u: '5' }, '2/5 gone', '2/5 vendidos'],
+    ['meta.buy', {}, 'Buy button', 'botón de Comprar'],
+    ['meta.cash', {}, 'cash only', 'solo efectivo'],
+    ['meta.noPrice', {}, 'no price', 'sin precio'],
+  ]
+  for (const [k, vars, en, es] of both) {
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    assert.equal(fmt('es', k, vars), es, `${k}: Spanish`)
+  }
+  for (const k of META63) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.ok(!/relay|signer|nsec|oracle|nostr|hex/i.test(STRINGS[k]!.es), `${k}: jargon in "${STRINGS[k]!.es}"`)
+  }
+  assert.deepEqual(missing(META63), [])
+})
+
+test('fmt (#63, L1): each blanked es is caught by missing', () => {
+  for (const k of META63) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+test('main.ts (#63): metaLine goes through the table and the switch re-renders the item rows', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const meta = src.slice(src.indexOf('const metaLine ='), src.indexOf('const renderItems ='))
+  assert.ok(meta.length > 0, 'metaLine not found')
+  for (const gone of ["' left'", ' left`', "'cash only'", "'Buy button'", "'no price'", "'sold'", ' gone`'])
+    assert.ok(!meta.includes(gone), `metaLine still writes "${gone}" itself`)
+  for (const k of ['meta.noPrice', 'meta.sold', 'meta.gone', 'meta.buy', 'meta.cash'])
+    assert.ok(meta.includes(`'${k}'`), `metaLine never uses ${k}`)
+  assert.ok(meta.includes("countKey('meta.left', item.stock ?? 1), { n: String(item.stock ?? 1) }"), 'stock count without countKey or its default of 1')
+  assert.ok(meta.includes("toLocaleString('en-US')"), 'price formatting changed')
+  assert.ok(src.includes('meta.textContent = metaLine(lang, own)'), 'renderItems does not pass the language')
+  const sw = src.slice(src.indexOf("$('#lang-switch').addEventListener"), src.indexOf("$('#nip07')"))
+  assert.ok(sw.includes('if (owned.length) renderItems()'), 'the switch does not re-render the item rows')
 })

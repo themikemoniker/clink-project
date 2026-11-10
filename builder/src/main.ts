@@ -612,14 +612,14 @@ const doStickers = async () => {
 // Item titles and summaries come off a relay, which /CLAUDE.md says to treat as hostile. Every
 // row below is built with createElement and textContent — never innerHTML — so a title
 // containing markup is a title containing markup.
-const metaLine = ({ item }: Owned): string => {
+const metaLine = (lang: Lang, { item }: Owned): string => {
   const units = ladder[item.d]?.units
   const sold = soldCount(units, item)
   return [
-    item.price ? `${item.price.amount.toLocaleString('en-US')} ${item.price.currency}` : 'no price',
-    item.sold ? 'sold' : `${item.stock ?? 1} left`,
-    sold === undefined ? '' : `${sold}/${units} gone`,
-    item.offer ? 'Buy button' : 'cash only',
+    item.price ? `${item.price.amount.toLocaleString('en-US')} ${item.price.currency}` : fmt(lang, 'meta.noPrice'),
+    item.sold ? fmt(lang, 'meta.sold') : fmt(lang, countKey('meta.left', item.stock ?? 1), { n: String(item.stock ?? 1) }),
+    sold === undefined ? '' : fmt(lang, 'meta.gone', { s: String(sold), u: String(units) }),
+    fmt(lang, item.offer ? 'meta.buy' : 'meta.cash'),
   ]
     .filter(Boolean)
     .join(' · ')
@@ -638,7 +638,7 @@ const renderItems = () => {
     title.textContent = item.title
     const meta = document.createElement('span')
     meta.className = 'item-meta'
-    meta.textContent = metaLine(own)
+    meta.textContent = metaLine(lang, own)
     head.append(title, meta)
 
     const row = document.createElement('div')
@@ -868,7 +868,7 @@ const refreshDeployCost = async () => {
 // --- wiring ------------------------------------------------------------------------------------
 // G1.2. Imported here (imports hoist) so no line cited in docs/spec.md moves. Every startup read
 // of storage below goes through `load`, so a blocked storage cannot stop the page halfway (L14).
-import { applyLang, fmt, keep, LANG_KEY, load, pickLang } from './i18n.ts'
+import { applyLang, countKey, fmt, keep, LANG_KEY, load, pickLang, type Lang } from './i18n.ts'
 import { unlistSay, unlistWhat } from './unlist-text.ts'
 import { saleLive } from './sale-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
@@ -896,6 +896,7 @@ $('#lang-switch').addEventListener('click', () => {
   if (shown) sayT(shown.key, shown.tone, shown.vars)
   if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
   showEdit()
+  if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
 $('#nip07').addEventListener('click', () => void connect(connectNip07))
 $('#bunker-url').addEventListener('click', () => {
