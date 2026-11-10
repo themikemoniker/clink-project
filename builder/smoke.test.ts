@@ -425,6 +425,22 @@ test('with storage blocked, a pasted watcher key still counts its encrypted ladd
   await context.close()
 })
 
+// G2.3: the same for a node pointer. A raw setItem throws as a page error before refreshCost.
+// The pointer is built from fixed fake strings (TLV 0 pubkey, 1 relay, 2 pointer), not a credential.
+import { bech32 } from '@scure/base'
+test('with storage blocked, a pasted node pointer still takes effect with no page error', async () => {
+  const { page, errors, context } = await openIn('es-MX', true)
+  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  const tlv = (t: number, v: Uint8Array) => [t, v.length, ...v]
+  const utf8 = (s: string) => new TextEncoder().encode(s)
+  const bytes = [...tlv(0, new Uint8Array(32).fill(0xab)), ...tlv(1, utf8('wss://relay.example')), ...tlv(2, utf8('fakepointer'))]
+  await page.locator('#node-input').fill(bech32.encode('nmanage', bech32.toWords(new Uint8Array(bytes)), 5_000))
+  await page.locator('#node-input').dispatchEvent('change')
+  assert.deepEqual(errors, [])
+  assert.match((await page.locator('#node-state').textContent())!, /Node abababab/)
+  await context.close()
+})
+
 test('no horizontal scroll at 360 px with the new header, in either language', async () => {
   for (const locale of ['es-MX', 'en-US']) {
     const { page, context } = await openIn(locale)
