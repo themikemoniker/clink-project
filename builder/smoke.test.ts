@@ -585,3 +585,22 @@ test('the waiting line flips es to en and back while the signer has not answered
   assert.deepEqual(errors, [])
   await context.close()
 })
+
+// #85: Cancel and Disconnect are hidden on a cold page, so they are clicked from the page itself.
+// The English is the literal main.ts wrote before, not read back from the table.
+test('Cancel and Disconnect show Spanish, and the switch re-writes each to its exact English and back', async () => {
+  const rows: [string, string, string][] = [['#cancel-edit', 'edit.cancelled', 'Back to a new item. Nothing was changed.'], ['#disconnect', 'status.disconnected', 'Disconnected.']]
+  for (const [id, key, en] of rows) {
+    const { page, errors, context, flip } = await openIn('es-MX')
+    await page.evaluate(sel => document.querySelector<HTMLElement>(sel)!.click(), id)
+    const es = [STRINGS[key]?.es, 'ok']
+    assert.ok(es[0] && es[0] !== en, `${key}: no Spanish`)
+    assert.deepEqual(await statusOf(page), es, id)
+    await flip()
+    assert.deepEqual(await statusOf(page), [en, 'ok'], id)
+    await flip()
+    assert.deepEqual(await statusOf(page), es, id)
+    assert.deepEqual(errors, [])
+    await context.close()
+  }
+})

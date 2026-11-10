@@ -366,8 +366,8 @@ const doPublish = async (event: SubmitEvent) => {
 
   // Validate here rather than at the signer: an error after three approvals is three wasted
   // taps on a phone.
-  if (!draft.slug) return say('Give the item a title, or a slug.', 'bad')
-  if (!draft.title) return say('Give the item a title.', 'bad')
+  if (!draft.slug) return sayT('item.needSlug', 'bad')
+  if (!draft.title) return sayT('item.needTitle', 'bad')
   // M3. A fiat item is validated as its own price and never as sats, and neither the sats floor
   // nor the node's 10-sat minimum applies to it — it is not going to be invoiced at all.
   //
@@ -378,14 +378,14 @@ const doPublish = async (event: SubmitEvent) => {
     const why = fiatPriceReason(draft.fiat.amount, draft.fiat.currency)
     if (why) return say(why, 'bad')
   } else if (!Number.isSafeInteger(draft.priceSats) || draft.priceSats < 0) {
-    return say('Price must be a whole number of sats.', 'bad')
+    return sayT('item.wholeSats', 'bad')
   }
   // Lightning.Pub hardcodes a 10-sat floor on what it will invoice (offerManager.ts:224,251 —
   // findings §13.7). Below it the node answers `code 5` and the seller never learns why.
   if (node && !draft.fiat && draft.stock > 0 && draft.priceSats < 10) {
-    return say('A buyable item must be at least 10 sats — the node will not invoice less. Set stock to 0, or clear the node field, to list it as cash-only.', 'bad')
+    return sayT('item.minSats', 'bad')
   }
-  if (!Number.isSafeInteger(draft.stock) || draft.stock < 0 || draft.stock > 999) return say('Stock must be 0–999.', 'bad')
+  if (!Number.isSafeInteger(draft.stock) || draft.stock < 0 || draft.stock > 999) return sayT('item.stock', 'bad')
 
   $('#publish').toggleAttribute('disabled', true)
   try {
@@ -415,7 +415,7 @@ const doPublish = async (event: SubmitEvent) => {
           : `${items} The ladder could NOT be sent to your watcher: no relay accepted it. The item is published and really for sale, but your watcher has not been told about it. Save it as .ladder.json next to watch-sales.ts and restart the watcher, or publish again once the relays answer.${editWarning}`
     void loadPanel(false)
   } catch (err) {
-    say(err instanceof Error ? err.message : String(err), 'bad')
+    sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
     $('#publish').toggleAttribute('disabled', !signer)
   }
@@ -735,7 +735,7 @@ const loadPanel = async (withNotes = true) => {
     showShrink([])
     refreshSaleCost()
     $('#items-state').textContent = ''
-    say(err instanceof Error ? err.message : String(err), 'bad')
+    sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
     $('#refresh-items').toggleAttribute('disabled', !signer)
   }
@@ -781,12 +781,12 @@ const doSaveNotes = async () => {
   $('#save-notes').toggleAttribute('disabled', true)
   try {
     for (const [d, note] of Object.entries(notes)) if (!note.trim()) delete notes[d]
-    say('Encrypting to your own key…')
+    sayT('notes.encrypting')
     const ok = await saveNotes(signer, pool, notes, RELAYS)
-    if (ok === 0) throw new Error('No relay took your notes. Nothing was lost — press it again.')
-    say(`Notes saved on ${ok}/${RELAYS.length} relays. Only your key can read them.`, 'ok')
+    if (ok === 0) { sayT('notes.none', 'bad'); return }
+    sayT('notes.saved', 'ok', { ok: String(ok), all: String(RELAYS.length) })
   } catch (err) {
-    say(err instanceof Error ? err.message : String(err), 'bad')
+    sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
     $('#save-notes').toggleAttribute('disabled', !signer)
   }
@@ -908,7 +908,7 @@ $('#disconnect').addEventListener('click', () => {
   signer = null
   forgetBunker()
   showSigner()
-  say('Disconnected.', 'ok')
+  sayT('status.disconnected', 'ok')
 })
 $('#node-input').addEventListener('change', e => setNode((e.target as HTMLInputElement).value, true))
 $('#watcher-input').addEventListener('change', e => setWatcher((e.target as HTMLInputElement).value, true))
@@ -927,7 +927,7 @@ $('#refresh-items').addEventListener('click', () => void loadPanel())
 $('#save-notes').addEventListener('click', () => void doSaveNotes())
 $('#cancel-edit').addEventListener('click', () => {
   resetItem()
-  say('Back to a new item. Nothing was changed.', 'ok')
+  sayT('edit.cancelled', 'ok')
 })
 $('#download-ladder').addEventListener('click', () => downloadLadder(ladderFile(loadLadder(), ladder)))
 $('#deploy').addEventListener('click', () => void doDeploy())

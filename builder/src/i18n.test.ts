@@ -286,3 +286,93 @@ test('main.ts (#106): the edit flow goes through the table and survives a langua
   assert.ok(/applyLang\(document, lang\)[\s\S]*showEdit\(\)/.test(sw), 'the switch does not re-write the edit texts after applyLang')
   assert.match(src, /const showEdit = \(\) => \{\n  if \(!editView\) return\n  \$\('#publish'\)\.textContent = fmt\(lang, editView\.btn, editView\.vars\)\n  \$\('#editing-note'\)\.textContent = fmt\(lang, editView\.note, editView\.vars\)/)
 })
+
+// #85: the item-form checks, the three catch blocks, notes, Disconnect and Cancel. Each row: key,
+// the exact sayT call main.ts makes, fake vars, and the exact English main.ts wrote before (G1.1).
+const NEW85: [string, string, Record<string, string>, string][] = [
+  ['item.needSlug', "sayT('item.needSlug', 'bad')", {}, 'Give the item a title, or a slug.'],
+  ['item.needTitle', "sayT('item.needTitle', 'bad')", {}, 'Give the item a title.'],
+  ['item.wholeSats', "sayT('item.wholeSats', 'bad')", {}, 'Price must be a whole number of sats.'],
+  ['item.minSats', "sayT('item.minSats', 'bad')", {}, 'A buyable item must be at least 10 sats — the node will not invoice less. Set stock to 0, or clear the node field, to list it as cash-only.'],
+  ['item.stock', "sayT('item.stock', 'bad')", {}, 'Stock must be 0–999.'],
+  ['err.generic', "sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })", { msg: 'boom: fake error' }, 'boom: fake error'],
+  ['notes.encrypting', "sayT('notes.encrypting')", {}, 'Encrypting to your own key…'],
+  ['notes.saved', "sayT('notes.saved', 'ok', { ok: String(ok), all: String(RELAYS.length) })", { ok: '3', all: '4' }, 'Notes saved on 3/4 relays. Only your key can read them.'],
+  ['notes.none', "sayT('notes.none', 'bad')", {}, 'No relay took your notes. Nothing was lost — press it again.'],
+  ['status.disconnected', "sayT('status.disconnected', 'ok')", {}, 'Disconnected.'],
+  ['edit.cancelled', "sayT('edit.cancelled', 'ok')", {}, 'Back to a new item. Nothing was changed.'],
+]
+// What is wrong with one row's Spanish, given the table it is read from. Empty means fine.
+const esProblems85 = (table: Record<string, { en: string; es: string }>, k: string, vars: Record<string, string>, en: string) => {
+  const raw = table[k]?.es ?? ''
+  const es = raw.replace(/\{(\w+)\}/g, (m, n: string) => vars[n] ?? m)
+  return [!raw.trim() && 'empty', es === en && 'English', raw.includes('{msg}') && '{msg}', es.includes('{') && 'slot',
+    /relay|signer|nsec|hex/i.test(es) && 'jargon'].filter(Boolean)
+}
+// The English main.ts held in its own say(...) or throw before #85. None may be left anywhere in it.
+const GONE85 = ['Give the item a title', 'Price must be a whole number', 'must be at least 10 sats', 'Stock must be 0–999',
+  'Encrypting to your own key', 'Notes saved on', 'Only your key can read them', 'No relay took your notes', "'Disconnected.'",
+  'Back to a new item']
+const left85 = (src: string) => GONE85.filter(g => src.includes(g))
+// The functions whose catch must no longer print err.message itself.
+const rawCatch85 = (src: string) => [['const doPublish =', '// --- the sale'], ['const loadPanel =', 'const editItem ='],
+  ['const doSaveNotes =', '// --- photos']].filter(([a, b]) => {
+  const i = src.indexOf(a!), j = src.indexOf(b!)
+  assert.ok(i >= 0 && j > i, `main.ts: cannot find ${a} … ${b}`)
+  return /say\(err instanceof Error/.test(src.slice(i, j))
+}).map(([a]) => a!)
+const MAIN = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+
+test('fmt (#85): English is exactly the old text, Spanish is filled, plain, and never the raw error', () => {
+  for (const [k, , vars, en] of NEW85) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    assert.deepEqual(esProblems85(STRINGS, k, vars, en), [], `${k}: "${STRINGS[k]!.es}"`)
+    assert.ok(!fmt('es', k, vars).includes('boom'), `${k}: es shows the error`)
+  }
+  assert.ok(fmt('es', 'notes.saved', { ok: '3', all: '4' }).includes('3/4'), 'notes.saved: es drops the count')
+  assert.deepEqual(missing(NEW85.map(r => r[0])), [])
+})
+
+test('fmt (#85, L1): a blanked, English, {msg}-leaking or jargon es is caught', () => {
+  const vars = { msg: 'boom' }
+  const row = (es: string) => esProblems85({ ...STRINGS, 'err.generic': { en: '{msg}', es } }, 'err.generic', vars, 'boom')
+  assert.deepEqual(row(STRINGS['err.generic']!.es), [])
+  assert.deepEqual(row(' '), ['empty'])
+  assert.deepEqual(row('{msg}'), ['English', '{msg}'])
+  assert.deepEqual(row('Error: {msg}'), ['{msg}'])
+  assert.deepEqual(row('Ningún relay respondió.'), ['jargon'])
+  for (const [k] of NEW85) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+test('main.ts (#85): the old English is gone, every line goes through sayT with its old tone, no catch prints err.message', () => {
+  assert.deepEqual(left85(MAIN), [], 'main.ts still writes this English itself')
+  for (const [k, call] of NEW85) assert.ok(MAIN.includes(call), `main.ts never calls ${call} (key ${k})`)
+  assert.equal(MAIN.split("sayT('err.generic', 'bad'").length - 1, 3, 'err.generic is not used by exactly the three catches')
+  assert.deepEqual(rawCatch85(MAIN), [])
+  // The notes `throw` became sayT + return on the same line, so the `finally` still re-enables the button.
+  assert.ok(MAIN.includes("if (ok === 0) { sayT('notes.none', 'bad'); return }"))
+})
+
+test('main.ts (#85, L1): the source checks go red when an old say line is put back', () => {
+  const back: [string, string][] = [
+    ["sayT('item.stock', 'bad')", "say('Stock must be 0–999.', 'bad')"],
+    ["sayT('edit.cancelled', 'ok')", "say('Back to a new item. Nothing was changed.', 'ok')"],
+    ["sayT('status.disconnected', 'ok')", "say('Disconnected.', 'ok')"],
+    ["{ sayT('notes.none', 'bad'); return }", "throw new Error('No relay took your notes. Nothing was lost — press it again.')"],
+    ["sayT('notes.saved', 'ok', { ok: String(ok), all: String(RELAYS.length) })", 'say(`Notes saved on ${ok}/${RELAYS.length} relays. Only your key can read them.`, \'ok\')'],
+  ]
+  for (const [now, old] of back) {
+    const broken = MAIN.replace(now, old)
+    assert.notEqual(broken, MAIN, `${now} is not in main.ts`)
+    assert.notDeepEqual(left85(broken), [], `putting back ${old} is not caught`)
+  }
+  const raw = "say(err instanceof Error ? err.message : String(err), 'bad')"
+  const generic = "sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })"
+  const save = MAIN.indexOf('const doSaveNotes =')
+  assert.deepEqual(rawCatch85(MAIN.slice(0, save) + MAIN.slice(save).replace(generic, raw)), ['const doSaveNotes ='])
+  assert.deepEqual(rawCatch85(MAIN.replace(generic, raw)), ['const doPublish ='])
+})

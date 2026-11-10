@@ -75,6 +75,18 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'edit.soldNote': { en: 'Its Buy button disappears as soon as this publishes, because a sold listing carries no offer pointer. The offer itself stays on your node — deleting it would take the buyer’s stored refund pointer with it, and a payment that lands late still has to be refundable.', es: 'Al publicar, se quita su botón de Comprar. Tu nodo guarda el cobro por si hay que devolver un pago que llegue tarde.' },
   'edit.check': { en: 'Check it over, then publish.', es: 'Revísalo y luego publícalo.' },
   'edit.loaded': { en: 'Loaded. Change what you need, then publish.', es: 'Listo. Cambia lo que necesites y luego publícalo.' },
+  // #85: status lines main.ts writes through `sayT`. err.generic's es never shows {msg}, like status.connectFail.
+  'item.needSlug': { en: 'Give the item a title, or a slug.', es: 'Ponle un nombre al artículo o escribe su dirección corta.' },
+  'item.needTitle': { en: 'Give the item a title.', es: 'Ponle un nombre al artículo.' },
+  'item.wholeSats': { en: 'Price must be a whole number of sats.', es: 'El precio debe ser un número entero de sats, sin decimales.' },
+  'item.minSats': { en: 'A buyable item must be at least 10 sats — the node will not invoice less. Set stock to 0, or clear the node field, to list it as cash-only.', es: 'Para tener botón de Comprar, el precio mínimo es 10 sats. Si lo quieres solo en efectivo, pon la cantidad en 0 o deja vacío el campo del nodo.' },
+  'item.stock': { en: 'Stock must be 0–999.', es: 'La cantidad debe ser de 0 a 999.' },
+  'err.generic': { en: '{msg}', es: 'Algo salió mal. Inténtalo otra vez en un momento.' },
+  'notes.encrypting': { en: 'Encrypting to your own key…', es: 'Protegiendo tus notas para que solo tú las leas…' },
+  'notes.saved': { en: 'Notes saved on {ok}/{all} relays. Only your key can read them.', es: 'Notas guardadas en {ok}/{all} servidores. Solo tú puedes leerlas.' },
+  'notes.none': { en: 'No relay took your notes. Nothing was lost — press it again.', es: 'Ningún servidor guardó tus notas. No se perdió nada: vuelve a intentarlo.' },
+  'status.disconnected': { en: 'Disconnected.', es: 'Desconectado.' },
+  'edit.cancelled': { en: 'Back to a new item. Nothing was changed.', es: 'Volviste a un artículo nuevo. No se cambió nada.' },
   'deploy.detail':{ en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
 }
 
