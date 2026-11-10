@@ -220,7 +220,7 @@ const setNode = (raw: string, remember: boolean) => {
   // The pointer carries the account pointer in TLV 2 (/docs/spec.md §6.1). It stays in this
   // browser: never rendered in full, never logged, never published.
   $('#node-state').textContent = `Node ${decoded.pubkey.slice(0, 8)}… on ${decoded.relay}. Offers will be minted over CLINK Manage.`
-  if (remember) localStorage.setItem(NODE_KEY, trimmed)
+  if (remember) keep(NODE_KEY, trimmed)
   refreshCost()
 }
 
