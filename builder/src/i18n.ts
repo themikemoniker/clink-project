@@ -102,6 +102,11 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'deploy.upload': { en: 'Uploading {done}/{total}…', es: 'Subiendo archivos: {done} de {total}…' },
   'deploy.publish': { en: 'Publishing the manifest to {n} relays…', es: 'Publicando tu venta en {n} servidores…' },
   'deploy.live': { en: 'Live at {url}', es: 'Listo: tu venta está en {url}' },
+  // #109: the failures publish.ts writes itself (PublishError). `en` is its exact English; es never shows {msg}.
+  'publish.noRelay': { en: 'No relay accepted the listing. It is signed but nobody can see it — try again.', es: 'Tu artículo está listo, pero nadie lo puede ver todavía. Presiona Publicar otra vez en un momento.' },
+  'publish.noRelaySale': { en: 'No relay accepted the sale. It is signed but nobody can see it — try again.', es: 'Tu venta está lista, pero nadie la puede ver todavía. Presiona Publicar otra vez en un momento.' },
+  'publish.mintFail': { en: 'Could not mint the offer: {msg}', es: 'No se pudo preparar el botón de Comprar. Revisa la dirección de tu nodo en la sección 2, o deja vacío el campo del nodo para venderlo solo en efectivo.' },
+  'publish.notSent': { en: '{msg}', es: 'No se publicó nada. Revisa los datos del artículo e inténtalo otra vez.' },
   'deploy.detail':{ en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
 }
 

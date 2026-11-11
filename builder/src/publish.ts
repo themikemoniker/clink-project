@@ -110,7 +110,7 @@ export const publish = async (
             : result.field
               ? ` (field: ${result.field})`
               : ''
-      throw new Error(`Could not mint the offer: ${result.error}.${hint}`)
+      throw new PublishError(`Could not mint the offer: ${result.error}.${hint}`, 'publish.mintFail', { msg: `${result.error}.${hint}` })
     }
     noffer = result.offer.noffer
   }
@@ -144,18 +144,18 @@ export const publish = async (
   // buyableOffer() drops the offer, `parsed.offer` comes back undefined, and we refuse to
   // publish rather than shipping an item with a Buy button that cannot work.
   const parsed = parseListings([listing], pubkey)[0]
-  if (!parsed || parsed.d !== d) throw new Error('The listing we just signed does not survive our own parser. Nothing was published.')
-  if (parsed.title !== draft.title) throw new Error('The title was altered in encoding. Nothing was published.')
+  if (!parsed || parsed.d !== d) throw notSent('The listing we just signed does not survive our own parser. Nothing was published.')
+  if (parsed.title !== draft.title) throw notSent('The title was altered in encoding. Nothing was published.')
   if (noffer && !parsed.offer) {
-    throw new Error(
+    throw notSent(
       `The offer the node minted does not match the price on the listing (${draft.priceSats} sats), so no Buy button would appear. Nothing was published.`,
     )
   }
   for (const [i, step] of steps.entries()) {
     const target = steps.length - i - 1
     const rung = parseListings([step], pubkey)[0]
-    if (!rung || rung.d !== d) throw new Error(`Availability step ${i + 1} failed verification. Nothing was published.`)
-    if (rung.sold !== (target === 0)) throw new Error(`Availability step ${i + 1} disagrees about being sold. Nothing was published.`)
+    if (!rung || rung.d !== d) throw notSent(`Availability step ${i + 1} failed verification. Nothing was published.`)
+    if (rung.sold !== (target === 0)) throw notSent(`Availability step ${i + 1} disagrees about being sold. Nothing was published.`)
   }
 
   // --- 3b. sign the ladder for the watcher (M1) --------------------------------------------
@@ -197,7 +197,7 @@ export const publish = async (
     ladderRelaysOk = await publishLadder(pool, ladderEv, RELAYS).catch(() => 0)
   }
   pool.close(RELAYS)
-  if (relaysOk === 0) throw new Error('No relay accepted the listing. It is signed but nobody can see it — try again.')
+  if (relaysOk === 0) throw new PublishError('No relay accepted the listing. It is signed but nobody can see it — try again.', 'publish.noRelay')
 
   onStep({ kind: 'done', text: `Published to ${relaysOk}/${RELAYS.length} relays.` })
 
@@ -247,10 +247,10 @@ export const publishSale = async (
   // not survive encoding is a masthead that renders as the site's fallback name, and the seller
   // would have no way to tell that from "the relay dropped it".
   const parsed = parseSales([event], pubkey)[0]
-  if (!parsed || parsed.d !== sale.d) throw new Error('The sale we just signed does not survive our own parser. Nothing was published.')
-  if (parsed.title !== sale.title) throw new Error('The sale title was altered in encoding. Nothing was published.')
+  if (!parsed || parsed.d !== sale.d) throw notSent('The sale we just signed does not survive our own parser. Nothing was published.')
+  if (parsed.title !== sale.title) throw notSent('The sale title was altered in encoding. Nothing was published.')
   if (parsed.itemRefs.length !== itemDs.length) {
-    throw new Error(`${itemDs.length - parsed.itemRefs.length} of your items would have been dropped from the sale. Nothing was published.`)
+    throw notSent(`${itemDs.length - parsed.itemRefs.length} of your items would have been dropped from the sale. Nothing was published.`)
   }
 
   onStep({ kind: 'publish', text: `Publishing the sale to ${RELAYS.length} relays…` })
@@ -262,7 +262,7 @@ export const publishSale = async (
   )
   pool.close(RELAYS)
   const relaysOk = results.filter(r => r.status === 'fulfilled').length
-  if (relaysOk === 0) throw new Error('No relay accepted the sale. It is signed but nobody can see it — try again.')
+  if (relaysOk === 0) throw new PublishError('No relay accepted the sale. It is signed but nobody can see it — try again.', 'publish.noRelaySale')
   onStep({ kind: 'done', text: `Sale published to ${relaysOk}/${RELAYS.length} relays.` })
   return { event, relaysOk }
 }
@@ -294,3 +294,17 @@ export const downloadLadder = (json: string) => {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+// #109: a failure this file writes itself, with its string-table key. `message` is the exact
+// English, so en output is unchanged; main.ts shows `key` through the table. No i18n import here.
+export class PublishError extends Error {
+  key: string
+  vars?: Record<string, string>
+  constructor(message: string, key: string, vars?: Record<string, string>) {
+    super(message)
+    this.name = 'PublishError'
+    this.key = key
+    this.vars = vars
+  }
+}
+const notSent = (msg: string) => new PublishError(msg, 'publish.notSent', { msg })

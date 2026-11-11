@@ -44,7 +44,7 @@ import { decodeNmanage, type ManagePointer } from './manage.ts'
 import { watcherPubkey, WATCHER_KEY } from './ladder-relay.ts'
 import { BLOSSOM, resize, upload } from './photos.ts'
 import { deploy, DEFAULT_GATEWAY, loadStorefront, siteUrl, storefrontPaths, type DeployStep } from './deploy.ts'
-import { downloadLadder, ladderFile, publish, publishSale, RELAYS, type LadderFile, type Step } from './publish.ts'
+import { downloadLadder, ladderFile, publish, publishSale, PublishError, RELAYS, type LadderFile, type Step } from './publish.ts'
 import {
   awaitBunkerScan,
   bunkerConnectURI,
@@ -415,7 +415,7 @@ const doPublish = async (event: SubmitEvent) => {
           : `${items} The ladder could NOT be sent to your watcher: no relay accepted it. The item is published and really for sale, but your watcher has not been told about it. Save it as .ladder.json next to watch-sales.ts and restart the watcher, or publish again once the relays answer.${editWarning}`
     void loadPanel(false)
   } catch (err) {
-    sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
+    err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
     $('#publish').toggleAttribute('disabled', !signer)
   }
@@ -555,7 +555,7 @@ const doPublishSale = async (event: SubmitEvent) => {
       title: draft.title, ok: relaysOk, total: RELAYS.length, d: draft.d, items: owned.length, mapLink: !!draft.g,
     })
   } catch (err) {
-    say(err instanceof Error ? err.message : String(err), 'bad')
+    err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : say(err instanceof Error ? err.message : String(err), 'bad')
   } finally {
     refreshSaleCost()
   }
