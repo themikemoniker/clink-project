@@ -93,7 +93,7 @@ let owned: Owned[] = []
 // "Publish my sale", which replaces the seller's whole collection with `owned` — so publishing
 // from a read that has not happened, or from one only a minority of relays answered, un-lists
 // real items. admin.ts `noPublishSaleReason` is the decision; these two are its inputs.
-let panelLoaded = false
+let panelLoaded = false, salePending = false // #132: a sale publish is in flight; the button stays off
 let answered: string[] = []
 // The `d`s the kind 30405 on the relays lists RIGHT NOW, which is the only thing a shrink can be
 // measured against. Set from the same read that sets `answered`, and cleared with it: a read that
@@ -463,13 +463,13 @@ const refreshSaleCost = () => {
     answered: answered.length,
     relays: RELAYS.length,
   })
-  $('#publish-sale').toggleAttribute('disabled', !!reason)
+  $('#publish-sale').toggleAttribute('disabled', !!reason || salePending)
   // SHOW THE COUNT — item 13's second bullet. The seller is about to replace their whole
   // collection with these N items, and until now the number was only inferable from the list.
   $('#sale-cost').textContent = reason
     ? `Cannot publish yet: ${reason}`
-    : `1 signature. It replaces your whole collection with these ${n} item${n === 1 ? '' : 's'}, in the order ` +
-      `shown below — nostr has no edit, only replacement. Read from ${answered.length}/${RELAYS.length} relays.`
+    : saleCost(lang, // the switch handler below re-draws this
+      { n, answered: answered.length, relays: RELAYS.length })
 }
 
 /**
@@ -503,7 +503,7 @@ const showShrink = (dropped: string[]) => {
 
 const doPublishSale = async (event: SubmitEvent) => {
   event.preventDefault()
-  if (!signer) return
+  if (!signer || salePending) return
   // THE GUARD IS HERE, not only at the enable site. The button being disabled protects the one
   // path; this protects every caller, including the next entry point somebody adds. The ledger
   // named both fixes and preferred the smaller one; this is the one that survives.
@@ -539,7 +539,7 @@ const doPublishSale = async (event: SubmitEvent) => {
     )
   }
 
-  $('#publish-sale').toggleAttribute('disabled', true)
+  salePending = true; $('#publish-sale').toggleAttribute('disabled', true)
   try {
     // EVERY member, every time. A kind 30405 is addressable, so this replaces the one on the
     // relays outright — handing it a subset silently un-lists the rest, which `orderBySale`
@@ -557,7 +557,7 @@ const doPublishSale = async (event: SubmitEvent) => {
   } catch (err) {
     err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : say(err instanceof Error ? err.message : String(err), 'bad')
   } finally {
-    refreshSaleCost()
+    salePending = false; refreshSaleCost()
   }
 }
 
@@ -870,7 +870,7 @@ const refreshDeployCost = async () => {
 // of storage below goes through `load`, so a blocked storage cannot stop the page halfway (L14).
 import { applyLang, countKey, fmt, keep, LANG_KEY, load, pickLang, type Lang } from './i18n.ts'
 import { unlistSay, unlistWhat } from './unlist-text.ts'
-import { saleLive } from './sale-text.ts'
+import { saleCost, saleLive } from './sale-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
 // #69: a status line from the table, and the last signed-in name, kept so the switch can re-write
 // them. Declared here, after every cited line; `say` clears `shown` so a later plain text stays.
@@ -902,6 +902,7 @@ $('#lang-switch').addEventListener('click', () => {
   if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
   showEdit()
   showNode()
+  refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
 $('#nip07').addEventListener('click', () => void connect(connectNip07))
