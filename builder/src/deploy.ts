@@ -136,11 +136,14 @@ export const serverListTemplate = (servers: string[], now: number): EventTemplat
   content: '',
 })
 
-export type DeployStep =
-  | { kind: 'hash'; text: string }
-  | { kind: 'upload'; text: string; done: number; total: number }
-  | { kind: 'publish'; text: string }
-  | { kind: 'done'; text: string }
+// #103: `key` and `vars` name the line in builder/src/i18n.ts, so the builder shows it in the
+// seller's language. `text` stays the English, for the spike script and the tests.
+type StepText = { text: string; key: string; vars: Record<string, string> }
+export type DeployStep = StepText & (
+  | { kind: 'hash' }
+  | { kind: 'upload'; done: number; total: number }
+  | { kind: 'publish' }
+  | { kind: 'done' })
 
 export type Deployed = {
   url: string
@@ -186,7 +189,7 @@ export const deploy = async (
   const pubkey = await signer.getPublicKey()
   const url = siteUrl(pubkey, gateway)
 
-  onStep({ kind: 'hash', text: `Hashing ${files.length} files…` })
+  onStep({ kind: 'hash', text: `Hashing ${files.length} files…`, key: 'deploy.hash', vars: { n: String(files.length) } })
   const withQr = await Promise.all(
     files.map(async f =>
       f.path === '/index.html'
@@ -199,12 +202,13 @@ export const deploy = async (
 
   let live = servers
   if (!dryRun) {
-    onStep({ kind: 'upload', text: 'Uploading…', done: 0, total: hashed.length * servers.length })
+    onStep({ kind: 'upload', text: 'Uploading…', key: 'deploy.uploading', vars: {}, done: 0, total: hashed.length * servers.length })
     const result = await mirror(
       signer,
       hashed.map(f => ({ sha256: f.sha256, bytes: f.bytes, type: f.type })),
       servers,
-      (done, total) => onStep({ kind: 'upload', text: `Uploading ${done}/${total}…`, done, total }),
+      (done, total) =>
+        onStep({ kind: 'upload', text: `Uploading ${done}/${total}…`, key: 'deploy.upload', vars: { done: String(done), total: String(total) }, done, total }),
     )
     live = result.complete
     if (live.length === 0) {
@@ -218,7 +222,7 @@ export const deploy = async (
 
   let relaysOk = 0
   if (!dryRun) {
-    onStep({ kind: 'publish', text: `Publishing the manifest to ${relays.length} relays…` })
+    onStep({ kind: 'publish', text: `Publishing the manifest to ${relays.length} relays…`, key: 'deploy.publish', vars: { n: String(relays.length) } })
     const pool = new SimplePool()
     for (const event of [manifest, serverList]) {
       const results = await Promise.allSettled(
@@ -231,7 +235,7 @@ export const deploy = async (
       if (ok === 0) throw new Error(`No relay accepted the kind ${event.kind}. The site cannot resolve — try again.`)
     }
     pool.close(relays)
-    onStep({ kind: 'done', text: `Live at ${url}` })
+    onStep({ kind: 'done', text: `Live at ${url}`, key: 'deploy.live', vars: { url } })
   }
 
   return { url, aggregate, manifest, serverList, files: hashed, servers: live, relaysOk }
