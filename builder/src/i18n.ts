@@ -108,6 +108,11 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'publish.mintFail': { en: 'Could not mint the offer: {msg}', es: 'No se pudo preparar el botón de Comprar. Revisa la dirección de tu nodo en la sección 2, o deja vacío el campo del nodo para venderlo solo en efectivo.' },
   'publish.notSent': { en: '{msg}', es: 'No se publicó nada. Revisa los datos del artículo e inténtalo otra vez.' },
   'deploy.detail':{ en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
+  // #123: the #node-state line setNode writes (needs-native-review). The es never names a terminal
+  // command or a file, and never shows {relay}: the seller cannot act on either.
+  'node.none': { en: 'No node — items will publish as cash-only, with no Buy button.', es: 'Sin nodo: tus artículos se publican solo para pago en efectivo, sin botón de Comprar.' },
+  'node.bad': { en: 'That is not an nmanage1… pointer. Run `node spike/authorize-manage.ts` and paste what it writes.', es: 'Ese código no es válido. Pídelo otra vez a quien instaló tu nodo y pégalo completo.' },
+  'node.ok': { en: 'Node {key}… on {relay}. Offers will be minted over CLINK Manage.', es: 'Nodo conectado ({key}…). Tus artículos tendrán botón de Comprar.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.

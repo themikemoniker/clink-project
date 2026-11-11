@@ -428,16 +428,40 @@ test('with storage blocked, a pasted watcher key still counts its encrypted ladd
 // G2.3: the same for a node pointer. A raw setItem throws as a page error before refreshCost.
 // The pointer is built from fixed fake strings (TLV 0 pubkey, 1 relay, 2 pointer), not a credential.
 import { bech32 } from '@scure/base'
-test('with storage blocked, a pasted node pointer still takes effect with no page error', async () => {
-  const { page, errors, context } = await openIn('es-MX', true)
-  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+const fakeNode = () => {
   const tlv = (t: number, v: Uint8Array) => [t, v.length, ...v]
   const utf8 = (s: string) => new TextEncoder().encode(s)
   const bytes = [...tlv(0, new Uint8Array(32).fill(0xab)), ...tlv(1, utf8('wss://relay.example')), ...tlv(2, utf8('fakepointer'))]
-  await page.locator('#node-input').fill(bech32.encode('nmanage', bech32.toWords(new Uint8Array(bytes)), 5_000))
+  return bech32.encode('nmanage', bech32.toWords(new Uint8Array(bytes)), 5_000)
+}
+const nodeState = (p: import('playwright').Page) => p.locator('#node-state').textContent()
+const NODE_OK_ES = 'Nodo conectado (abababab…). Tus artículos tendrán botón de Comprar.'
+test('with storage blocked, a pasted node pointer still takes effect with no page error', async () => {
+  const { page, errors, context } = await openIn('es-MX', true)
+  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  await page.locator('#node-input').fill(fakeNode())
   await page.locator('#node-input').dispatchEvent('change')
   assert.deepEqual(errors, [])
-  assert.match((await page.locator('#node-state').textContent())!, /Node abababab/)
+  assert.equal(await nodeState(page), NODE_OK_ES)
+  await context.close()
+})
+
+// #123: the node line is Spanish from startup, for a bad and a good paste, and the switch keeps the node.
+test('the node line is Spanish for none, bad and ok, and the switch keeps the pasted node', async () => {
+  const { page, errors, context, flip } = await openIn('es-MX')
+  assert.ok(STRINGS['node.none']?.es && STRINGS['node.bad']?.es, 'node.none or node.bad has no es')
+  assert.equal(await nodeState(page), STRINGS['node.none']!.es)
+  await page.locator('#node-input').fill('nmanage1xyz')
+  await page.locator('#node-input').dispatchEvent('change')
+  assert.equal(await nodeState(page), STRINGS['node.bad']!.es)
+  await page.locator('#node-input').fill(fakeNode())
+  await page.locator('#node-input').dispatchEvent('change')
+  assert.equal(await nodeState(page), NODE_OK_ES)
+  await flip()
+  assert.equal(await nodeState(page), 'Node abababab… on wss://relay.example. Offers will be minted over CLINK Manage.')
+  await flip()
+  assert.equal(await nodeState(page), NODE_OK_ES)
+  assert.deepEqual(errors, [])
   await context.close()
 })
 
