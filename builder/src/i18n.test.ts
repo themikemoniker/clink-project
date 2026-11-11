@@ -560,3 +560,43 @@ test('publish.ts (#109): its own failures are PublishErrors with a key and the u
   assert.equal([...src.matchAll(/throw notSent\(/g)].length, 8, 'a "Nothing was published" throw is not keyed')
   assert.ok(!/throw new Error\(/.test(src), 'publish.ts still throws a plain Error')
 })
+
+// #123: the #node-state line. en is the old English byte for byte; es names no command and no relay.
+const NEW123: [string, Record<string, string>, string][] = [
+  ['node.none', {}, 'No node — items will publish as cash-only, with no Buy button.'],
+  ['node.bad', {}, 'That is not an nmanage1… pointer. Run `node spike/authorize-manage.ts` and paste what it writes.'],
+  ['node.ok', { key: 'abababab', relay: 'wss://relay.example' }, 'Node abababab… on wss://relay.example. Offers will be minted over CLINK Manage.'],
+]
+
+test('fmt (#123): the node line is word for word in English and plain Spanish with no command or relay', () => {
+  for (const [k, vars, en] of NEW123) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.ok(STRINGS[k]!.es.trim(), `${k}: no es`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+    assert.ok(!/nostr|relay|signer|pointer|nmanage|clink|nsec|hex/i.test(es), `${k}: jargon in "${es}"`)
+  }
+  const bad = fmt('es', 'node.bad')
+  assert.ok(!bad.includes('spike/') && !bad.includes('node '), `node.bad es names the terminal step: "${bad}"`)
+  const ok = fmt('es', 'node.ok', NEW123[2]![1])
+  assert.ok(ok.includes('abababab'), `node.ok es drops the key: "${ok}"`)
+  assert.ok(!/wss|relay/i.test(ok), `node.ok es shows the relay: "${ok}"`)
+  assert.deepEqual(missing(NEW123.map(r => r[0])), [])
+})
+
+test('fmt (#123, L1): each blanked es is caught by missing', () => {
+  for (const [k] of NEW123) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+test('main.ts (#123): setNode writes through the table; #node-state keeps its English fallback and no data-i18n', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  for (const gone of ['No node — items', 'That is not an nmanage1', 'Offers will be minted over'])
+    assert.ok(!src.includes(gone), `main.ts still writes "${gone}" itself`)
+  assert.match(HTML, /<p class="hint" id="node-state">No node/, 'the pre-script English fallback is gone')
+  assert.ok(!/<[^>]*id="node-state"[^>]*data-i18n|<[^>]*data-i18n[^>]*id="node-state"/.test(HTML), '#node-state has a data-i18n: a switch would wipe a pasted node')
+})

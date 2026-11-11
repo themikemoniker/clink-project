@@ -207,19 +207,19 @@ const setNode = (raw: string, remember: boolean) => {
   const trimmed = raw.trim()
   if (!trimmed) {
     node = null
-    $('#node-state').textContent = 'No node — items will publish as cash-only, with no Buy button.'
+    nodeView = { key: 'node.none', vars: {} }; showNode()
     return
   }
   const decoded = decodeNmanage(trimmed)
   if (!decoded) {
     node = null
-    $('#node-state').textContent = 'That is not an nmanage1… pointer. Run `node spike/authorize-manage.ts` and paste what it writes.'
+    nodeView = { key: 'node.bad', vars: {} }; showNode()
     return
   }
   node = decoded
   // The pointer carries the account pointer in TLV 2 (/docs/spec.md §6.1). It stays in this
   // browser: never rendered in full, never logged, never published.
-  $('#node-state').textContent = `Node ${decoded.pubkey.slice(0, 8)}… on ${decoded.relay}. Offers will be minted over CLINK Manage.`
+  nodeView = { key: 'node.ok', vars: { key: decoded.pubkey.slice(0, 8), relay: decoded.relay } }; showNode()
   if (remember) keep(NODE_KEY, trimmed)
   refreshCost()
 }
@@ -884,11 +884,16 @@ const showEdit = () => {
   $('#publish').textContent = fmt(lang, editView.btn, editView.vars)
   $('#editing-note').textContent = fmt(lang, editView.note, editView.vars)
 }
+// #123: what #node-state says, so a switch re-writes it. No data-i18n on it: applyLang would put
+// the none text back over a pasted node. Starts as none, shown after applyLang below.
+let nodeView: { key: string; vars: Record<string, string> } = { key: 'node.none', vars: {} }
+const showNode = () => { $('#node-state').textContent = fmt(lang, nodeView.key, nodeView.vars) }
 const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) => {
   say(fmt(lang, key, vars), tone) // `lang` read now, not captured
   shown = { key, tone, vars }
 }
 applyLang(document, lang)
+showNode()
 $('#lang-switch').addEventListener('click', () => {
   lang = lang === 'es' ? 'en' : 'es'
   keep(LANG_KEY, lang)
@@ -896,6 +901,7 @@ $('#lang-switch').addEventListener('click', () => {
   if (shown) sayT(shown.key, shown.tone, shown.vars)
   if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
   showEdit()
+  showNode()
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
 $('#nip07').addEventListener('click', () => void connect(connectNip07))
