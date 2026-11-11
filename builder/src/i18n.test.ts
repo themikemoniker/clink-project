@@ -459,3 +459,104 @@ test('main.ts (#103, L1): the finder sees the old Deploy line put back', () => {
   assert.notEqual(back, src, "sayT('deploy.reading') is not in main.ts")
   assert.deepEqual(deploySayLeft(back), OLD103)
 })
+
+// #109: the failures publish.ts writes itself. Each row: key, vars, the exact English publish.ts
+// threw before (fake values only), and a phrase the Spanish must say.
+const MINT_MSG = 'Request Denied. Has this key been authorised on the node? Run `node spike/authorize-manage.ts` once, at the desk.'
+const NEW109: [string, Record<string, string>, string, string][] = [
+  ['publish.noRelay', {}, 'No relay accepted the listing. It is signed but nobody can see it — try again.', 'Presiona Publicar otra vez'],
+  ['publish.noRelaySale', {}, 'No relay accepted the sale. It is signed but nobody can see it — try again.', 'Presiona Publicar otra vez'],
+  ['publish.mintFail', { msg: MINT_MSG }, `Could not mint the offer: ${MINT_MSG}`, 'sección 2'],
+  ['publish.notSent', { msg: 'The title was altered in encoding. Nothing was published.' }, 'The title was altered in encoding. Nothing was published.',
+    'No se publicó nada. Revisa los datos del artículo e inténtalo otra vez.'],
+]
+
+test('fmt (#109): publish failures are word for word in English and plain, error-free Spanish', () => {
+  for (const [k, vars, en, phrase] of NEW109) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.ok(STRINGS[k]!.es.trim(), `${k}: no es`)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!/relay|signer|nsec|hex|node spike|\{/i.test(es), `${k}: jargon or a slot in "${es}"`)
+    for (const v of Object.values(vars)) assert.ok(!es.includes(v), `${k}: es shows the raw English`)
+    assert.ok(es.includes(phrase), `${k}: es does not say "${phrase}": "${es}"`)
+  }
+  assert.ok(STRINGS['publish.mintFail']!.es.includes('efectivo'), 'mintFail does not offer the cash-only way out')
+  // The node field is section 2 in index.html; the Spanish names that number.
+  assert.match(HTML, /<h2>2 · Your node\b/)
+  assert.deepEqual(missing(NEW109.map(r => r[0])), [])
+})
+
+test('fmt (#109, L1): each blanked es is caught by missing', () => {
+  for (const [k] of NEW109) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+// Both publish catches in main.ts: the item one and the sale one.
+const catchOf = (src: string, from: string, to: string) => {
+  const flow = src.slice(src.indexOf(from), src.indexOf(to))
+  return flow.slice(flow.lastIndexOf('} catch (err) {'), flow.lastIndexOf('} finally {'))
+}
+const publishCatches = (src: string) => [
+  catchOf(src, 'const doPublish =', '// --- the sale (slice 9)'),
+  catchOf(src, 'const doPublishSale =', 'const locate ='),
+]
+const KEYED = "err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : "
+
+test('main.ts (#109): both publish catches show a PublishError through the table, and keep their old fallback', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const [item, sale] = publishCatches(src)
+  assert.ok(item!.includes(`${KEYED}sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })`), 'item catch')
+  assert.ok(sale!.includes(`${KEYED}say(err instanceof Error ? err.message : String(err), 'bad')`), 'sale catch')
+  assert.match(src, /import \{[^}]*\bPublishError\b[^}]*\} from '\.\/publish\.ts'/)
+})
+
+test('main.ts (#109, L1): removing either PublishError branch is caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  for (const i of [0, 1]) {
+    const one = publishCatches(src)[i]!
+    assert.ok(one.includes(KEYED), `catch ${i} has no PublishError branch`)
+    const broken = src.replace(one, one.replace(KEYED, ''))
+    assert.notEqual(broken, src)
+    assert.ok(!publishCatches(broken)[i]!.includes('PublishError'), `catch ${i}: the removed branch is not seen`)
+  }
+})
+
+// A fake signer: a fixed fake pubkey and a zero signature, so the storefront's parser rejects
+// every event and the self-parse check throws before any network call. No key exists here.
+const FAKE_PK = 'f'.repeat(64)
+const fakeSigner = {
+  label: 'fake', getPublicKey: async () => FAKE_PK, close: async () => {},
+  nip44Encrypt: async () => '', nip44Decrypt: async () => '',
+  signEvent: async (t: object) => ({ ...t, pubkey: FAKE_PK, id: '0'.repeat(64), sig: '0'.repeat(128) }),
+} as never
+const FAKE_SALE = { d: 'yardsale-fake', title: 'Venta falsa', summary: '', location: '', g: '' }
+
+test('publish.ts (#109): its own failures are PublishErrors with a key and the unchanged English', async () => {
+  const { publish, publishSale, PublishError } = await import('./publish.ts')
+  const item = { slug: 'silla', title: 'Silla', summary: '', priceSats: 100, stock: 1, alt: '', blobs: [], servers: [] }
+  const sent: { kind: string }[] = []
+  const caught = async (p: Promise<unknown>) => { try { await p } catch (e) { return e } return assert.fail('it did not throw') }
+  const e1 = await caught(publish(fakeSigner, null, item, FAKE_SALE, s => sent.push(s)))
+  assert.ok(e1 instanceof PublishError, String(e1))
+  assert.equal(e1.key, 'publish.notSent')
+  assert.equal(e1.message, 'The listing we just signed does not survive our own parser. Nothing was published.')
+  assert.equal(fmt('en', e1.key, e1.vars), e1.message)
+  const e2 = await caught(publishSale(fakeSigner, FAKE_SALE, ['yardsale-fake-silla'], s => sent.push(s)))
+  assert.ok(e2 instanceof PublishError, String(e2))
+  assert.equal(e2.key, 'publish.notSent')
+  assert.equal(e2.message, 'The sale we just signed does not survive our own parser. Nothing was published.')
+  assert.ok(!sent.some(s => s.kind === 'publish'), 'it reached the network step')
+  // The network failures cannot be built offline, so: the class itself, as publish.ts throws it.
+  const e3 = new PublishError('No relay accepted the sale. It is signed but nobody can see it — try again.', 'publish.noRelaySale')
+  assert.ok(e3 instanceof Error)
+  assert.equal(fmt('en', e3.key, e3.vars), e3.message)
+  const src = readFileSync(new URL('./publish.ts', import.meta.url), 'utf8')
+  assert.ok(!/from '\.\/i18n\.ts'/.test(src), 'publish.ts imports i18n')
+  for (const [k] of NEW109) assert.ok(src.includes(`'${k}'`), `publish.ts never throws ${k}`)
+  assert.equal([...src.matchAll(/throw notSent\(/g)].length, 8, 'a "Nothing was published" throw is not keyed')
+  assert.ok(!/throw new Error\(/.test(src), 'publish.ts still throws a plain Error')
+})
