@@ -51,7 +51,7 @@ import {
   connectBunkerURL,
   connectNip07,
   forgetBunker,
-  hasNip07,
+  // no hasNip07: the #nip07 click re-checks for the extension (connectNip07)
   PERMS,
   resumeBunker,
   type Signer,
@@ -934,7 +934,6 @@ $('#download-ladder').addEventListener('click', () => downloadLadder(ladderFile(
 $('#deploy').addEventListener('click', () => void doDeploy())
 $('#perms').textContent = PERMS.join(', ')
 
-if (!hasNip07()) $('#nip07').setAttribute('disabled', 'true')
 const saved = load(NODE_KEY)
 if (saved) {
   $<HTMLInputElement>('#node-input').value = saved

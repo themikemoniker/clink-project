@@ -557,14 +557,13 @@ test('a steps run writes one PNG per numbered step, at most 360 px wide and unde
 })
 
 // #69: a step-1 line already on screen flips with the switch. With no window.nostr the #nip07
-// button starts disabled (hasNip07), so the test enables it the way a late-injecting extension
-// would leave it; connectNip07 then throws "No NIP-07 extension found…" (signer.ts).
+// button is still enabled (#131), so the click reaches connectNip07, which throws
+// "No NIP-07 extension found…" (signer.ts).
 const statusOf = (p: import('playwright').Page) =>
   p.evaluate(() => { const el = document.querySelector<HTMLElement>('#status')!; return [el.textContent, el.dataset.tone] })
 
 test('a failed connect shows Spanish without the error, and the switch re-writes the line both ways', async () => {
   const { page, errors, context, flip } = await openIn('es-MX')
-  await page.evaluate(() => document.querySelector('#nip07')!.removeAttribute('disabled'))
   await page.locator('#nip07').click()
   await page.waitForFunction(() => document.querySelector<HTMLElement>('#status')!.dataset.tone === 'bad', null, { timeout: 5_000 })
   const es = [STRINGS['status.connectFail']?.es, 'bad']
@@ -598,6 +597,25 @@ test('the waiting line flips es to en and back while the signer has not answered
   assert.deepEqual(await statusOf(page), ['Waiting for your signer…', 'busy'])
   await page.locator('#lang-switch').click()
   assert.deepEqual(await statusOf(page), es)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
+// #131: an extension that injects window.nostr after startup. The button must not be dead: the
+// click is the re-check. Before #131, startup disabled it and this click timed out.
+test('an extension that loads late still works: the button stays enabled and the click finds it', async () => {
+  const { page, errors, context } = await openIn('es-MX')
+  assert.equal(await page.evaluate(() => 'nostr' in window), false, 'window.nostr must be absent at load')
+  assert.equal(await page.locator('#nip07').isDisabled(), false, '#nip07 is disabled with no extension at load')
+  // A fixed fake object, no key, as in the waiting-line test: getPublicKey never settles.
+  await page.evaluate(() => {
+    const never = () => new Promise<never>(() => {})
+    Object.assign(window, { nostr: { getPublicKey: never, signEvent: never, nip44: { encrypt: never, decrypt: never } } })
+  })
+  await page.locator('#nip07').click({ timeout: 5_000 })
+  const es = STRINGS['status.waiting']?.es
+  assert.ok(es, 'status.waiting has no es')
+  assert.deepEqual(await statusOf(page), [es, 'busy'])
   assert.deepEqual(errors, [])
   await context.close()
 })
