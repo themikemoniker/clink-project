@@ -95,6 +95,13 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'notes.none': { en: 'No relay took your notes. Nothing was lost — press it again.', es: 'Ningún servidor guardó tus notas. No se perdió nada. Presiona otra vez.' },
   'status.disconnected': { en: 'Disconnected.', es: 'Desconectado.' },
   'edit.cancelled': { en: 'Back to a new item. Nothing was changed.', es: 'De vuelta a un artículo nuevo. No se cambió nada.' },
+  // #103: the Deploy progress lines. deploy.ts names the key; `en` is the exact English it wrote.
+  'deploy.reading': { en: 'Reading the storefront…', es: 'Preparando los archivos de tu tienda…' },
+  'deploy.hash': { en: 'Hashing {n} files…', es: 'Revisando {n} archivos…' },
+  'deploy.uploading': { en: 'Uploading…', es: 'Subiendo archivos…' },
+  'deploy.upload': { en: 'Uploading {done}/{total}…', es: 'Subiendo archivos: {done} de {total}…' },
+  'deploy.publish': { en: 'Publishing the manifest to {n} relays…', es: 'Publicando tu venta en {n} servidores…' },
+  'deploy.live': { en: 'Live at {url}', es: 'Listo: tu venta está en {url}' },
   'deploy.detail':{ en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
 }
 

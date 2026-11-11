@@ -822,13 +822,13 @@ const onPhoto = async (input: HTMLInputElement) => {
 // is itself fetched blob by blob from a gateway.
 const gateway = () => $<HTMLInputElement>('#gateway').value.trim() || DEFAULT_GATEWAY
 
-const onDeployStep = (step: DeployStep) => say(step.text, step.kind === 'done' ? 'ok' : 'busy')
+const onDeployStep = (step: DeployStep) => sayT(step.key, step.kind === 'done' ? 'ok' : 'busy', step.vars)
 
 const doDeploy = async () => {
   if (!signer) return
   $('#deploy').toggleAttribute('disabled', true)
   try {
-    say('Reading the storefront…')
+    sayT('deploy.reading')
     const files = await loadStorefront()
     const result = await deploy(signer, RELAYS, files, {
       gateway: gateway(),

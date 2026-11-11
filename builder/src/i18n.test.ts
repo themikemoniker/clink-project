@@ -401,3 +401,61 @@ test('main.ts (#126, L1): the say( finder sees each old literal put back', () =>
   assert.deepEqual(sayLeft("say(`Notes saved on ${ok}/${RELAYS.length} relays. Only your key can read them.`, 'ok')"), ['Notes saved on '])
   assert.deepEqual(sayLeft("if (ok === 0) throw new Error('No relay took your notes. Nothing was lost — press it again.')"), ['No relay took your notes'])
 })
+
+// #103: the Deploy progress lines. Fake numbers and the fake URL only. Each row: key, vars, the
+// exact English main.ts and deploy.ts wrote before, and the values the Spanish must show.
+const SITE = 'https://example.test/site'
+const NEW103: [string, Record<string, string>, string, string[]][] = [
+  ['deploy.reading', {}, 'Reading the storefront…', []],
+  ['deploy.hash', { n: '12' }, 'Hashing 12 files…', ['12']],
+  ['deploy.uploading', {}, 'Uploading…', []],
+  ['deploy.upload', { done: '7', total: '24' }, 'Uploading 7/24…', ['7', '24']],
+  ['deploy.publish', { n: '4' }, 'Publishing the manifest to 4 relays…', ['4']],
+  ['deploy.live', { url: SITE }, `Live at ${SITE}`, [SITE]],
+]
+
+test('fmt (#103): the Deploy lines are word for word in English and filled, plain Spanish', () => {
+  for (const [k, vars, en, shown] of NEW103) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+    assert.ok(!/relay|blob|manifest|blossom|hash|nostr|nsec|signer/i.test(es), `${k}: jargon in "${es}"`)
+    for (const v of shown) assert.ok(es.includes(v), `${k}: es drops ${v}: "${es}"`)
+  }
+  assert.deepEqual(missing(NEW103.map(r => r[0])), [])
+})
+
+test('fmt (#103, L1): each blanked es is caught by missing', () => {
+  for (const [k] of NEW103) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+// A Deploy line main.ts still writes itself: the old English inside a say( call.
+const OLD103 = ['Reading the storefront…']
+const deploySayLeft = (src: string) =>
+  OLD103.filter(lit => [...src.matchAll(/\bsay\(([^\n]*)/g)].some(m => m[1]!.includes(lit)))
+
+test('main.ts (#103): the Deploy lines go through sayT, so a language switch re-writes them', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.ok(!src.includes("'Reading the storefront…'"), 'main.ts still writes "Reading the storefront…" itself')
+  assert.deepEqual(deploySayLeft(src), [])
+  assert.ok(src.includes("sayT('deploy.reading'"), "main.ts never calls sayT('deploy.reading'")
+  assert.ok(src.includes("const onDeployStep = (step: DeployStep) => sayT(step.key, step.kind === 'done' ? 'ok' : 'busy', step.vars)"),
+    'onDeployStep does not write the step through the table')
+  // The catch keeps the raw message (out of scope), and nothing plain is said before it.
+  const flow = src.slice(src.indexOf('const doDeploy ='), src.indexOf('const refreshDeployCost ='))
+  const tryPart = flow.slice(0, flow.indexOf('} catch (err) {'))
+  assert.ok(tryPart.length > 0 && !/\bsay\(/.test(tryPart), 'a plain say( in the deploy flow clears the line the switch re-writes')
+  assert.ok(flow.includes("say(err instanceof Error ? err.message : String(err), 'bad')"), 'the doDeploy catch changed')
+})
+
+test('main.ts (#103, L1): the finder sees the old Deploy line put back', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const back = src.replace("sayT('deploy.reading')", "say('Reading the storefront…')")
+  assert.notEqual(back, src, "sayT('deploy.reading') is not in main.ts")
+  assert.deepEqual(deploySayLeft(back), OLD103)
+})

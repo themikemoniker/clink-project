@@ -22,6 +22,9 @@ import {
   type SiteFile,
 } from './deploy.ts'
 import type { Signer } from './signer.ts'
+import { useWebSocketImplementation } from 'nostr-tools/pool'
+import { fmt, STRINGS } from './i18n.ts'
+import type { DeployStep } from './deploy.ts'
 
 const sk = generateSecretKey()
 const pk = getPublicKey(sk)
@@ -147,6 +150,71 @@ test('injecting the QR changes index.html’s hash, so it must happen before has
     hashOf(withMarker, '/index.html'),
     createHash('sha256').update(withMarker.files.find(f => f.path === '/index.html')!.bytes).digest('hex'),
   )
+})
+
+// #103: a step the builder can show in the seller's language. Each problem is one line, so a
+// step with no key, an unknown key, or a {slot} left unfilled is named in the failure.
+const stepProblems = (steps: DeployStep[]): string[] =>
+  steps.flatMap(s => {
+    if (!s.key) return [`${s.kind}: no key`]
+    if (!(s.key in STRINGS)) return [`${s.kind}: ${s.key} is not in STRINGS`]
+    const slots = [...STRINGS[s.key]!.en.matchAll(/\{(\w+)\}/g)].map(m => m[1]!)
+    const unfilled = slots.filter(n => typeof s.vars?.[n] !== 'string')
+    if (unfilled.length) return [`${s.kind}: ${s.key} has no ${unfilled.join(', ')}`]
+    // The table's English is the text deploy.ts writes, so the spike script's log is unchanged.
+    return fmt('en', s.key, s.vars) === s.text ? [] : [`${s.kind}: ${s.key} reads "${fmt('en', s.key, s.vars)}", not "${s.text}"`]
+  })
+
+// A relay that says OK to every EVENT, and nothing else. Fake URLs only; no socket is opened.
+class FakeRelaySocket {
+  static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3
+  readyState = 0
+  onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; onerror?: () => void
+  url: string
+  constructor(url: string) { this.url = url; setTimeout(() => { this.readyState = 1; this.onopen?.() }, 0) }
+  send(msg: string) {
+    const [type, ev] = JSON.parse(msg) as [string, { id: string }]
+    if (type === 'EVENT') setTimeout(() => this.onmessage?.({ data: JSON.stringify(['OK', ev.id, true, '']) }), 0)
+  }
+  close() { this.readyState = 3 }
+}
+
+test('every deploy step names a table line with all its slots filled, and the last one is the site', async () => {
+  const realFetch = globalThis.fetch
+  const puts: string[] = []
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    puts.push(String(input))
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+  useWebSocketImplementation(FakeRelaySocket)
+  const steps: DeployStep[] = []
+  try {
+    const servers = ['https://a.example.test', 'https://b.example.test']
+    const relays = ['wss://r1.example.test', 'wss://r2.example.test', 'wss://r3.example.test']
+    const result = await deploy(signer, relays, site(), { gateway: 'example.test', servers }, s => steps.push(s))
+    strictEqual(puts.length, 4) // two files on two servers: the fakes really were reached
+    deepStrictEqual(steps.map(s => s.kind), ['hash', 'upload', 'upload', 'upload', 'upload', 'upload', 'publish', 'done'])
+    deepStrictEqual(stepProblems(steps), [])
+    deepStrictEqual(steps[0]!.vars, { n: '2' })
+    deepStrictEqual(steps.at(-2)!.vars, { n: '3' })
+    deepStrictEqual(steps[5]!.vars, { done: '4', total: '4' })
+    const done = steps.at(-1)!
+    strictEqual(done.key, 'deploy.live')
+    strictEqual(done.vars.url, result.url)
+    strictEqual(result.relaysOk, 3)
+  } finally {
+    globalThis.fetch = realFetch
+    useWebSocketImplementation(globalThis.WebSocket)
+  }
+})
+
+test('the step check (L1) goes red on a missing key, an unknown key and an unfilled slot', () => {
+  const good: DeployStep = { kind: 'done', text: 'Live at https://example.test/site', key: 'deploy.live', vars: { url: 'https://example.test/site' } }
+  deepStrictEqual(stepProblems([good]), [])
+  deepStrictEqual(stepProblems([{ ...good, key: '' }]), ['done: no key'])
+  deepStrictEqual(stepProblems([{ ...good, key: 'deploy.nope' }]), ['done: deploy.nope is not in STRINGS'])
+  deepStrictEqual(stepProblems([{ ...good, vars: {} }]), ['done: deploy.live has no url'])
+  deepStrictEqual(stepProblems([{ ...good, vars: { url: 'https://other.test' } }]).length, 1)
 })
 
 test('content types come from the extension, and an unknown one is not guessed', () => {
