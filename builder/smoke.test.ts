@@ -356,12 +356,13 @@ test('a fiat price may have a fractional part, because a peso is not a sat', asy
 
 // --- G1.1 and G1.2: the front door in the seller's language -----------------------------------
 // `locale` sets navigator.language. `blocked` makes reading window.localStorage throw, as Chrome
-// does when site data is blocked, for the WHOLE real startup (L14).
+// does when site data is blocked, for the WHOLE real startup (L14). `init` runs before load, too.
 import { STRINGS } from './src/i18n.ts'
-const openIn = async (locale: string, blocked = false) => {
+const openIn = async (locale: string, blocked = false, init?: () => void) => {
   const context = await browser.newContext({ locale, viewport: { width: 360, height: 640 } })
   const throws = () => Object.defineProperty(window, 'localStorage', { get: () => { throw new DOMException('blocked', 'SecurityError') } })
   if (blocked) await context.addInitScript(throws)
+  if (init) await context.addInitScript(init)
   const page = await context.newPage()
   const errors: string[] = []
   page.on('pageerror', e => errors.push(e.message))
@@ -443,6 +444,33 @@ test('with storage blocked, a pasted node pointer still takes effect with no pag
   await page.locator('#node-input').dispatchEvent('change')
   assert.deepEqual(errors, [])
   assert.equal(await nodeState(page), NODE_OK_ES)
+  await context.close()
+})
+
+// G2.3: useSigner reads the saved ladder (loadLadder) inside getPublicKey().then, then calls
+// loadPanel. Unguarded, blocked storage throws there as an unhandled rejection: signed in, empty
+// panel. The stub is fixed fake data (no key) and touches no storage. Relay reads may fail
+// offline, so the test only checks that loadPanel's first line ran, via an observer on #items-state.
+test('with storage blocked, connecting a NIP-07 signer still signs in and starts loading the panel', async () => {
+  const { page, errors, context } = await openIn('es-MX', true, () => {
+    const ok = (v: unknown) => () => Promise.resolve(v)
+    Object.assign(window, { nostr: { getPublicKey: ok('ab'.repeat(32)), signEvent: (e: unknown) => Promise.resolve(e),
+      nip44: { encrypt: ok('fake-ciphertext'), decrypt: ok('fake-plaintext') } } })
+  })
+  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  assert.equal(await page.locator('#nip07').isDisabled(), false)
+  await page.evaluate(() => {
+    const el = document.querySelector('#items-state')!, seen: string[] = ((window as { seen?: string[] }).seen = [])
+    new MutationObserver(() => seen.push(el.textContent ?? '')).observe(el, { childList: true, characterData: true, subtree: true })
+  })
+  await page.locator('#nip07').click()
+  await page.waitForFunction(() => /abababab/.test(document.querySelector('#whoami')!.textContent ?? ''), null, { timeout: 5_000 })
+  const reading = STRINGS['items.reading']?.es
+  assert.ok(reading, 'items.reading has no es')
+  await page.waitForFunction(r => ((window as { seen?: string[] }).seen ?? []).includes(r), reading, { timeout: 5_000 })
+  assert.equal(await page.locator('#signed-in').isVisible(), true)
+  assert.equal(await page.locator('#connect').isHidden(), true)
+  assert.deepEqual(errors, [])
   await context.close()
 })
 
