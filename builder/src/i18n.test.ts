@@ -979,14 +979,22 @@ test('main.ts (#157): setWatcher writes through the table and the view is re-sho
       assert.ok(body.includes(`key: '${k}'`), `setWatcher does not set ${k}`)
     assert.ok(!body.includes("$('#watcher-state').textContent"), 'setWatcher writes #watcher-state itself')
     assert.ok(body.includes('if (remember) keep(WATCHER_KEY, trimmed)'), 'the keep call changed')
-    assert.match(s, /applyLang\(document, lang\)\nshowNode\(\)\nshowWatcher\(\)\n/, 'no showWatcher right after the first applyLang')
+    const start = s.indexOf('\napplyLang(document, lang)\n')
+    const flipAt = s.indexOf("$('#lang-switch').addEventListener")
+    assert.ok(start >= 0 && flipAt > start, 'startup applyLang or the switch handler not found')
+    assert.ok(s.slice(start, flipAt).includes('\nshowWatcher()\n'), 'startup does not show #watcher-state after applyLang')
     const flip = /\$\('#lang-switch'\)\.addEventListener[\s\S]*?\n\}\)\n/.exec(s)?.[0] ?? ''
     assert.ok(flip.includes('showWatcher()'), 'the language switch does not re-show #watcher-state')
   }
   check(src)
   // L1: the pre-#157 English body, and a switch that forgets the line, are each caught.
   assert.throws(() => check(src.replace("watcherView = { key: 'watcher.bad', vars: {} }; showWatcher()", "$('#watcher-state').textContent = 'That is not an npub.'")))
-  assert.throws(() => check(src.replace('  showNode()\n  showWatcher()\n', '  showNode()\n')))
+  const noFlip = src.replace('  showWatcher()\n  showNode()\n', '  showNode()\n')
+  assert.notEqual(noFlip, src)
+  assert.throws(() => check(noFlip), /switch does not re-show/)
+  const noStart = src.replace('showStickers()\nshowWatcher()\n', 'showStickers()\n')
+  assert.notEqual(noStart, src)
+  assert.throws(() => check(noStart), /startup does not show/)
   assert.match(HTML, /<p class="hint" id="watcher-state">No watcher key yet/, 'the pre-script English fallback is gone')
 })
 

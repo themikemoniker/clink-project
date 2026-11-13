@@ -902,9 +902,9 @@ const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) =
 }
 applyLang(document, lang)
 showNode()
-showWatcher()
 showPhoto()
 showStickers()
+showWatcher()
 $('#lang-switch').addEventListener('click', () => {
   lang = lang === 'es' ? 'en' : 'es'
   keep(LANG_KEY, lang)
@@ -914,8 +914,8 @@ $('#lang-switch').addEventListener('click', () => {
   showEdit()
   showStickers()
   showPhoto()
-  showNode()
   showWatcher()
+  showNode()
   refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
