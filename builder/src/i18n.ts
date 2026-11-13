@@ -108,6 +108,12 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'deploy.live': { en: 'Live at {url}', es: 'Listo: tu venta está en {url}' },
   // #169: deploy.ts throws this as a PublishError. `en` is its exact English.
   'deploy.noServer': { en: 'No Blossom server holds a complete copy. Refusing to publish a manifest that cannot resolve.', es: 'No se pudo guardar tu tienda en internet. Revisa tu conexión y vuelve a intentarlo en un momento.' },
+  // #167: more PublishErrors from deploy.ts and photos.ts (needs-native-review). `en` is the exact old
+  // English; deploy.badBuild is four storefront-file throws, so its en is {msg}. es shows no slot.
+  'deploy.noRelay': { en: 'No relay accepted the kind {kind}. The site cannot resolve — try again.', es: 'Tu tienda no se pudo publicar todavía. Revisa tu conexión y vuelve a intentarlo en un momento.' },
+  'deploy.badBuild': { en: '{msg}', es: 'Los archivos de tu tienda no se cargaron bien. Recarga la página y vuelve a intentarlo. Si sigue pasando, la app necesita una actualización.' },
+  'photo.tooBig': { en: '{name} is {mb} MB — too large.', es: 'La foto pesa demasiado. Elige otra o toma una más pequeña.' },
+  'photo.noCanvas': { en: 'This browser will not give us a 2d canvas, so photos cannot be resized.', es: 'Este navegador no puede preparar la foto. Puedes publicar sin foto, o abre la página en otro navegador.' },
   // #109: the failures publish.ts writes itself (PublishError). `en` is its exact English; es never shows {msg}.
   'publish.noRelay': { en: 'No relay accepted the listing. It is signed but nobody can see it — try again.', es: 'Tu artículo está listo, pero nadie lo puede ver todavía. Presiona Publicar otra vez en un momento.' },
   'publish.noRelaySale': { en: 'No relay accepted the sale. It is signed but nobody can see it — try again.', es: 'Tu venta está lista, pero nadie la puede ver todavía. Presiona Publicar otra vez en un momento.' },

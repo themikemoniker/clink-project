@@ -8,6 +8,7 @@
 // Nothing here holds a key: the kind 24242 auth is signed through the Signer like everything
 // else.
 import { mirror, SERVERS } from './blossom.ts'
+import { PublishError } from './publish.ts' // publish.ts never imports photos.ts: no cycle
 import type { Signer } from './signer.ts'
 import type { Blob as PhotoBlob } from './listing.ts'
 
@@ -54,7 +55,10 @@ const payloads = new WeakMap<PhotoBlob, ArrayBuffer>()
  * every downstream aspect-ratio box is wrong.
  */
 export const resize = async (file: File): Promise<PhotoBlob[]> => {
-  if (file.size > MAX_SOURCE_BYTES) throw new Error(`${file.name} is ${(file.size / 1e6).toFixed(1)} MB — too large.`)
+  if (file.size > MAX_SOURCE_BYTES) {
+    const mb = (file.size / 1e6).toFixed(1)
+    throw new PublishError(`${file.name} is ${mb} MB — too large.`, 'photo.tooBig', { name: file.name, mb })
+  }
   const source = await createImageBitmap(file, { imageOrientation: 'from-image' })
 
   const out: PhotoBlob[] = []
@@ -62,7 +66,7 @@ export const resize = async (file: File): Promise<PhotoBlob[]> => {
     const h = Math.round((source.height / source.width) * w)
     const canvas = new OffscreenCanvas(w, h)
     const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('This browser will not give us a 2d canvas, so photos cannot be resized.')
+    if (!ctx) throw new PublishError('This browser will not give us a 2d canvas, so photos cannot be resized.', 'photo.noCanvas')
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(source, 0, 0, w, h)
     const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY })

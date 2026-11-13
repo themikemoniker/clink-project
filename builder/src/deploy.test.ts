@@ -14,16 +14,20 @@ import {
   aggregateHash,
   contentType,
   deploy,
+  loadStorefront,
   MANIFEST_KIND,
   manifestTemplate,
   serverListTemplate,
   siteUrl,
+  storefrontPaths,
   withQR,
   type SiteFile,
 } from './deploy.ts'
 import type { Signer } from './signer.ts'
 import { useWebSocketImplementation } from 'nostr-tools/pool'
-import { fmt, STRINGS } from './i18n.ts'
+import { errLine, fmt, STRINGS } from './i18n.ts'
+import { resize } from './photos.ts'
+import { PublishError } from './publish.ts'
 import type { DeployStep } from './deploy.ts'
 
 const sk = generateSecretKey()
@@ -223,4 +227,97 @@ test('content types come from the extension, and an unknown one is not guessed',
   strictEqual(contentType('/assets/index-BwpsJq0V.css'), 'text/css')
   strictEqual(contentType('/photo.JPG'), 'image/jpeg')
   strictEqual(contentType('/weird.bin'), 'application/octet-stream')
+})
+
+// #167: the specific deploy and photo failures are PublishErrors with a table key, so the builder
+// shows its own Spanish line instead of "Algo salió mal". All offline. The signer is a fixed fake
+// (a made-up pubkey and a zero signature): no key exists here (CLAUDE.md rule 2).
+const FAKE_PK = 'f'.repeat(64)
+const fakeSigner: Signer = {
+  label: 'fake',
+  getPublicKey: async () => FAKE_PK,
+  signEvent: async (e: EventTemplate) => ({ ...e, pubkey: FAKE_PK, id: '0'.repeat(64), sig: '0'.repeat(128) }) as VerifiedEvent,
+  nip44Encrypt: async () => '',
+  nip44Decrypt: async () => '',
+  close: async () => {},
+}
+const caught = (p: Promise<unknown>) => p.then(() => { throw new Error('it did not throw') }, (e: unknown) => e)
+const keyed = (err: unknown, key: string, message: string) => {
+  ok(err instanceof PublishError, `not a PublishError: ${String(err)}`)
+  strictEqual(err.name, 'PublishError')
+  strictEqual(err.key, key)
+  strictEqual(err.message, message) // English is the old text, word for word
+  strictEqual(errLine(err).key, key) // a key missing from the table would fall back to err.generic here
+  strictEqual(fmt('en', key, err.vars), message)
+  ok(!fmt('es', key, err.vars).includes('{'), `${key}: es shows a slot`)
+  return err
+}
+
+test('deploy (#167): a file list without /index.html or /404.html rejects keyed deploy.badBuild', async () => {
+  keyed(await caught(deploy(fakeSigner, [], [file('/404.html', 'x')], { dryRun: true })), 'deploy.badBuild', 'No /index.html — that is not a site.')
+  keyed(await caught(deploy(fakeSigner, [], [file('/index.html', 'x')], { dryRun: true })), 'deploy.badBuild', 'No /404.html — NIP-5A 5A.md:196 requires it.')
+})
+
+test('storefrontPaths and loadStorefront (#167): an unreadable file list or a missing file rejects keyed deploy.badBuild', async () => {
+  const realFetch = globalThis.fetch
+  try {
+    globalThis.fetch = (async () => ({ ok: false, status: 404 })) as unknown as typeof fetch
+    const listMsg = 'Could not read the storefront file list (404). Run `npm run build` in /builder.'
+    keyed(await caught(storefrontPaths()), 'deploy.badBuild', listMsg)
+    keyed(await caught(loadStorefront()), 'deploy.badBuild', listMsg)
+    // The list reads fine but one file is gone.
+    globalThis.fetch = (async (input: string | URL | Request) =>
+      String(input).endsWith('/site.json')
+        ? { ok: true, status: 200, json: async () => ['/index.html'] }
+        : { ok: false, status: 404 }) as unknown as typeof fetch
+    keyed(await caught(loadStorefront()), 'deploy.badBuild', 'Missing storefront file /index.html (404).')
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+// A relay that refuses every EVENT. Fake URLs only; no socket is opened.
+class RefusingRelaySocket extends FakeRelaySocket {
+  override send(msg: string) {
+    const [type, ev] = JSON.parse(msg) as [string, { id: string }]
+    if (type === 'EVENT') setTimeout(() => this.onmessage?.({ data: JSON.stringify(['OK', ev.id, false, 'blocked: test']) }), 0)
+  }
+}
+
+test('deploy (#167): no relay taking the manifest rejects keyed deploy.noRelay with the kind', async () => {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch
+  useWebSocketImplementation(RefusingRelaySocket)
+  try {
+    const err = keyed(
+      await caught(deploy(fakeSigner, ['wss://r1.example.test'], site(), { gateway: 'example.test', servers: ['https://a.example.test'] })),
+      'deploy.noRelay',
+      `No relay accepted the kind ${MANIFEST_KIND}. The site cannot resolve — try again.`,
+    )
+    deepStrictEqual(err.vars, { kind: String(MANIFEST_KIND) })
+    ok(!fmt('es', 'deploy.noRelay', err.vars).includes(String(MANIFEST_KIND)), 'es shows the kind number')
+  } finally {
+    globalThis.fetch = realFetch
+    useWebSocketImplementation(globalThis.WebSocket)
+  }
+})
+
+test('resize (#167): a 1 GB photo rejects keyed photo.tooBig before it is decoded', async () => {
+  const err = keyed(await caught(resize({ size: 1e9, name: 'a.jpg' } as File)), 'photo.tooBig', 'a.jpg is 1000.0 MB — too large.')
+  strictEqual(err.vars?.mb, '1000.0')
+  strictEqual(err.vars?.name, 'a.jpg')
+  const es = fmt('es', 'photo.tooBig', err.vars)
+  ok(!es.includes('a.jpg') && !es.includes('1000'), `es shows the name or size: ${es}`)
+})
+
+test('resize (#167): a browser with no 2d canvas rejects keyed photo.noCanvas', async () => {
+  const g = globalThis as Record<string, unknown>
+  const saved = { createImageBitmap: g.createImageBitmap, OffscreenCanvas: g.OffscreenCanvas }
+  g.createImageBitmap = async () => ({ width: 800, height: 600, close: () => {} })
+  g.OffscreenCanvas = class { getContext() { return null } }
+  try {
+    keyed(await caught(resize({ size: 1000, name: 'a.jpg' } as File)), 'photo.noCanvas', 'This browser will not give us a 2d canvas, so photos cannot be resized.')
+  } finally {
+    Object.assign(g, saved)
+  }
 })

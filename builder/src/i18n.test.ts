@@ -772,6 +772,95 @@ test('errLine (#169): a PublishError keeps its key; a plain Error, a string and 
   assert.equal(fmt('en', errLine(new Error('boom')).key, errLine(new Error('boom')).vars), 'boom')
 })
 
+// #167: the specific deploy and photo failures. Each row: key, the vars the throw passes, the exact old English.
+const NEW167: [string, Record<string, string>, string][] = [
+  ['deploy.noRelay', { kind: '15128' }, 'No relay accepted the kind 15128. The site cannot resolve — try again.'],
+  ['deploy.badBuild', { msg: 'No /index.html — that is not a site.' }, 'No /index.html — that is not a site.'],
+  ['deploy.badBuild', { msg: 'No /404.html — NIP-5A 5A.md:196 requires it.' }, 'No /404.html — NIP-5A 5A.md:196 requires it.'],
+  ['deploy.badBuild', { msg: 'Could not read the storefront file list (404). Run `npm run build` in /builder.' }, 'Could not read the storefront file list (404). Run `npm run build` in /builder.'],
+  ['deploy.badBuild', { msg: 'Missing storefront file /index.html (404).' }, 'Missing storefront file /index.html (404).'],
+  ['photo.tooBig', { name: 'a.jpg', mb: '1000.0' }, 'a.jpg is 1000.0 MB — too large.'],
+  ['photo.noCanvas', {}, 'This browser will not give us a 2d canvas, so photos cannot be resized.'],
+]
+const KEYS167 = [...new Set(NEW167.map(r => r[0]))]
+const BANNED167 = ['{', 'relay', 'signer', 'Blossom', 'nsec', 'hex', 'manifest', 'canvas', 'npm', 'build', 'kind', '.html']
+const jargon167 = (es: string) => BANNED167.filter(w => es.toLowerCase().includes(w.toLowerCase()))
+
+test('fmt (#167): deploy and photo failures are word for word in English and plain Spanish', () => {
+  assert.equal(KEYS167.length, 4)
+  assert.deepEqual(missing(KEYS167), [])
+  for (const [k, vars, en] of NEW167) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.deepEqual(jargon167(es), [], `${k}: jargon or a slot in "${es}"`)
+    for (const v of Object.values(vars)) assert.ok(!es.includes(v), `${k}: es shows ${v}`)
+  }
+  assert.match(STRINGS['photo.noCanvas']!.es, /sin foto/, 'photo.noCanvas es does not say it can publish without a photo')
+  assert.match(STRINGS['deploy.badBuild']!.es, /[Rr]ecarga/, 'deploy.badBuild es does not say to reload')
+})
+
+test('fmt (#167, L1): each blanked es is caught by missing, and each banned word is caught', () => {
+  for (const k of KEYS167) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+  for (const w of BANNED167) assert.deepEqual(jargon167(`${STRINGS['photo.tooBig']!.es} ${w}`), [w], w)
+  assert.ok(jargon167(STRINGS['photo.tooBig']!.en).includes('{'))
+})
+
+// The six old plain throws, as they were in deploy.ts and photos.ts before #167.
+const OLD167: [string, string][] = [
+  ['deploy.ts', "throw new Error('No /index.html — that is not a site.')"],
+  ['deploy.ts', "throw new Error('No /404.html — NIP-5A 5A.md:196 requires it.')"],
+  ['deploy.ts', 'throw new Error(`No relay accepted the kind ${event.kind}. The site cannot resolve — try again.`)'],
+  ['deploy.ts', 'throw new Error(`Could not read the storefront file list (${res.status}). Run \\`npm run build\\` in /builder.`)'],
+  ['deploy.ts', 'throw new Error(`Missing storefront file ${path} (${file.status}).`)'],
+  ['photos.ts', 'throw new Error(`${file.name} is ${(file.size / 1e6).toFixed(1)} MB — too large.`)'],
+  ['photos.ts', "throw new Error('This browser will not give us a 2d canvas, so photos cannot be resized.')"],
+]
+const BADBUILD = "const badBuild = (msg: string) => new PublishError(msg, 'deploy.badBuild', { msg })"
+// Which #167 throws are still plain: each problem names the file and what is wrong.
+const unkeyed167 = (src: Record<string, string>) => {
+  const left: string[] = []
+  for (const [f, s] of Object.entries(src)) if (/throw new Error\(/.test(s)) left.push(`${f}: throw new Error(`)
+  for (const [f, old] of OLD167) if (src[f]!.includes(old)) left.push(`${f}: ${old}`)
+  if (!src['deploy.ts']!.includes(BADBUILD)) left.push('deploy.ts: badBuild')
+  if ([...src['deploy.ts']!.matchAll(/throw badBuild\(/g)].length !== 4) left.push('deploy.ts: four throw badBuild(')
+  for (const [f, k] of [['deploy.ts', 'deploy.noRelay'], ['photos.ts', 'photo.tooBig'], ['photos.ts', 'photo.noCanvas']] as const)
+    if (!new RegExp(`throw new PublishError\\([^\\n]*'${k.replace('.', '\\.')}'`).test(src[f]!)) left.push(`${f}: ${k}`)
+  if (!/^import \{ PublishError \} from '\.\/publish\.ts'/m.test(src['photos.ts']!)) left.push('photos.ts: import')
+  return left
+}
+const src167 = () => Object.fromEntries(['deploy.ts', 'photos.ts'].map(f => [f, readFileSync(new URL(`./${f}`, import.meta.url), 'utf8')]))
+
+test('deploy.ts and photos.ts (#167): no old plain throw is left, and each key is thrown as a PublishError', () => {
+  assert.deepEqual(unkeyed167(src167()), [])
+  // publish.ts must not import either file back, or the value import makes a cycle.
+  assert.ok(!/from '\.\/(deploy|photos)\.ts'/.test(readFileSync(new URL('./publish.ts', import.meta.url), 'utf8')), 'publish.ts imports deploy.ts or photos.ts')
+})
+
+test('deploy.ts and photos.ts (#167, L1): each old throw put back is caught', () => {
+  const now = src167()
+  const news: [string, string][] = [
+    ['deploy.ts', "throw badBuild('No /index.html — that is not a site.')"],
+    ['deploy.ts', "throw badBuild('No /404.html — NIP-5A 5A.md:196 requires it.')"],
+    ['deploy.ts', "throw new PublishError(`No relay accepted the kind ${event.kind}. The site cannot resolve — try again.`, 'deploy.noRelay', { kind: String(event.kind) })"],
+    ['deploy.ts', 'throw badBuild(`Could not read the storefront file list (${res.status}). Run \\`npm run build\\` in /builder.`)'],
+    ['deploy.ts', 'throw badBuild(`Missing storefront file ${path} (${file.status}).`)'],
+    ['photos.ts', "throw new PublishError(`${file.name} is ${mb} MB — too large.`, 'photo.tooBig', { name: file.name, mb })"],
+    ['photos.ts', "throw new PublishError('This browser will not give us a 2d canvas, so photos cannot be resized.', 'photo.noCanvas')"],
+  ]
+  news.forEach(([f, line], i) => {
+    assert.ok(now[f]!.includes(line), `${f}: cannot find ${line}`)
+    const broken = { ...now, [f]: now[f]!.replace(line, OLD167[i]![1]) }
+    assert.ok(unkeyed167(broken).includes(`${f}: ${OLD167[i]![1]}`), `${f}: put-back ${i} is not seen`)
+  })
+  // A key that errLine would not find (a typo) is seen too.
+  assert.ok(unkeyed167({ ...now, 'photos.ts': now['photos.ts']!.replace("'photo.noCanvas'", "'photo.noCanvass'") }).includes('photos.ts: photo.noCanvas'))
+  assert.ok(unkeyed167({ ...now, 'deploy.ts': now['deploy.ts']!.replace("'deploy.badBuild'", "'deploy.badbuild'") }).includes('deploy.ts: badBuild'))
+})
+
 // #123: the #node-state line. en is the old English byte for byte; es names no command and no relay.
 const NEW123: [string, Record<string, string>, string][] = [
   ['node.none', {}, 'No node — items will publish as cash-only, with no Buy button.'],
