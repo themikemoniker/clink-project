@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { fiatPriceReason } from './admin.ts'
 import { countKey, errLine, fmt, keep, load, missing, pickLang, STRINGS } from './i18n.ts'
 
 test('pickLang: a stored choice wins, then any es* phone language, then English', () => {
@@ -428,6 +429,30 @@ test('main.ts (#126, L1): the say( finder sees each old literal put back', () =>
   for (const lit of OLD126) assert.deepEqual(sayLeft(`${src}\n  say('${lit}', 'bad')`), [lit], lit)
   assert.deepEqual(sayLeft("say(`Notes saved on ${ok}/${RELAYS.length} relays. Only your key can read them.`, 'ok')"), ['Notes saved on '])
   assert.deepEqual(sayLeft("if (ok === 0) throw new Error('No relay took your notes. Nothing was lost — press it again.')"), ['No relay took your notes'])
+})
+
+// The fiat price check: the English must stay exactly fiatPriceReason's own text, so the two cannot drift.
+test('fmt (item.badFiat): English is fiatPriceReason word for word, Spanish is plain and keeps the currency', () => {
+  assert.equal(fmt('en', 'item.badFiat', { cur: 'MXN' }), fiatPriceReason(-1, 'MXN'))
+  const es = fmt('es', 'item.badFiat', { cur: 'MXN' })
+  assert.ok(es.trim(), 'item.badFiat: no es')
+  assert.notEqual(es, fmt('en', 'item.badFiat', { cur: 'MXN' }))
+  assert.ok(es.includes('MXN') && !es.includes('{'), `item.badFiat: es drops the currency: "${es}"`)
+  assert.ok(!/sats|nostr|relay|hex|nsec/i.test(es), `item.badFiat: jargon in "${es}"`)
+  assert.deepEqual(missing(['item.badFiat']), [])
+  const broken = { ...STRINGS, 'item.badFiat': { en: STRINGS['item.badFiat']!.en, es: '' } }
+  assert.deepEqual(missing(Object.keys(broken), broken), ['item.badFiat'])
+})
+
+const fiatCheck = (src: string) => {
+  const at = src.indexOf('const doPublish =')
+  assert.ok(at >= 0, 'main.ts has no doPublish')
+  return src.slice(at, src.indexOf('\n}\n', at)) // to doPublish's own closing brace
+}
+test('main.ts (item.badFiat): doPublish writes the fiat price error through sayT, not say(why', () => {
+  const pub = fiatCheck(readFileSync(new URL('./main.ts', import.meta.url), 'utf8'))
+  assert.ok(pub.includes("sayT('item.badFiat', 'bad', { cur: draft.fiat.currency })"), 'doPublish never calls sayT(item.badFiat)')
+  assert.ok(!pub.includes('say(why'), 'doPublish still writes the English reason itself')
 })
 
 // #103: the Deploy progress lines. Fake numbers and the fake URL only. Each row: key, vars, the
