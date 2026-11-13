@@ -187,6 +187,20 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'stickers.allSold': { en: 'Every item is sold, so there is nothing to sticker.', es: 'Todo está vendido, así que no hay etiquetas que hacer.' },
   // #182: the QR's aria-label, for a screen reader (needs-native-review). `en` is the exact old English.
   'stickers.qr': { en: 'QR code linking to {url}', es: 'Código que abre {url}' },
+  // #181: panel 6, the ladder result (needs-native-review). `en` is the exact old English. The es says
+  // "ayudante de ventas" for the watcher, "servidores" for relays and "archivo de tus artículos" for
+  // the ladder file. #result-text and #ladder-note are written by ladder-text.ts, not data-i18n.
+  'result.h': { en: '6 · Give the watcher its ladder', es: '6 · Pasa tus artículos a tu ayudante de ventas' },
+  'result.hint': { en: 'Every future stock state of this item is now signed and waiting. Your watcher publishes them as things sell, which is how it updates the sale while holding no key of yours at all. It cannot get them off a relay — publishing the sold-out one would mark the item sold immediately — so you carry them across.', es: 'Ya aprobaste cómo se verá este artículo cada vez que se venda uno. Tu ayudante de ventas lo va mostrando cuando vendes, sin tener ninguna clave tuya. No lo puede conseguir solo, así que tú se lo pasas.' },
+  'result.download': { en: 'Download .ladder.json', es: 'Descargar el archivo de tus artículos' },
+  'result.buy': { en: '{title} is live on {ok}/{total} relays as {d}, with a Buy button.', es: '“{title}” ya está a la venta en {ok} de {total} servidores como {d}, con botón para pagar.' },
+  'result.cash': { en: '{title} is live on {ok}/{total} relays as {d}, cash at the table.', es: '“{title}” ya está a la venta en {ok} de {total} servidores como {d}. Se paga en efectivo.' },
+  'ladder.items.one': { en: '{n} item(s) in this ladder.', es: '{n} artículo en el archivo de tus artículos.' },
+  'ladder.items.other': { en: '{n} item(s) in this ladder.', es: '{n} artículos en el archivo de tus artículos.' },
+  'ladder.file': { en: 'Save it as .ladder.json next to watch-sales.ts, then restart the watcher.', es: 'Descarga el archivo y dáselo a tu ayudante de ventas. Luego reinícialo.' },
+  'ladder.sent': { en: 'Sent encrypted to your watcher on {ok}/{total} relays, so there is no file to copy and nothing to restart. The download stays here as a backup.', es: 'Ya se le envió a tu ayudante de ventas por {ok} de {total} servidores. No tienes que enviar ni reiniciar nada. La descarga queda aquí por si acaso.' },
+  'ladder.notSent': { en: 'The ladder could NOT be sent to your watcher: no relay accepted it. The item is published and really for sale, but your watcher has not been told about it. Save it as .ladder.json next to watch-sales.ts and restart the watcher, or publish again once the relays answer.', es: 'NO se pudo enviar a tu ayudante de ventas: ningún servidor lo aceptó. El artículo sí está a la venta, pero tu ayudante no lo sabe. Descarga el archivo, dáselo y reinícialo, o vuelve a publicar cuando los servidores respondan.' },
+  'ladder.edit': { en: 'You just edited an item, so this is not optional: the rungs your watcher is holding were cut from the OLD listing and are now older than what is on the relays, which means it would publish them and the relay would ignore it. It would keep reporting success while the item stayed on sale after it sold. Restarting the watcher on this file is what closes that.', es: 'Cambiaste un artículo, así que esto es obligatorio: la lista que tiene tu ayudante de ventas ya es vieja. Dale este archivo otra vez. Si no, el artículo seguiría a la venta aunque ya se haya vendido.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.
