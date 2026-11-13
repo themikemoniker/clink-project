@@ -132,7 +132,12 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'sale.cannot': { en: 'Cannot publish yet: {reason}', es: 'Aún no se puede publicar: {reason}' },
   // #158: photo and location failures (needs-native-review). `en` is the exact old English; es never shows {msg}.
   'photo.noServer': { en: 'No Blossom server accepted the photo. The listing can still publish without one.', es: 'No se pudo guardar la foto. Puedes publicar el artículo sin foto, o intentarlo más tarde.' },
-  'geo.none': { en: 'This browser has no geolocation. Type the geohash instead.', es: 'Este navegador no puede saber dónde estás. Escribe el código de tu zona.' },
+  // #159: the photo status line (#photo-state). `en` is the exact old English; es never says px or Blossom.
+  'photo.hint': { en: 'Resized in your browser to 1200, 480 and 160px. The original is never uploaded.', es: 'Tu foto se hace más chica en tu teléfono. La original nunca se sube.' },
+  'photo.none': { en: 'No photo on this item yet.', es: 'Este artículo todavía no tiene foto.' },
+  'photo.have': { en: '{sizes} already on Blossom. Leave the file field empty to keep them.', es: 'Este artículo ya tiene foto. Deja vacío el campo para conservarla.' },
+  'photo.stored': { en: '{sizes} on Blossom.', es: 'Tu foto ya está guardada.' },
+  'geo.none':{ en: 'This browser has no geolocation. Type the geohash instead.', es: 'Este navegador no puede saber dónde estás. Escribe el código de tu zona.' },
   'geo.fail': { en: 'Could not read your location: {msg}. Type the geohash instead.', es: 'Tu teléfono no pudo saber dónde estás. Permite la ubicación, o escribe el código de tu zona.' },
 }
 
