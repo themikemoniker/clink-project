@@ -566,7 +566,7 @@ const doPublishSale = async (event: SubmitEvent) => {
 // spec §10's "map of nearby sales" died on (/docs/spike-findings.md §31). This asks the browser,
 // the browser asks the person, and nothing leaves the machine.
 const locate = () => {
-  if (!navigator.geolocation) return say('This browser has no geolocation. Type the geohash instead.', 'bad')
+  if (!navigator.geolocation) return sayT('geo.none', 'bad')
   say('Asking your browser where you are…')
   navigator.geolocation.getCurrentPosition(
     pos => {
@@ -576,7 +576,7 @@ const locate = () => {
       $<HTMLInputElement>('#sale-geo').value = g
       say(`Geohash ${g} — about 76 metres across. Nothing was sent anywhere; publish the sale to use it.`, 'ok')
     },
-    err => say(`Could not read your location: ${err.message}. Type the geohash instead.`, 'bad'),
+    err => sayT('geo.fail', 'bad', { msg: err.message }),
     { enableHighAccuracy: false, timeout: 10_000 },
   )
 }
@@ -597,7 +597,7 @@ const doStickers = async () => {
       : 'Every item is sold, so there is nothing to sticker.'
     say(n ? 'Sticker sheet built. Press Print.' : 'Nothing to sticker.', n ? 'ok' : 'bad')
   } catch (err) {
-    say(err instanceof Error ? err.message : String(err), 'bad')
+    err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
     $('#make-stickers').toggleAttribute('disabled', false)
   }
@@ -803,7 +803,7 @@ const onPhoto = async (input: HTMLInputElement) => {
     say(`Uploading ${rendered.length} sizes to ${BLOSSOM.length} server…`)
     const uploaded = await upload(signer, rendered, (done, total) => say(`Uploading ${done}/${total}…`))
     const { blobs } = uploaded
-    if (blobs.length === 0) throw new Error('No Blossom server accepted the photo. The listing can still publish without one.')
+    if (blobs.length === 0) throw new PublishError('No Blossom server accepted the photo. The listing can still publish without one.', 'photo.noServer')
     photos = blobs
     servers = uploaded.servers
     uploads = blobs.length
@@ -811,7 +811,7 @@ const onPhoto = async (input: HTMLInputElement) => {
     say(`Photo stored at ${blobs.length} size(s).`, 'ok')
     refreshCost()
   } catch (err) {
-    say(err instanceof Error ? err.message : String(err), 'bad')
+    err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   }
 }
 
@@ -847,7 +847,7 @@ const doDeploy = async () => {
       all: String(RELAYS.length), v: result.aggregate.slice(0, 12),
     })
   } catch (err) {
-    say(err instanceof Error ? err.message : String(err), 'bad')
+    err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
     $('#deploy').toggleAttribute('disabled', !signer)
   }

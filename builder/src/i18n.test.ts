@@ -406,7 +406,8 @@ test('main.ts (#126): none of the old English is inside a say( call, and each ke
   const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
   assert.deepEqual(sayLeft(src), [])
   for (const [k] of NEW126) assert.ok(src.includes(`sayT('${k}'`), `main.ts never calls sayT('${k}'`)
-  assert.equal([...src.matchAll(/sayT\('err\.generic', 'bad', \{ msg: err instanceof Error \? err\.message : String\(err\) \}\)/g)].length, 3)
+  // 3 from #126, 3 more since #150 (the sticker, photo and deploy catches).
+  assert.equal([...src.matchAll(/sayT\('err\.generic', 'bad', \{ msg: err instanceof Error \? err\.message : String\(err\) \}\)/g)].length, 6)
   const notes = src.slice(src.indexOf('const doSaveNotes ='), src.indexOf('// --- photos'))
   assert.ok(notes.includes("if (ok === 0) { sayT('notes.none', 'bad'); return }"), 'the no-server notes case still throws')
   assert.ok(!/say\(err instanceof Error/.test(notes), 'doSaveNotes still prints err.message itself')
@@ -463,11 +464,12 @@ test('main.ts (#103): the Deploy lines go through sayT, so a language switch re-
   assert.ok(src.includes("sayT('deploy.reading'"), "main.ts never calls sayT('deploy.reading'")
   assert.ok(src.includes("const onDeployStep = (step: DeployStep) => sayT(step.key, step.kind === 'done' ? 'ok' : 'busy', step.vars)"),
     'onDeployStep does not write the step through the table')
-  // The catch keeps the raw message (out of scope), and nothing plain is said before it.
+  // Since #150 the catch goes through the table too (en still the raw message), and nothing plain is said before it.
   const flow = src.slice(src.indexOf('const doDeploy ='), src.indexOf('const refreshDeployCost ='))
   const tryPart = flow.slice(0, flow.indexOf('} catch (err) {'))
   assert.ok(tryPart.length > 0 && !/\bsay\(/.test(tryPart), 'a plain say( in the deploy flow clears the line the switch re-writes')
-  assert.ok(flow.includes("say(err instanceof Error ? err.message : String(err), 'bad')"), 'the doDeploy catch changed')
+  assert.ok(flow.includes("err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })"), 'the doDeploy catch is not the #150 keyed form')
+  assert.ok(!flow.includes("say(err instanceof Error ? err.message : String(err), 'bad')"), 'the doDeploy catch still says the raw message')
 })
 
 test('main.ts (#103, L1): the finder sees the old Deploy line put back', () => {
@@ -636,4 +638,101 @@ test('main.ts (#123): setNode writes through the table; #node-state keeps its En
     assert.ok(!src.includes(gone), `main.ts still writes "${gone}" itself`)
   assert.match(HTML, /<p class="hint" id="node-state">No node/, 'the pre-script English fallback is gone')
   assert.ok(!/<[^>]*id="node-state"[^>]*data-i18n|<[^>]*data-i18n[^>]*id="node-state"/.test(HTML), '#node-state has a data-i18n: a switch would wipe a pasted node')
+})
+
+// #150: the photo and location failures. Each row: key, vars, the exact English main.ts wrote
+// before (fake values only), and a phrase the Spanish must say.
+const GEO_MSG = 'User denied Geolocation'
+const NEW150: [string, Record<string, string>, string, string][] = [
+  ['photo.noServer', {}, 'No Blossom server accepted the photo. The listing can still publish without one.', 'sin foto'],
+  ['geo.none', {}, 'This browser has no geolocation. Type the geohash instead.', 'código del lugar'],
+  ['geo.fail', { msg: GEO_MSG }, `Could not read your location: ${GEO_MSG}. Type the geohash instead.`, 'Permite la ubicación'],
+]
+const JARGON150 = ['{msg}', 'Blossom', 'relay', 'signer', 'nsec', 'hex', 'geohash', 'Error']
+
+test('fmt (#150): photo and location failures are word for word in English and plain Spanish', () => {
+  for (const [k, vars, en, phrase] of NEW150) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    for (const w of JARGON150) assert.ok(!STRINGS[k]!.es.includes(w), `${k}: es contains "${w}": "${STRINGS[k]!.es}"`)
+    const es = fmt('es', k, vars)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+    for (const v of Object.values(vars)) assert.ok(!es.includes(v), `${k}: es shows the raw English`)
+    assert.ok(es.includes(phrase), `${k}: es does not say "${phrase}": "${es}"`)
+  }
+  // The raw browser message is kept in English, never shown in Spanish.
+  assert.equal(fmt('en', 'geo.fail', { msg: GEO_MSG }), 'Could not read your location: User denied Geolocation. Type the geohash instead.')
+  assert.ok(!fmt('es', 'geo.fail', { msg: GEO_MSG }).includes(GEO_MSG))
+  assert.deepEqual(missing(NEW150.map(r => r[0])), [])
+})
+
+test('fmt (#150, L1): each blanked or removed es is caught by missing', () => {
+  for (const [k] of NEW150) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+    const { [k]: _gone, ...without } = STRINGS
+    assert.deepEqual(missing([k], without), [k])
+  }
+})
+
+test('publish.ts (#150): the photo throw, as main.ts builds it, gives back the old English', async () => {
+  const { PublishError } = await import('./publish.ts')
+  const e = new PublishError(NEW150[0]![2], 'photo.noServer')
+  assert.equal(fmt('en', e.key, e.vars), e.message)
+  assert.notEqual(fmt('es', e.key, e.vars), e.message)
+})
+
+// The three catches #150 moves, and what each must hold. `oldCatches` names any that still says
+// the raw message itself; `keyedMissing` names any without the PublishError + err.generic form.
+const KEYED150 = "err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })"
+const CATCH150: [string, string, string][] = [
+  ['doStickers', 'const doStickers =', '// --- the admin panel (slice 6)'],
+  ['onPhoto', 'const onPhoto =', '// --- deploy'],
+  ['doDeploy', 'const doDeploy =', 'const refreshDeployCost ='],
+]
+const catch150 = (src: string, from: string, to: string) => {
+  const a = src.indexOf(from), b = src.indexOf(to, a)
+  assert.ok(a >= 0 && b > a, `cannot find ${from}`)
+  const flow = src.slice(a, b)
+  const c = flow.indexOf('} catch (err) {')
+  assert.ok(c >= 0, `${from} has no catch`)
+  const end = flow.indexOf('\n  }', c + 1) // the catch's own closing brace, two spaces in
+  assert.ok(end > c, `${from}: the catch does not close`)
+  return flow.slice(c, end)
+}
+const oldCatches = (src: string) => CATCH150.filter(([, a, b]) => /\bsay\(/.test(catch150(src, a, b))).map(r => r[0])
+const keyedMissing = (src: string) => CATCH150.filter(([, a, b]) => !catch150(src, a, b).includes(KEYED150)).map(r => r[0])
+const locateOf = (src: string) => src.slice(src.indexOf('const locate ='), src.indexOf('// --- the sticker sheet'))
+const plainGeo = (src: string) => ["say('This browser", 'say(`Could not read'].filter(s => locateOf(src).includes(s))
+
+test('main.ts (#150): the sticker, photo and deploy catches and the location failures go through the table', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(oldCatches(src), [])
+  assert.deepEqual(keyedMissing(src), [])
+  assert.ok(src.includes("throw new PublishError('No Blossom server accepted the photo. The listing can still publish without one.', 'photo.noServer')"),
+    'the photo throw is not a PublishError with key photo.noServer')
+  assert.ok(!src.includes("throw new Error('No Blossom"), 'the photo throw is still a plain Error')
+  assert.deepEqual(plainGeo(src), [])
+  const loc = locateOf(src)
+  assert.ok(loc.includes("if (!navigator.geolocation) return sayT('geo.none', 'bad')"), 'locate: no sayT(geo.none)')
+  assert.ok(loc.includes("err => sayT('geo.fail', 'bad', { msg: err.message })"), 'locate: no sayT(geo.fail)')
+})
+
+test('main.ts (#150, L1): each catch put back, or a location line put back, is caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const OLD = "say(err instanceof Error ? err.message : String(err), 'bad')"
+  for (const [name, a, b] of CATCH150) {
+    // Put back inside this function only: the doPublish catch has the same text earlier in the file.
+    const at = src.indexOf(a)
+    const broken = src.slice(0, at) + src.slice(at).replace(KEYED150, OLD)
+    assert.notEqual(broken, src, `${name}: nothing to put back`)
+    assert.deepEqual(oldCatches(broken), [name])
+    assert.deepEqual(keyedMissing(broken), [name])
+  }
+  const geo1 = src.replace("return sayT('geo.none', 'bad')", "return say('This browser has no geolocation. Type the geohash instead.', 'bad')")
+  const geo2 = src.replace("err => sayT('geo.fail', 'bad', { msg: err.message })", 'err => say(`Could not read your location: ${err.message}. Type the geohash instead.`, \'bad\')')
+  assert.notEqual(geo1, src); assert.notEqual(geo2, src)
+  assert.deepEqual(plainGeo(geo1), ["say('This browser"])
+  assert.deepEqual(plainGeo(geo2), ['say(`Could not read'])
 })

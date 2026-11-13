@@ -110,6 +110,10 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'publish.noRelaySale': { en: 'No relay accepted the sale. It is signed but nobody can see it — try again.', es: 'Tu venta está lista, pero nadie la puede ver todavía. Presiona Publicar otra vez en un momento.' },
   'publish.mintFail': { en: 'Could not mint the offer: {msg}', es: 'No se pudo preparar el botón de Comprar. Revisa la dirección de tu nodo en la sección 2, o deja vacío el campo del nodo para venderlo solo en efectivo.' },
   'publish.notSent': { en: '{msg}', es: 'No se publicó nada. Revisa los datos del artículo e inténtalo otra vez.' },
+  // #150: photo and location failures. `en` is the exact old English; es never shows {msg} (needs-native-review).
+  'photo.noServer': { en: 'No Blossom server accepted the photo. The listing can still publish without one.', es: 'No se guardó la foto. Puedes publicar tu artículo sin foto o intentarlo más tarde.' },
+  'geo.none': { en: 'This browser has no geolocation. Type the geohash instead.', es: 'Este teléfono no puede dar tu ubicación. Escribe el código del lugar.' },
+  'geo.fail': { en: 'Could not read your location: {msg}. Type the geohash instead.', es: 'Tu teléfono no pudo saber dónde estás. Permite la ubicación o escribe el código del lugar.' },
   'deploy.detail':{ en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
   // #123: the #node-state line setNode writes (needs-native-review). The es never names a terminal
   // command or a file, and never shows {relay}: the seller cannot act on either.
