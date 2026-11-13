@@ -37,7 +37,7 @@ import {
   saleD as saleDOf,
   type SaleDraft,
 } from './sale.ts'
-import { buildSheet, stickerItems } from './stickers.ts'
+import { buildSheet, relabelSheet, stickerItems } from './stickers.ts'
 import { loadNotes, saveNotes, MAX_NOTE, type Notes } from './notes.ts'
 import { approvalCount, normaliseSlug, type Draft } from './listing.ts'
 import { decodeNmanage, type ManagePointer } from './manage.ts'
@@ -586,7 +586,7 @@ const doStickers = async () => {
     $('#make-stickers').toggleAttribute('disabled', true)
     sayT('stickers.encoding')
     const url = siteUrl(await signer.getPublicKey(), gateway())
-    const n = await buildSheet($('#sticker-sheet'), items, url)
+    const n = await buildSheet($('#sticker-sheet'), items, url, qrLabel)
     $('#sticker-sheet').hidden = n === 0
     $('#print-stickers').hidden = n === 0
     stickersView = n ? { key: 'stickers.ready', vars: { n: String(n), url } } : { key: 'stickers.allSold', vars: {} }
@@ -896,6 +896,7 @@ const showPhoto = () => { $('#photo-state').textContent = photoState(lang, photo
 // null is empty; only doStickers sets it (nothing clears the sheet). Shown after applyLang below.
 let stickersView: { key: string; vars: Record<string, string> } | null = null
 const showStickers = () => { $('#stickers-state').textContent = stickersView ? fmt(lang, stickersView.key, stickersView.vars) : '' }
+const qrLabel = (url: string) => fmt(lang, 'stickers.qr', { url }) // #182: `lang` read at call time
 const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) => {
   say(fmt(lang, key, vars), tone) // `lang` read now, not captured
   shown = { key, tone, vars }
@@ -913,6 +914,7 @@ $('#lang-switch').addEventListener('click', () => {
   if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
   showEdit()
   showStickers()
+  relabelSheet($('#sticker-sheet'), qrLabel) // #182: the sticker QRs' aria-labels
   showPhoto()
   showWatcher()
   showNode()

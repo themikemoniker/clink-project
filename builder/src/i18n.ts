@@ -176,6 +176,8 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'stickers.none': { en: 'Nothing to sticker.', es: 'No hay nada que etiquetar.' },
   'stickers.ready': { en: '{n} sticker(s) ready, each ≥2cm square. They point at {url} — which is where your storefront will be, so build these AFTER you deploy, or the codes lead nowhere.', es: '{n} etiqueta(s) lista(s), de al menos 2 cm. Llevan a {url}, donde estará tu tienda. Hazlas DESPUÉS de publicar tu tienda en el paso 7, o los códigos no llevan a ninguna parte.' },
   'stickers.allSold': { en: 'Every item is sold, so there is nothing to sticker.', es: 'Todo está vendido, así que no hay etiquetas que hacer.' },
+  // #182: the QR's aria-label, for a screen reader (needs-native-review). `en` is the exact old English.
+  'stickers.qr': { en: 'QR code linking to {url}', es: 'Código que abre {url}' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.

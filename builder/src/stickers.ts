@@ -64,7 +64,7 @@ export const stickerItems = (items: Item[]): Item[] => items.filter(i => !i.sold
  * around a 43-module symbol wastes a third of the sticker, and the sticker is on white paper with
  * white margin around it either way.
  */
-export const qrSvg = async (text: string): Promise<SVGSVGElement> => {
+export const qrSvg = async (text: string, label: string): Promise<SVGSVGElement> => {
   const { encode } = await import('uqr')
   const { size, data } = encode(text, { border: 1 })
   let d = ''
@@ -74,7 +74,8 @@ export const qrSvg = async (text: string): Promise<SVGSVGElement> => {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', `0 0 ${size} ${size}`)
   svg.setAttribute('role', 'img')
-  svg.setAttribute('aria-label', `QR code linking to ${text}`)
+  svg.setAttribute('aria-label', label)
+  svg.setAttribute('data-qr', text) // what `relabelSheet` re-reads on a language switch
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
   path.setAttribute('d', d)
   svg.append(path)
@@ -88,7 +89,7 @@ export const qrSvg = async (text: string): Promise<SVGSVGElement> => {
  * stickers apart while holding a sheet of them, and the buyer needs to know what they scanned
  * before they scan it. Everything from a relay goes in through `textContent`.
  */
-export const buildSheet = async (host: HTMLElement, items: Item[], siteUrl: string): Promise<number> => {
+export const buildSheet = async (host: HTMLElement, items: Item[], siteUrl: string, label: (url: string) => string): Promise<number> => {
   const sheet = document.createDocumentFragment()
   const chosen = stickerItems(items)
   for (const item of chosen) {
@@ -112,8 +113,17 @@ export const buildSheet = async (host: HTMLElement, items: Item[], siteUrl: stri
     sheet.append(fig)
     // Awaited per item rather than in parallel: `import('uqr')` resolves once and the rest is
     // synchronous, so a Promise.all here would buy nothing and lose the DOM order.
-    box.append(await qrSvg(stickerUrl(siteUrl, item.d)))
+    const url = stickerUrl(siteUrl, item.d)
+    box.append(await qrSvg(url, label(url)))
   }
   host.replaceChildren(sheet)
+  // #182: a language switch during the awaits above re-labels `host`, which does not hold this
+  // sheet yet. So label once more now: `label` reads the language at call time, not at the start.
+  relabelSheet(host, label)
   return chosen.length
+}
+
+/** #182: every sticker QR's aria-label, re-written from its `data-qr` (on a language switch). */
+export const relabelSheet = (host: ParentNode, label: (url: string) => string) => {
+  for (const svg of host.querySelectorAll('svg[data-qr]')) svg.setAttribute('aria-label', label(svg.getAttribute('data-qr')!))
 }
