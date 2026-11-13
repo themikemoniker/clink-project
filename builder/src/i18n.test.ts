@@ -501,7 +501,7 @@ test('fmt (#109): publish failures are word for word in English and plain, error
   }
   assert.ok(STRINGS['publish.mintFail']!.es.includes('efectivo'), 'mintFail does not offer the cash-only way out')
   // The node field is section 2 in index.html; the Spanish names that number.
-  assert.match(HTML, /<h2>2 · Your node\b/)
+  assert.match(HTML, /<h2><span data-i18n="s2\.h">2 · Your node\b/)
   assert.deepEqual(missing(NEW109.map(r => r[0])), [])
 })
 
@@ -636,4 +636,81 @@ test('main.ts (#123): setNode writes through the table; #node-state keeps its En
     assert.ok(!src.includes(gone), `main.ts still writes "${gone}" itself`)
   assert.match(HTML, /<p class="hint" id="node-state">No node/, 'the pre-script English fallback is gone')
   assert.ok(!/<[^>]*id="node-state"[^>]*data-i18n|<[^>]*data-i18n[^>]*id="node-state"/.test(HTML), '#node-state has a data-i18n: a switch would wipe a pasted node')
+})
+
+// #141: step 2's static text. The four text pieces are elements the #55/#60 finder reads; the
+// placeholder sits on the void <input>, so it is read from that one tag.
+const S2_TEXT = ['s2.h', 's2.optional', 's2.label', 's2.hint']
+const nodeInputTag = (html: string) => /<input\b[^>]*\bid="node-input"[^>]*>/.exec(html)?.[0]
+const attrOf = (tag: string, name: string) => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1]
+const BANNED141 = /nmanage|clink|spike\/|relay|terminal|\.ts\b/i
+// Edits only the #node-input tag: step 1's input carries the same placeholder attributes.
+const onNodeInput = (html: string, from: string, to: string) => {
+  const tag = nodeInputTag(html)!
+  return html.replace(tag, tag.replace(from, to))
+}
+const s2Wired = (html: string) => {
+  for (const k of S2_TEXT) {
+    const text = textOf(html, k)
+    assert.ok(text !== undefined, `index.html has no element with data-i18n="${k}"`)
+    assert.ok(!text.includes('<'), `${k}: its element nests markup that applyLang would delete`)
+    assert.equal(text.replace(/\s+/g, ' ').trim(), STRINGS[k]?.en, `${k}: the HTML fallback is not the table's en`)
+  }
+  const tag = nodeInputTag(html)
+  assert.ok(tag, 'no #node-input')
+  assert.equal(attrOf(tag, 'data-i18n'), 's2.placeholder', '#node-input has no data-i18n="s2.placeholder"')
+  assert.equal(attrOf(tag, 'data-i18n-attr'), 'placeholder', '#node-input: only the placeholder may be translated')
+  assert.equal(attrOf(tag, 'placeholder'), STRINGS['s2.placeholder']?.en, '#node-input placeholder is not the table en')
+  assert.ok(/<h2>\s*<span data-i18n="s2\.h">/.test(html), 'the step-2 <h2> itself carries a data-i18n, or lost its title span')
+}
+
+test('inventory (#141): step 2 heading, optional, label, placeholder and hint are wired; en is the old English', () => {
+  s2Wired(HTML)
+  assert.deepEqual(missing([...S2_TEXT, 's2.placeholder']), [])
+  // en is byte-for-byte the old text content, with the <code> tags dropped.
+  assert.equal(STRINGS['s2.hint']!.en, 'Run node spike/authorize-manage.ts once, on the machine with your node, and paste the line it writes. This pointer addresses your account, so it stays in this browser — it is never published and never sent anywhere but your own node.')
+  assert.equal(STRINGS['s2.h']!.en, '2 · Your node')
+  assert.ok(STRINGS['s2.h']!.es.startsWith('2 · '), 's2.h es lost its "2 · " prefix')
+})
+
+test('inventory (#141, L1): dropping any one step-2 attribute, or nesting markup again, is caught', () => {
+  for (const attr of S2_TEXT.map(k => ` data-i18n="${k}"`)) {
+    const broken = HTML.replace(attr, '')
+    assert.notEqual(broken, HTML, `${attr} is not in index.html`)
+    assert.throws(() => s2Wired(broken), attr)
+  }
+  for (const attr of [' data-i18n="s2.placeholder"', ' data-i18n-attr="placeholder"']) {
+    const broken = onNodeInput(HTML, attr, '')
+    assert.notEqual(broken, HTML, `${attr} is not on #node-input`)
+    assert.throws(() => s2Wired(broken), attr)
+  }
+  assert.throws(() => s2Wired(HTML.replace('Run node spike/authorize-manage.ts', 'Run <code>node spike/authorize-manage.ts</code>')))
+  assert.throws(() => s2Wired(HTML.replace('<h2><span data-i18n="s2.h">', '<h2 data-i18n="s2.h"><span>')))
+})
+
+test('fmt (#141): the step-2 hint, label and placeholder es name no command, file, nmanage, CLINK or relay', () => {
+  for (const k of ['s2.hint', 's2.label', 's2.placeholder']) {
+    const es = STRINGS[k]?.es ?? ''
+    assert.ok(es.trim(), `${k}: no es`)
+    assert.ok(!BANNED141.test(es), `${k}: jargon in "${es}"`)
+  }
+  // L1: the check goes red on the English, and on each banned word put back into the Spanish.
+  assert.ok(BANNED141.test(STRINGS['s2.hint']!.en) && BANNED141.test(STRINGS['s2.label']!.en))
+  for (const w of ['nmanage1', 'CLINK', 'spike/x', 'relay', 'terminal', 'authorize-manage.ts'])
+    assert.ok(BANNED141.test(`${STRINGS['s2.hint']!.es} ${w}`), w)
+})
+
+test('inventory (#141): #node-input and #node-state carry no text data-i18n, so a switch keeps a pasted node', () => {
+  const ok = (html: string) => {
+    const tag = nodeInputTag(html) ?? ''
+    const keys = [...tag.matchAll(/\sdata-i18n(-[\w-]+)?="([^"]*)"/g)].map(m => `${m[1] ?? ''}=${m[2]}`)
+    assert.deepEqual(keys, ['=s2.placeholder', '-attr=placeholder'], `#node-input i18n attributes: ${keys}`)
+    const state = /<[^>]*\bid="node-state"[^>]*>/.exec(html)?.[0] ?? ''
+    assert.ok(state && !state.includes('data-i18n'), '#node-state has a data-i18n: a switch would wipe a pasted node')
+  }
+  ok(HTML)
+  // L1: each way to wipe a pasted node is seen.
+  assert.throws(() => ok(onNodeInput(HTML, ' data-i18n-attr="placeholder"', '')))
+  assert.throws(() => ok(onNodeInput(HTML, 'data-i18n-attr="placeholder"', 'data-i18n-attr="value"')))
+  assert.throws(() => ok(HTML.replace('id="node-state"', 'id="node-state" data-i18n="node.none"')))
 })
