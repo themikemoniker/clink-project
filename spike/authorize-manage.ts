@@ -46,7 +46,7 @@ const KEY = arg('key', '.dev-key')
 const KEY_FILE = join(HERE, KEY)
 const OUT_FILE = join(HERE, KEY === '.dev-key' ? '.nmanage' : `${KEY}.nmanage`)
 
-if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — pass --key <file>, or run seed-listings.ts first`)
+if (!existsSync(KEY_FILE)) throw new Error(`no ${KEY_FILE} — pass --key <file>, or make one with: node new-key.ts`)
 const sk = hexToBytes(readFileSync(KEY_FILE, 'utf8').trim())
 const pk = getPublicKey(sk)
 
