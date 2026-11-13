@@ -234,22 +234,19 @@ const setWatcher = (raw: string, remember: boolean) => {
   const trimmed = raw.trim()
   if (!trimmed) {
     watcher = null
-    $('#watcher-state').textContent =
-      'No watcher key yet: the ladder stays a file you download and copy across by hand.'
+    watcherView = { key: 'watcher.none', vars: {} }; showWatcher()
     refreshCost()
     return
   }
   const pk = watcherPubkey(trimmed)
   if (!pk) {
     watcher = null
-    $('#watcher-state').textContent =
-      'That is not an npub. Run `node spike/watch-sales.ts` once and paste the npub it prints.'
+    watcherView = { key: 'watcher.bad', vars: {} }; showWatcher()
     refreshCost()
     return
   }
   watcher = pk
-  $('#watcher-state').textContent =
-    `Watcher ${pk.slice(0, 8)}… Ladders publish encrypted to this key, so no file has to move.`
+  watcherView = { key: 'watcher.ok', vars: { key: pk.slice(0, 8) } }; showWatcher()
   if (remember) keep(WATCHER_KEY, trimmed)
   refreshCost()
 }
@@ -888,6 +885,9 @@ const showEdit = () => {
 // the none text back over a pasted node. Starts as none, shown after applyLang below.
 let nodeView: { key: string; vars: Record<string, string> } = { key: 'node.none', vars: {} }
 const showNode = () => { $('#node-state').textContent = fmt(lang, nodeView.key, nodeView.vars) }
+// #157: the same for #watcher-state, which setWatcher writes. Starts as none, shown after applyLang.
+let watcherView: { key: string; vars: Record<string, string> } = { key: 'watcher.none', vars: {} }
+const showWatcher = () => { $('#watcher-state').textContent = fmt(lang, watcherView.key, watcherView.vars) }
 // #159: what #photo-state says, so a switch re-writes it. No data-i18n, same reason as #node-state.
 // null is the default hint; `resetItem` puts it back. Shown after applyLang below.
 let photoView: PhotoView = null
@@ -902,6 +902,7 @@ const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) =
 }
 applyLang(document, lang)
 showNode()
+showWatcher()
 showPhoto()
 showStickers()
 $('#lang-switch').addEventListener('click', () => {
@@ -914,6 +915,7 @@ $('#lang-switch').addEventListener('click', () => {
   showStickers()
   showPhoto()
   showNode()
+  showWatcher()
   refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })

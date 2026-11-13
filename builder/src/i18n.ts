@@ -125,6 +125,14 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'node.none': { en: 'No node — items will publish as cash-only, with no Buy button.', es: 'Sin nodo: tus artículos se publican solo para pago en efectivo, sin botón de Comprar.' },
   'node.bad': { en: 'That is not an nmanage1… pointer. Run `node spike/authorize-manage.ts` and paste what it writes.', es: 'Ese código no es válido. Pídelo otra vez a quien instaló tu nodo y pégalo completo.' },
   'node.ok': { en: 'Node {key}… on {relay}. Offers will be minted over CLINK Manage.', es: 'Nodo conectado ({key}…). Tus artículos tendrán botón de Comprar.' },
+  // #157: step 2's watcher half and the #watcher-state line setWatcher writes (needs-native-review).
+  // The hint lost its <code>. The es names no command, file, npub, key type, relay or encryption.
+  's2.watcher.label': { en: 'Watcher key', es: 'Código de tu ayudante de ventas' },
+  's2.watcher.placeholder': { en: 'npub1…', es: 'Pega aquí el código de tu ayudante' },
+  's2.watcher.hint': { en: 'Run node spike/watch-sales.ts once on that same machine and paste the npub it prints. Your availability ladder then publishes encrypted to that key, so editing an item no longer means downloading a file, copying it across, and restarting the watcher. The key can only decrypt ladders: it owns nothing, spends nothing and signs nothing, and it is not your seller key.', es: 'El ayudante de ventas es una app que instala quien cuida tu nodo. Vigila tus ventas y le dice a tu tienda cuántos quedan. Esa persona te da este código. Con él no se puede gastar ni cambiar nada, y no es tu clave de vendedor.' },
+  'watcher.none': { en: 'No watcher key yet: the ladder stays a file you download and copy across by hand.', es: 'Sin ayudante de ventas: el archivo de tus artículos se descarga y se pasa a mano.' },
+  'watcher.bad': { en: 'That is not an npub. Run `node spike/watch-sales.ts` once and paste the npub it prints.', es: 'Ese código no es válido. Pídelo otra vez a quien instaló tu ayudante y pégalo completo.' },
+  'watcher.ok': { en: 'Watcher {key}… Ladders publish encrypted to this key, so no file has to move.', es: 'Ayudante conectado ({key}…). Tu tienda se actualiza sola, sin mover ningún archivo.' },
   // #130: why Publish sale is off (admin.ts noPublishSaleReason; needs-native-review). The quorum
   // es names the real es label of `items.reload`.
   'sale.no.signer': { en: 'Connect a signer first.', es: 'Primero conecta tu app de firma.' },

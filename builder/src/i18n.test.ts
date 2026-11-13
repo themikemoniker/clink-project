@@ -884,6 +884,112 @@ test('inventory (#141): #node-input and #node-state carry no text data-i18n, so 
   assert.throws(() => ok(HTML.replace('id="node-state"', 'id="node-state" data-i18n="node.none"')))
 })
 
+// #157: step 2's watcher half. Static text on the label and hint, the placeholder on #watcher-input,
+// and the #watcher-state line setWatcher writes through a view (no data-i18n, like #node-state).
+const W_TEXT = ['s2.watcher.label', 's2.watcher.hint']
+const W_STATE: [string, Record<string, string>, string][] = [
+  ['watcher.none', {}, 'No watcher key yet: the ladder stays a file you download and copy across by hand.'],
+  ['watcher.bad', {}, 'That is not an npub. Run `node spike/watch-sales.ts` once and paste the npub it prints.'],
+  ['watcher.ok', { key: 'abababab' }, 'Watcher abababab… Ladders publish encrypted to this key, so no file has to move.'],
+]
+const W_ALL = [...W_TEXT, 's2.watcher.placeholder', ...W_STATE.map(r => r[0])]
+const BANNED157 = /npub|nsec|hex|relay|signer|spike|watch-sales|ladder|node\s|\.ts\b|nostr|decrypt|encrypt|cifra|terminal|firma|pubkey/i
+const watcherInputTag = (html: string) => /<input\b[^>]*\bid="watcher-input"[^>]*>/.exec(html)?.[0]
+const onWatcherInput = (html: string, from: string, to: string) => {
+  const tag = watcherInputTag(html)!
+  return html.replace(tag, tag.replace(from, to))
+}
+const wWired = (html: string) => {
+  for (const k of W_TEXT) {
+    const text = textOf(html, k)
+    assert.ok(text !== undefined, `index.html has no element with data-i18n="${k}"`)
+    assert.ok(!text.includes('<'), `${k}: its element nests markup that applyLang would delete`)
+    assert.equal(text.replace(/\s+/g, ' ').trim(), STRINGS[k]?.en, `${k}: the HTML fallback is not the table's en`)
+  }
+  assert.ok(/<label for="watcher-input" data-i18n="s2\.watcher\.label">/.test(html), 'the watcher label is not the one wired')
+  const tag = watcherInputTag(html)
+  assert.ok(tag, 'no #watcher-input')
+  const keys = [...tag.matchAll(/\sdata-i18n(-[\w-]+)?="([^"]*)"/g)].map(m => `${m[1] ?? ''}=${m[2]}`)
+  assert.deepEqual(keys, ['=s2.watcher.placeholder', '-attr=placeholder'], `#watcher-input i18n attributes: ${keys}`)
+  assert.equal(attrOf(tag, 'placeholder'), STRINGS['s2.watcher.placeholder']?.en, '#watcher-input placeholder is not the table en')
+  const state = /<[^>]*\bid="watcher-state"[^>]*>/.exec(html)?.[0]
+  assert.ok(state, 'no #watcher-state')
+  assert.ok(!state.includes('data-i18n'), '#watcher-state has a data-i18n: a switch would wipe a pasted key')
+}
+
+test('fmt (#157): every watcher key has es, the English is word for word, and the es has no jargon', () => {
+  assert.deepEqual(missing(W_ALL), [])
+  for (const k of W_ALL) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.ok(STRINGS[k]!.es.trim(), `${k}: no es`)
+    assert.notEqual(STRINGS[k]!.es, STRINGS[k]!.en, `${k}: es is the English text`)
+  }
+  for (const [k, vars, en] of W_STATE) {
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+  }
+  assert.equal(STRINGS['s2.watcher.label']!.en, 'Watcher key')
+  assert.equal(STRINGS['s2.watcher.placeholder']!.en, 'npub1…')
+  assert.equal(STRINGS['s2.watcher.hint']!.en, 'Run node spike/watch-sales.ts once on that same machine and paste the npub it prints. Your availability ladder then publishes encrypted to that key, so editing an item no longer means downloading a file, copying it across, and restarting the watcher. The key can only decrypt ladders: it owns nothing, spends nothing and signs nothing, and it is not your seller key.')
+  for (const k of W_ALL) {
+    const es = fmt('es', k, { key: 'abababab' })
+    assert.ok(!BANNED157.test(es), `${k}: jargon in "${es}"`)
+  }
+  assert.ok(fmt('es', 'watcher.ok', { key: 'abababab' }).includes('abababab'), 'watcher.ok es drops the 8 chars')
+  // L1: the ban goes red on every English text, and on each banned word put back into the Spanish.
+  for (const [k, vars] of [...W_STATE, ['s2.watcher.hint', {}] as const, ['s2.watcher.placeholder', {}] as const])
+    assert.ok(BANNED157.test(fmt('en', k, vars)), `${k}: the ban does not catch its own English`)
+  for (const w of ['npub1', 'nsec', 'hex', 'relay', 'signer', 'spike/', 'watch-sales', 'ladder', 'node spike', 'x.ts', 'nostr', 'decrypt', 'cifrado', 'firma'])
+    assert.ok(BANNED157.test(`${STRINGS['s2.watcher.hint']!.es} ${w}`), w)
+  // L1: each blanked es is caught by missing.
+  for (const k of W_ALL) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+test('inventory (#157): the watcher label, placeholder and hint are wired; #watcher-state is not', () => {
+  wWired(HTML)
+})
+
+test('inventory (#157, L1): dropping any one watcher attribute, nesting markup, or wiring the state is caught', () => {
+  for (const attr of W_TEXT.map(k => ` data-i18n="${k}"`)) {
+    const broken = HTML.replace(attr, '')
+    assert.notEqual(broken, HTML, `${attr} is not in index.html`)
+    assert.throws(() => wWired(broken), attr)
+  }
+  for (const attr of [' data-i18n="s2.watcher.placeholder"', ' data-i18n-attr="placeholder"']) {
+    const broken = onWatcherInput(HTML, attr, '')
+    assert.notEqual(broken, HTML, `${attr} is not on #watcher-input`)
+    assert.throws(() => wWired(broken), attr)
+  }
+  assert.throws(() => wWired(onWatcherInput(HTML, 'data-i18n-attr="placeholder"', 'data-i18n-attr="value"')))
+  assert.throws(() => wWired(HTML.replace('Run node spike/watch-sales.ts', 'Run <code>node spike/watch-sales.ts</code>')))
+  assert.throws(() => wWired(HTML.replace('id="watcher-state"', 'id="watcher-state" data-i18n="watcher.none"')))
+})
+
+test('main.ts (#157): setWatcher writes through the table and the view is re-shown on startup and switch', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const check = (s: string) => {
+    for (const gone of ['No watcher key yet', 'That is not an npub', 'Ladders publish encrypted to this key'])
+      assert.ok(!s.includes(gone), `main.ts still writes "${gone}" itself`)
+    const body = /const setWatcher = [\s\S]*?\n\}\n/.exec(s)?.[0] ?? ''
+    for (const k of ['watcher.none', 'watcher.bad', 'watcher.ok'])
+      assert.ok(body.includes(`key: '${k}'`), `setWatcher does not set ${k}`)
+    assert.ok(!body.includes("$('#watcher-state').textContent"), 'setWatcher writes #watcher-state itself')
+    assert.ok(body.includes('if (remember) keep(WATCHER_KEY, trimmed)'), 'the keep call changed')
+    assert.match(s, /applyLang\(document, lang\)\nshowNode\(\)\nshowWatcher\(\)\n/, 'no showWatcher right after the first applyLang')
+    const flip = /\$\('#lang-switch'\)\.addEventListener[\s\S]*?\n\}\)\n/.exec(s)?.[0] ?? ''
+    assert.ok(flip.includes('showWatcher()'), 'the language switch does not re-show #watcher-state')
+  }
+  check(src)
+  // L1: the pre-#157 English body, and a switch that forgets the line, are each caught.
+  assert.throws(() => check(src.replace("watcherView = { key: 'watcher.bad', vars: {} }; showWatcher()", "$('#watcher-state').textContent = 'That is not an npub.'")))
+  assert.throws(() => check(src.replace('  showNode()\n  showWatcher()\n', '  showNode()\n')))
+  assert.match(HTML, /<p class="hint" id="watcher-state">No watcher key yet/, 'the pre-script English fallback is gone')
+})
+
 // #145: the sticker sheet. Each row: key, vars, the exact old English, what es must still show.
 const URL145 = 'https://example.invalid/x'
 const NEW145: [string, Record<string, string>, string, string[]][] = [
