@@ -155,6 +155,11 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'photo.done': { en: 'Photo stored at {n} size(s).', es: 'Tu foto ya está guardada.' },
   'geo.none':{ en: 'This browser has no geolocation. Type the geohash instead.', es: 'Este navegador no puede saber dónde estás. Escribe el código de tu zona.' },
   'geo.fail': { en: 'Could not read your location: {msg}. Type the geohash instead.', es: 'Tu teléfono no pudo saber dónde estás. Permite la ubicación, o escribe el código de tu zona.' },
+  // #175: the sale name and location lines. `en` is the exact old English; es never says geohash.
+  'sale.noname': { en: 'Give the sale a name — it is the masthead.', es: 'Ponle un nombre a tu venta. Va arriba de tu página.' },
+  'geo.bad': { en: 'That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.', es: 'Ese código de tu zona no sirve. Usa el botón de tu ubicación, o escribe solo 0-9 y letras b-z sin a, i, l ni o.' },
+  'geo.asking': { en: 'Asking your browser where you are…', es: 'Buscando dónde estás…' },
+  'geo.found': { en: 'Geohash {g} — about 76 metres across. Nothing was sent anywhere; publish the sale to use it.', es: 'El código de tu zona es {g}: cubre unos 76 metros. Aún no se envió nada; publica tu venta para usarlo.' },
   // #145: the sticker sheet (needs-native-review). `en` is the exact old English; the hint lost its <em>.
   'stickers.make': { en: 'Build the sticker sheet', es: 'Hacer las etiquetas' },
   'stickers.print': { en: 'Print it', es: 'Imprimirlas' },

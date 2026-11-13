@@ -657,6 +657,63 @@ test('main.ts (#158, L1): each old line put back is caught', () => {
   }
 })
 
+// #175: the sale-name and location lines. Each row: key, vars, the exact old English, the sayT call, the old say call.
+const GEO_BAD_EN = 'That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.'
+const GEO_FOUND_EN = 'Geohash {g} — about 76 metres across. Nothing was sent anywhere; publish the sale to use it.'
+const NEW175: [string, Record<string, string>, string, string, string][] = [
+  ['sale.noname', {}, 'Give the sale a name — it is the masthead.', "return sayT('sale.noname', 'bad')", "return say('Give the sale a name — it is the masthead.', 'bad')"],
+  ['geo.bad', {}, GEO_BAD_EN, "return sayT('geo.bad', 'bad')", `return say('${GEO_BAD_EN}', 'bad')`],
+  ['geo.asking', {}, 'Asking your browser where you are…', "sayT('geo.asking')", "say('Asking your browser where you are…')"],
+  ['geo.found', { g: '9g3qx7w' }, GEO_FOUND_EN.replace('{g}', '9g3qx7w'), "sayT('geo.found', 'ok', { g })", `say(\`${GEO_FOUND_EN.replace('{g}', '${g}')}\`, 'ok')`],
+]
+const BANNED175 = ['geohash', 'relay', 'nostr', 'signer', 'nsec', 'hex', 'masthead']
+const jargon175 = (es: string) => BANNED175.filter(w => es.toLowerCase().includes(w))
+
+test('fmt (#175): sale-name and location lines are word for word in English and plain Spanish', () => {
+  assert.deepEqual(missing(NEW175.map(r => r[0])), [])
+  for (const [k, vars, en] of NEW175) {
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!es.includes('{'), `${k}: es has an unfilled slot`)
+    assert.deepEqual(jargon175(es), [], `${k}: jargon in "${es}"`)
+  }
+  const found = fmt('es', 'geo.found', { g: '9g3qx7w' })
+  assert.ok(found.includes('9g3qx7w') && found.includes('76 metros'), `geo.found es: ${found}`)
+  assert.match(STRINGS['geo.bad']!.es, /código de tu zona/, 'geo.bad es does not name the zone code')
+})
+
+test('fmt (#175, L1): each blanked es is caught by missing, and each banned word is caught', () => {
+  for (const [k] of NEW175) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+  for (const w of BANNED175) assert.deepEqual(jargon175(`${STRINGS['geo.bad']!.es} ${w}`), [w], w)
+})
+
+const untranslated175 = (src: string) => {
+  const sale = part(src, 'const draft = readSale()', 'const next = owned.map')
+  const loc = part(src, 'const locate =', '// --- the sticker sheet')
+  return NEW175.filter(([k, , , now, old]) => {
+    const flow = k === 'sale.noname' || k === 'geo.bad' ? sale : loc
+    return flow.includes(old) || !flow.includes(now)
+  }).map(r => r[0])
+}
+
+test('main.ts (#175): the sale-name and location lines go through the table', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(untranslated175(src), [])
+})
+
+test('main.ts (#175, L1): each old line put back is caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  for (const [k, , , now, old] of NEW175) {
+    const broken = src.replace(now, old)
+    assert.notEqual(broken, src, `${k}: ${now} is not in main.ts`)
+    assert.deepEqual(untranslated175(broken), [k])
+  }
+})
+
 // A fake signer: a fixed fake pubkey and a zero signature, so the storefront's parser rejects
 // every event and the self-parse check throws before any network call. No key exists here.
 const FAKE_PK = 'f'.repeat(64)
