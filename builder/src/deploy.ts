@@ -26,6 +26,9 @@ export const SERVER_LIST_KIND = 10063 // BUD-03, referenced by 5A.md:188-190
 /** Where nsites resolve by default. Any NIP-5A host server works; this is not a claim. */
 export const DEFAULT_GATEWAY = 'nsite.lol'
 
+// #167: the four storefront-file failures share one table line; `message` is each exact English.
+const badBuild = (msg: string) => new PublishError(msg, 'deploy.badBuild', { msg })
+
 export type SiteFile = { path: string; bytes: Uint8Array; type: string }
 export type HashedFile = SiteFile & { sha256: string }
 
@@ -184,8 +187,8 @@ export const deploy = async (
   // 5A.md:196 — a host server that cannot match a `path` MUST fall back to `/404.html`. Without
   // it, every wrong URL on the deployed site is the gateway's error page rather than ours, and
   // the storefront's hash routing has nothing to land on.
-  if (!files.some(f => f.path === '/index.html')) throw new Error('No /index.html — that is not a site.')
-  if (!files.some(f => f.path === '/404.html')) throw new Error('No /404.html — NIP-5A 5A.md:196 requires it.')
+  if (!files.some(f => f.path === '/index.html')) throw badBuild('No /index.html — that is not a site.')
+  if (!files.some(f => f.path === '/404.html')) throw badBuild('No /404.html — NIP-5A 5A.md:196 requires it.')
 
   const pubkey = await signer.getPublicKey()
   const url = siteUrl(pubkey, gateway)
@@ -233,7 +236,7 @@ export const deploy = async (
       )
       const ok = results.filter(r => r.status === 'fulfilled').length
       if (event.kind === MANIFEST_KIND) relaysOk = ok
-      if (ok === 0) throw new Error(`No relay accepted the kind ${event.kind}. The site cannot resolve — try again.`)
+      if (ok === 0) throw new PublishError(`No relay accepted the kind ${event.kind}. The site cannot resolve — try again.`, 'deploy.noRelay', { kind: String(event.kind) })
     }
     pool.close(relays)
     onStep({ kind: 'done', text: `Live at ${url}`, key: 'deploy.live', vars: { url } })
@@ -255,7 +258,7 @@ export const deploy = async (
  */
 export const storefrontPaths = async (base = ''): Promise<string[]> => {
   const res = await fetch(`${base}/site.json`)
-  if (!res.ok) throw new Error(`Could not read the storefront file list (${res.status}). Run \`npm run build\` in /builder.`)
+  if (!res.ok) throw badBuild(`Could not read the storefront file list (${res.status}). Run \`npm run build\` in /builder.`)
   return (await res.json()) as string[]
 }
 
@@ -264,7 +267,7 @@ export const loadStorefront = async (base = ''): Promise<SiteFile[]> => {
   return Promise.all(
     paths.map(async path => {
       const file = await fetch(`${base}/site${path}`)
-      if (!file.ok) throw new Error(`Missing storefront file ${path} (${file.status}).`)
+      if (!file.ok) throw badBuild(`Missing storefront file ${path} (${file.status}).`)
       return { path, bytes: new Uint8Array(await file.arrayBuffer()), type: contentType(path) }
     }),
   )
