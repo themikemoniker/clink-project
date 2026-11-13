@@ -54,6 +54,17 @@ test('inventory (#55, #60): the un-list hint, its tick-box, both price notes and
   }
 })
 
+// #159: #photo-state has no data-i18n (applyLang would overwrite a mid-edit line), so its no-JS
+// fallback is held to the table's en here.
+const photoFallback = (html: string) => /<p\b[^>]*\bid="photo-state"[^>]*>([\s\S]*?)<\/p>/.exec(html)?.[1]?.replace(/\s+/g, ' ').trim()
+test('inventory (#159): the #photo-state fallback is photo.hint\'s en, with no data-i18n', () => {
+  assert.ok(STRINGS['photo.hint'], 'photo.hint is not in STRINGS')
+  assert.equal(photoFallback(HTML), STRINGS['photo.hint']!.en)
+  assert.doesNotMatch(/<p\b[^>]*\bid="photo-state"[^>]*>/.exec(HTML)![0], /data-i18n/)
+  // L1: a drifted fallback is caught.
+  assert.notEqual(photoFallback(HTML.replace('The original is never uploaded.', 'The original stays.')), STRINGS['photo.hint']!.en)
+})
+
 test('inventory (#55, L1): the check sees a tick-box span with its data-i18n removed', () => {
   const broken = HTML.replace(' data-i18n="shrink.ok"', '')
   assert.notEqual(broken, HTML)

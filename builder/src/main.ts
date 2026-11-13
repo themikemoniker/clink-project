@@ -351,8 +351,8 @@ const resetItem = () => {
   editView = null; $('#publish').dataset.i18n = 'item.publish'; $('#publish').textContent = fmt(lang, 'item.publish')
   $('#editing-note').hidden = true
   $('#cancel-edit').hidden = true
-  $('#photo-state').textContent =
-    'Resized in your browser to 1200, 480 and 160px. The original is never uploaded.'
+  photoView = null // #159: back to the default hint, so a published item's 'stored' line never survives
+  showPhoto()
   refreshCost()
 }
 
@@ -762,9 +762,9 @@ const editItem = (own: Owned, draft: Draft, markingSold = false) => {
   $<HTMLInputElement>('#alt').value = draft.alt
   $<HTMLInputElement>('#photo').value = ''
   $<HTMLInputElement>('#slug').toggleAttribute('readonly', true)
-  $('#photo-state').textContent = draft.blobs.length
-    ? `${draft.blobs.map(b => `${b.w}px`).join(', ')} already on Blossom. Leave the file field empty to keep them.`
-    : 'No photo on this item yet.'
+  photoView = draft.blobs.length // no blobs is `none`, never `have` with no widths
+    ? { kind: 'have', widths: draft.blobs.map(b => b.w) }
+    : { kind: 'none' }; showPhoto()
   // #106: both texts hold {title} or {d}, so #publish drops its data-i18n here and `showEdit` re-writes them.
   delete $('#publish').dataset.i18n; $('#editing-note').hidden = false
   editView = markingSold ? { btn: 'edit.markSold', note: 'edit.soldNote', vars: { title: draft.title, d: own.item.d } }
@@ -807,7 +807,7 @@ const onPhoto = async (input: HTMLInputElement) => {
     photos = blobs
     servers = uploaded.servers
     uploads = blobs.length
-    $('#photo-state').textContent = `${blobs.map(b => `${b.w}px`).join(', ')} on Blossom.`
+    photoView = { kind: 'stored', widths: blobs.map(b => b.w) }; showPhoto()
     say(`Photo stored at ${blobs.length} size(s).`, 'ok')
     refreshCost()
   } catch (err) {
@@ -871,6 +871,7 @@ const refreshDeployCost = async () => {
 import { applyLang, countKey, fmt, keep, LANG_KEY, load, pickLang, type Lang } from './i18n.ts'
 import { unlistSay, unlistWhat } from './unlist-text.ts'
 import { saleCost, saleLive } from './sale-text.ts'
+import { photoState, type PhotoView } from './photo-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
 // #69: a status line from the table, and the last signed-in name, kept so the switch can re-write
 // them. Declared here, after every cited line; `say` clears `shown` so a later plain text stays.
@@ -888,12 +889,17 @@ const showEdit = () => {
 // the none text back over a pasted node. Starts as none, shown after applyLang below.
 let nodeView: { key: string; vars: Record<string, string> } = { key: 'node.none', vars: {} }
 const showNode = () => { $('#node-state').textContent = fmt(lang, nodeView.key, nodeView.vars) }
+// #159: what #photo-state says, so a switch re-writes it. No data-i18n, same reason as #node-state.
+// null is the default hint; `resetItem` puts it back. Shown after applyLang below.
+let photoView: PhotoView = null
+const showPhoto = () => { $('#photo-state').textContent = photoState(lang, photoView) }
 const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) => {
   say(fmt(lang, key, vars), tone) // `lang` read now, not captured
   shown = { key, tone, vars }
 }
 applyLang(document, lang)
 showNode()
+showPhoto()
 $('#lang-switch').addEventListener('click', () => {
   lang = lang === 'es' ? 'en' : 'es'
   keep(LANG_KEY, lang)
@@ -901,6 +907,7 @@ $('#lang-switch').addEventListener('click', () => {
   if (shown) sayT(shown.key, shown.tone, shown.vars)
   if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
   showEdit()
+  showPhoto()
   showNode()
   refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
