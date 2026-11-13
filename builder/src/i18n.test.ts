@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { countKey, fmt, keep, load, missing, pickLang, STRINGS } from './i18n.ts'
+import { countKey, errLine, fmt, keep, load, missing, pickLang, STRINGS } from './i18n.ts'
 
 test('pickLang: a stored choice wins, then any es* phone language, then English', () => {
   for (const nav of ['es', 'es-MX', 'ES-419']) assert.equal(pickLang(nav, null), 'es', nav)
@@ -535,17 +535,30 @@ const publishCatches = (src: string) => [
 ]
 const KEYED = "err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : "
 
-test('main.ts (#109): both publish catches show a PublishError through the table, and keep their old fallback', () => {
+// #169: the sale catch writes only what `errLine` picks, through the table, and never says( err itself.
+const SALE_LINE = "const line = errLine(err); sayT(line.key, 'bad', line.vars)"
+const saleCatchOk = (c: string) => c.includes(SALE_LINE) && !/\bsay\(/.test(c)
+
+test('main.ts (#109, #169): the item catch keeps its PublishError / err.generic form; the sale catch goes through errLine', () => {
   const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
   const [item, sale] = publishCatches(src)
   assert.ok(item!.includes(`${KEYED}sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })`), 'item catch')
-  assert.ok(sale!.includes(`${KEYED}say(err instanceof Error ? err.message : String(err), 'bad')`), 'sale catch')
+  assert.ok(saleCatchOk(sale!), `sale catch: ${sale}`)
   assert.match(src, /import \{[^}]*\bPublishError\b[^}]*\} from '\.\/publish\.ts'/)
+  assert.match(src, /import \{[^}]*\berrLine\b[^}]*\} from '\.\/i18n\.ts'/)
 })
 
-test('main.ts (#109, L1): removing either PublishError branch is caught', () => {
+test('main.ts (#169, L1): the old raw-message sale catch is caught', () => {
   const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
-  for (const i of [0, 1]) {
+  const OLD = `${KEYED}say(err instanceof Error ? err.message : String(err), 'bad')`
+  const broken = src.replace(SALE_LINE, OLD)
+  assert.notEqual(broken, src, 'the errLine sale catch is not in main.ts')
+  assert.ok(!saleCatchOk(publishCatches(broken)[1]!))
+})
+
+test('main.ts (#109, L1): removing the item PublishError branch is caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  for (const i of [0]) {
     const one = publishCatches(src)[i]!
     assert.ok(one.includes(KEYED), `catch ${i} has no PublishError branch`)
     const broken = src.replace(one, one.replace(KEYED, ''))
@@ -678,6 +691,60 @@ test('publish.ts (#109): its own failures are PublishErrors with a key and the u
   for (const [k] of NEW109) assert.ok(src.includes(`'${k}'`), `publish.ts never throws ${k}`)
   assert.equal([...src.matchAll(/throw notSent\(/g)].length, 8, 'a "Nothing was published" throw is not keyed')
   assert.ok(!/throw new Error\(/.test(src), 'publish.ts still throws a plain Error')
+})
+
+// #169: the deploy no-server failure. `en` is the exact English deploy.ts threw; es is plain.
+const NOSERVER_EN = 'No Blossom server holds a complete copy. Refusing to publish a manifest that cannot resolve.'
+const BANNED169 = ['{msg}', 'Blossom', 'relay', 'manifest', 'signer', 'hex', 'nsec']
+const jargon169 = (es: string) => BANNED169.filter(w => es.toLowerCase().includes(w.toLowerCase()))
+
+test('fmt (#169): deploy.noServer is word for word in English and plain Spanish', () => {
+  assert.deepEqual(missing(['deploy.noServer']), [])
+  const row = STRINGS['deploy.noServer']
+  assert.ok(row, 'deploy.noServer is not in STRINGS')
+  assert.equal(row.en, NOSERVER_EN)
+  assert.equal(fmt('en', 'deploy.noServer'), NOSERVER_EN)
+  assert.ok(row.es.trim(), 'no es')
+  assert.notEqual(row.es, row.en)
+  assert.deepEqual(jargon169(row.es), [], `jargon in "${row.es}"`)
+  assert.equal(fmt('es', 'deploy.noServer'), row.es)
+})
+
+test('fmt (#169, L1): a blanked es and each banned word are caught', () => {
+  const broken = { ...STRINGS, 'deploy.noServer': { en: NOSERVER_EN, es: '' } }
+  assert.deepEqual(missing(Object.keys(broken), broken), ['deploy.noServer'])
+  for (const w of BANNED169) assert.deepEqual(jargon169(`${STRINGS['deploy.noServer']!.es} ${w}`), [w], w)
+})
+
+test('deploy.ts (#169): no server holding a copy throws a PublishError keyed deploy.noServer, offline', async () => {
+  const { deploy } = await import('./deploy.ts')
+  const { PublishError } = await import('./publish.ts')
+  const enc = (t: string) => new TextEncoder().encode(t)
+  const files = [{ path: '/index.html', bytes: enc('<body></body>'), type: 'text/html' }, { path: '/404.html', bytes: enc('x'), type: 'text/html' }]
+  // No servers: mirror makes no request and none holds a complete copy. No relay is reached.
+  const err = await deploy(fakeSigner, [], files as never, { servers: [] }).then(() => assert.fail('it did not throw'), (e: unknown) => e)
+  assert.ok(err instanceof PublishError, `not a PublishError: ${String(err)}`)
+  assert.equal(err.key, 'deploy.noServer')
+  assert.equal(err.message, NOSERVER_EN)
+  assert.deepEqual(errLine(err), { key: 'deploy.noServer', vars: undefined })
+  assert.equal(fmt('en', errLine(err).key), NOSERVER_EN)
+  assert.equal(fmt('es', errLine(err).key), STRINGS['deploy.noServer']!.es)
+})
+
+test('errLine (#169): a PublishError keeps its key; a plain Error, a string and an unknown key go to err.generic', async () => {
+  const { PublishError } = await import('./publish.ts')
+  assert.deepEqual(errLine(new Error('boom')), { key: 'err.generic', vars: { msg: 'boom' } })
+  assert.deepEqual(errLine('boom'), { key: 'err.generic', vars: { msg: 'boom' } })
+  const pe = new PublishError('No relay accepted the sale. It is signed but nobody can see it — try again.', 'publish.noRelaySale')
+  assert.deepEqual(errLine(pe), { key: 'publish.noRelaySale', vars: undefined })
+  const nt = new PublishError('The title was altered in encoding. Nothing was published.', 'publish.notSent', { msg: 'The title was altered in encoding. Nothing was published.' })
+  assert.deepEqual(errLine(nt), { key: 'publish.notSent', vars: nt.vars })
+  assert.deepEqual(errLine(new PublishError('odd', 'no.such.key')), { key: 'err.generic', vars: { msg: 'odd' } })
+  // An Error that only happens to carry a `key` is not a PublishError.
+  assert.deepEqual(errLine(Object.assign(new Error('boom'), { key: 'deploy.noServer' })), { key: 'err.generic', vars: { msg: 'boom' } })
+  // What the seller reads: es never shows the raw English, en shows it word for word.
+  assert.equal(fmt('es', errLine(new Error('boom')).key, errLine(new Error('boom')).vars), STRINGS['err.generic']!.es)
+  assert.equal(fmt('en', errLine(new Error('boom')).key, errLine(new Error('boom')).vars), 'boom')
 })
 
 // #123: the #node-state line. en is the old English byte for byte; es names no command and no relay.

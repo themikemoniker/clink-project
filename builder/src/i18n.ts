@@ -105,6 +105,8 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'deploy.upload': { en: 'Uploading {done}/{total}…', es: 'Subiendo archivos: {done} de {total}…' },
   'deploy.publish': { en: 'Publishing the manifest to {n} relays…', es: 'Publicando tu venta en {n} servidores…' },
   'deploy.live': { en: 'Live at {url}', es: 'Listo: tu venta está en {url}' },
+  // #169: deploy.ts throws this as a PublishError. `en` is its exact English.
+  'deploy.noServer': { en: 'No Blossom server holds a complete copy. Refusing to publish a manifest that cannot resolve.', es: 'No se pudo guardar tu tienda en internet. Revisa tu conexión y vuelve a intentarlo en un momento.' },
   // #109: the failures publish.ts writes itself (PublishError). `en` is its exact English; es never shows {msg}.
   'publish.noRelay': { en: 'No relay accepted the listing. It is signed but nobody can see it — try again.', es: 'Tu artículo está listo, pero nadie lo puede ver todavía. Presiona Publicar otra vez en un momento.' },
   'publish.noRelaySale': { en: 'No relay accepted the sale. It is signed but nobody can see it — try again.', es: 'Tu venta está lista, pero nadie la puede ver todavía. Presiona Publicar otra vez en un momento.' },
@@ -164,6 +166,14 @@ export const missing = (keys: string[], table: Record<string, { en: string; es?:
 // A table text with each {name} replaced. An unknown key falls back to itself; an unknown {x} stays.
 export const fmt = (lang: Lang, key: string, vars: Record<string, string> = {}) =>
   (STRINGS[key]?.[lang] || STRINGS[key]?.en || key).replace(/\{(\w+)\}/g, (m, n: string) => vars[n] ?? m)
+
+// #169: which table line a caught error shows. A PublishError (by name, so i18n.ts imports no
+// publish.ts) with a key in the table shows that key; anything else is `err.generic` with its message.
+export const errLine = (err: unknown): { key: string; vars?: Record<string, string> } => {
+  const k = err instanceof Error && err.name === 'PublishError' ? (err as { key?: unknown }).key : undefined
+  if (typeof k === 'string' && k in STRINGS) return { key: k, vars: (err as { vars?: Record<string, string> }).vars }
+  return { key: 'err.generic', vars: { msg: err instanceof Error ? err.message : String(err) } }
+}
 
 // #63: `base.one` for exactly 1, else `base.other` (0 too). Two keys per count, no general rule.
 export const countKey = (base: string, n: number) => `${base}.${n === 1 ? 'one' : 'other'}`
