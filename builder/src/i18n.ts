@@ -123,6 +123,11 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'sale.no.empty': { en: 'No items came back from the relays. Publishing now would replace your sale with an empty one.', es: 'No llegó ningún artículo de los servidores. Si publicas ahora, tu venta quedaría vacía.' },
   'sale.no.quorum': { en: 'Only {answered} of {relays} relays answered, so this list may be short. Press “Reload my items”.', es: 'Solo {answered} de {relays} servidores respondieron. Puede faltar algo. Presiona “Volver a cargar mis artículos”.' },
   'sale.cannot': { en: 'Cannot publish yet: {reason}', es: 'Aún no se puede publicar: {reason}' },
+  // #154: the #photo-state line (photo-text.ts). The es never names Blossom or px sizes.
+  'photo.hint': { en: 'Resized in your browser to 1200, 480 and 160px. The original is never uploaded.', es: 'Tu foto se hace más chica en tu teléfono. La original nunca se sube.' },
+  'photo.none': { en: 'No photo on this item yet.', es: 'Este artículo todavía no tiene foto.' },
+  'photo.have': { en: '{sizes} already on Blossom. Leave the file field empty to keep them.', es: 'Este artículo ya tiene foto. Deja vacío el campo para conservarla.' },
+  'photo.stored': { en: '{sizes} on Blossom.', es: 'Tu foto ya está guardada.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.

@@ -54,6 +54,15 @@ test('inventory (#55, #60): the un-list hint, its tick-box, both price notes and
   }
 })
 
+// #154: #photo-state has no data-i18n (a switch would overwrite a mid-edit text), so its no-JS
+// fallback is checked against the table by id.
+const photoFallback = (html: string) => /<p\b[^>]*\bid="photo-state"[^>]*>([^<]*)<\/p>/.exec(html)?.[1]
+test('inventory (#154): the #photo-state fallback in index.html is photo.hint\'s en', () => {
+  assert.equal(photoFallback(HTML)?.replace(/\s+/g, ' ').trim(), STRINGS['photo.hint']?.en)
+  // L1: a drifted fallback is caught.
+  assert.notEqual(photoFallback(HTML.replace('The original is never', 'The original is not')), STRINGS['photo.hint']?.en)
+})
+
 test('inventory (#55, L1): the check sees a tick-box span with its data-i18n removed', () => {
   const broken = HTML.replace(' data-i18n="shrink.ok"', '')
   assert.notEqual(broken, HTML)
