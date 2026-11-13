@@ -111,6 +111,13 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'publish.mintFail': { en: 'Could not mint the offer: {msg}', es: 'No se pudo preparar el botón de Comprar. Revisa la dirección de tu nodo en la sección 2, o deja vacío el campo del nodo para venderlo solo en efectivo.' },
   'publish.notSent': { en: '{msg}', es: 'No se publicó nada. Revisa los datos del artículo e inténtalo otra vez.' },
   'deploy.detail':{ en: '{n} files on {s} Blossom server(s), manifest on {ok}/{all} relays. Site version {v}…. The first request may time out while the gateway fetches the blobs — reload once.', es: '{n} archivos en {s} servidor(es) de archivos y {ok}/{all} servidores con el índice. Versión del sitio {v}…. La primera visita puede tardar. Si falla, vuelve a cargar una vez.' },
+  // #141: step 2's static text (needs-native-review). The hint lost its <code>: applyLang writes plain
+  // text. The es names no command, file, nmanage, CLINK or relay.
+  's2.h': { en: '2 · Your node', es: '2 · Tu nodo' },
+  's2.optional': { en: 'optional', es: 'opcional' },
+  's2.label': { en: 'CLINK Manage pointer', es: 'Código de tu nodo' },
+  's2.placeholder': { en: 'nmanage1…', es: 'Pega aquí el código de tu nodo' },
+  's2.hint': { en: 'Run node spike/authorize-manage.ts once, on the machine with your node, and paste the line it writes. This pointer addresses your account, so it stays in this browser — it is never published and never sent anywhere but your own node.', es: 'Este código te lo da quien instaló tu nodo. Se queda en el navegador de este teléfono. Nunca se publica y solo se envía a tu propio nodo.' },
   // #123: the #node-state line setNode writes (needs-native-review). The es never names a terminal
   // command or a file, and never shows {relay}: the seller cannot act on either.
   'node.none': { en: 'No node — items will publish as cash-only, with no Buy button.', es: 'Sin nodo: tus artículos se publican solo para pago en efectivo, sin botón de Comprar.' },

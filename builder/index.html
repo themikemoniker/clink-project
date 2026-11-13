@@ -60,12 +60,12 @@
 
       <!-- 2. node --------------------------------------------------------------------- -->
       <section>
-        <h2>2 · Your node <span class="optional">optional</span></h2>
-        <label for="node-input">CLINK Manage pointer</label>
-        <input id="node-input" type="text" placeholder="nmanage1…" autocomplete="off" spellcheck="false" />
+        <h2><span data-i18n="s2.h">2 · Your node</span> <span class="optional" data-i18n="s2.optional">optional</span></h2>
+        <label for="node-input" data-i18n="s2.label">CLINK Manage pointer</label>
+        <input id="node-input" type="text" placeholder="nmanage1…" data-i18n="s2.placeholder" data-i18n-attr="placeholder" autocomplete="off" spellcheck="false" />
         <p class="hint" id="node-state">No node — items will publish as cash-only, with no Buy button.</p>
-        <p class="hint">
-          Run <code>node spike/authorize-manage.ts</code> once, on the machine with your node, and
+        <p class="hint" data-i18n="s2.hint">
+          Run node spike/authorize-manage.ts once, on the machine with your node, and
           paste the line it writes. This pointer addresses your account, so it stays in this
           browser — it is never published and never sent anywhere but your own node.
         </p>
