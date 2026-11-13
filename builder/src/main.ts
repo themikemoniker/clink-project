@@ -555,7 +555,7 @@ const doPublishSale = async (event: SubmitEvent) => {
       title: draft.title, ok: relaysOk, total: RELAYS.length, d: draft.d, items: owned.length, mapLink: !!draft.g,
     })
   } catch (err) {
-    err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : say(err instanceof Error ? err.message : String(err), 'bad')
+    const line = errLine(err); sayT(line.key, 'bad', line.vars)
   } finally {
     salePending = false; refreshSaleCost()
   }
@@ -867,7 +867,7 @@ const refreshDeployCost = async () => {
 // --- wiring ------------------------------------------------------------------------------------
 // G1.2. Imported here (imports hoist) so no line cited in docs/spec.md moves. Every startup read
 // of storage below goes through `load`, so a blocked storage cannot stop the page halfway (L14).
-import { applyLang, countKey, fmt, keep, LANG_KEY, load, pickLang, type Lang } from './i18n.ts'
+import { applyLang, countKey, errLine, fmt, keep, LANG_KEY, load, pickLang, type Lang } from './i18n.ts'
 import { unlistSay, unlistWhat } from './unlist-text.ts'
 import { saleCost, saleLive } from './sale-text.ts'
 import { photoState, type PhotoView } from './photo-text.ts'

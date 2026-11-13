@@ -17,6 +17,7 @@ import { SimplePool } from 'nostr-tools/pool'
 import { npubEncode } from 'nostr-tools/nip19'
 import type { Event, EventTemplate } from 'nostr-tools/pure'
 import { mirror, SERVERS } from './blossom.ts'
+import { PublishError } from './publish.ts' // publish.ts never imports deploy.ts: no cycle
 import type { Signer } from './signer.ts'
 
 export const MANIFEST_KIND = 15128 // 5A.md:16 — root site, one per pubkey
@@ -212,7 +213,7 @@ export const deploy = async (
     )
     live = result.complete
     if (live.length === 0) {
-      throw new Error('No Blossom server holds a complete copy. Refusing to publish a manifest that cannot resolve.')
+      throw new PublishError('No Blossom server holds a complete copy. Refusing to publish a manifest that cannot resolve.', 'deploy.noServer')
     }
   }
 
