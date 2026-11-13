@@ -155,6 +155,12 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'photo.done': { en: 'Photo stored at {n} size(s).', es: 'Tu foto ya está guardada.' },
   'geo.none':{ en: 'This browser has no geolocation. Type the geohash instead.', es: 'Este navegador no puede saber dónde estás. Escribe el código de tu zona.' },
   'geo.fail': { en: 'Could not read your location: {msg}. Type the geohash instead.', es: 'Tu teléfono no pudo saber dónde estás. Permite la ubicación, o escribe el código de tu zona.' },
+  // #162: the geohash field in step 3 (needs-native-review). `en` is the exact old English; the hint lost
+  // its <code> (applyLang writes plain text). es uses geo.none's words and quotes geo.locate's es.
+  'geo.label': { en: 'Geohash', es: 'Código de tu zona' },
+  'geo.optional': { en: 'optional; makes the neighbourhood tappable', es: 'opcional; así tu comprador abre tu zona en su mapa' },
+  'geo.locate': { en: 'Use my location', es: 'Usar mi ubicación' },
+  'geo.hint': { en: 'Your storefront turns this into a geo: link, which your buyer’s phone hands to whatever map app it already has — no map is loaded from anybody’s server, and nothing of ours learns that they looked. “Use my location” reads the browser’s own geolocation and rounds it to about 76 metres. Leave it empty and the neighbourhood is just text.', es: 'El teléfono de tu comprador lo abre en la app de mapas que ya tiene. No se envía nada a nadie. “Usar mi ubicación” lo redondea a unos 76 metros. Si lo dejas vacío, tu zona queda solo como texto.' },
   // #145: the sticker sheet (needs-native-review). `en` is the exact old English; the hint lost its <em>.
   'stickers.make': { en: 'Build the sticker sheet', es: 'Hacer las etiquetas' },
   'stickers.print': { en: 'Print it', es: 'Imprimirlas' },

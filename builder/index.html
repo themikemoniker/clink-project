@@ -105,13 +105,13 @@
           <label for="sale-location">Neighbourhood</label>
           <input id="sale-location" type="text" maxlength="200" placeholder="Colonia Americana, Guadalajara" />
 
-          <label for="sale-geo">Geohash <span class="optional">optional; makes the neighbourhood tappable</span></label>
+          <label for="sale-geo"><span data-i18n="geo.label">Geohash</span> <span class="optional" data-i18n="geo.optional">optional; makes the neighbourhood tappable</span></label>
           <div class="row">
             <input id="sale-geo" type="text" maxlength="12" autocomplete="off" spellcheck="false" placeholder="9ewmxg9" />
-            <button type="button" id="sale-locate">Use my location</button>
+            <button type="button" id="sale-locate" data-i18n="geo.locate">Use my location</button>
           </div>
-          <p class="hint" id="sale-geo-state">
-            Your storefront turns this into a <code>geo:</code> link, which your buyer’s phone
+          <p class="hint" id="sale-geo-state" data-i18n="geo.hint">
+            Your storefront turns this into a geo: link, which your buyer’s phone
             hands to whatever map app it already has — no map is loaded from anybody’s server, and
             nothing of ours learns that they looked. “Use my location” reads the browser’s own
             geolocation and rounds it to about 76 metres. Leave it empty and the neighbourhood

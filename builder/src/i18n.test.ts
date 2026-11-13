@@ -1181,3 +1181,45 @@ test('main.ts (#146, L1): each old say( line put back is caught', () => {
     assert.ok(left.includes(now) && left.includes('onPhoto writes plain text'), olds[i]!)
   })
 })
+
+// #162: the geohash field in step 3. Each key: a phrase that must not be left outside a data-i18n element.
+const GEO162: Record<string, string> = { 'geo.label': '>Geohash<', 'geo.optional': 'makes the neighbourhood tappable',
+  'geo.locate': '>Use my location<', 'geo.hint': 'Your storefront turns this into' }
+const BANNED162 = /geohash|geo:|relay|signer|nsec|hex|kind/i
+const geo162Left = (html: string, table: typeof STRINGS) => Object.entries(GEO162).flatMap(([k, phrase]) => {
+  const v = table[k], text = textOf(html, k), left: string[] = []
+  if (!v?.en.trim() || !v.es.trim() || v.es === v.en) left.push(`${k}: no es`)
+  if (text === undefined) left.push(`${k}: not wired`)
+  else if (text.replace(/\s+/g, ' ').trim() !== v?.en) left.push(`${k}: the HTML fallback is not the table's en`)
+  if (unwired(html).includes(phrase)) left.push(`${k}: "${phrase}" is outside a data-i18n element`)
+  if (v && BANNED162.test(v.es)) left.push(`${k}: jargon in "${v.es}"`)
+  return left
+})
+
+test('inventory (#162): the geohash label, note, button and hint are wired, with plain Spanish', () => {
+  assert.deepEqual(geo162Left(HTML, STRINGS), [])
+  assert.ok(STRINGS['geo.hint']!.es.includes(`“${STRINGS['geo.locate']!.es}”`), 'geo.hint es does not quote the button')
+  assert.ok(!STRINGS['geo.hint']!.es.includes('Use my location'), 'geo.hint es quotes the English button')
+  assert.match(STRINGS['geo.label']!.es, /código de tu zona/i, 'geo.label es is not geo.none\'s words')
+  assert.match(STRINGS['geo.hint']!.es, /76 metros/)
+  // The no-JS fallback lost its <code>: applyLang writes textContent and would delete it.
+  for (const k of Object.keys(GEO162)) assert.ok(!textOf(HTML, k)!.includes('<'), `${k}: nested markup`)
+})
+
+test('inventory (#162, L1): a removed data-i18n, a blanked es or jargon in es is caught', () => {
+  for (const k of Object.keys(GEO162)) {
+    const broken = HTML.replace(` data-i18n="${k}"`, '')
+    assert.notEqual(broken, HTML, `${k} is not in index.html`)
+    assert.equal(textOf(broken, k), undefined)
+    const left = geo162Left(broken, STRINGS)
+    assert.ok(left.includes(`${k}: not wired`), k)
+    assert.ok(left.some(l => l.startsWith(`${k}: "`)), `${k}: its English is not seen once unwired`)
+    const blank = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(geo162Left(HTML, blank), [`${k}: no es`])
+    assert.deepEqual(missing(Object.keys(blank), blank), [k])
+    const english = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: STRINGS[k]!.en } }
+    assert.ok(geo162Left(HTML, english).includes(`${k}: no es`), `${k}: English es not caught`)
+  }
+  for (const w of ['geohash', 'geo:', 'relay', 'signer', 'nsec', 'hex', 'kind'])
+    assert.ok(BANNED162.test(`${STRINGS['geo.hint']!.es} ${w}`), w)
+})
