@@ -102,7 +102,8 @@ test('inventory (L1): missing() goes red on a table with one es removed', () => 
 test('the Spanish has no jargon', () => {
   for (const [k, v] of Object.entries(STRINGS))
     for (const w of ['signer', 'bunker', 'nip-07', 'relay', 'nsec', ...(k in WIRED ? ['nostr', 'kind 30405', 'oracle'] : [])])
-      assert.ok(!v.es.toLowerCase().includes(w), `${k}: es says "${w}"`)
+      // A {slot} name is never shown (fmt fills it), so `{relays}` is not the word relay.
+      assert.ok(!v.es.replace(/\{\w+\}/g, '').toLowerCase().includes(w), `${k}: es says "${w}"`)
 })
 
 test('load and keep never throw, even when reading the storage itself throws', () => {
@@ -604,6 +605,26 @@ test('fmt (#123): the node line is word for word in English and plain Spanish wi
 
 test('fmt (#123, L1): each blanked es is caught by missing', () => {
   for (const [k] of NEW123) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+// #130: why Publish sale is off. The es quorum line names the real es Reload button.
+const NEW130 = ['sale.no.signer', 'sale.no.loading', 'sale.no.empty', 'sale.no.quorum', 'sale.cannot']
+
+test('table (#130): the five cannot-publish keys have es, and keep their slots in both languages', () => {
+  assert.deepEqual(missing(NEW130), [])
+  for (const lang of ['en', 'es'] as const) {
+    assert.ok(STRINGS['sale.cannot']![lang].includes('{reason}'), `sale.cannot ${lang} lost {reason}`)
+    for (const slot of ['{answered}', '{relays}'])
+      assert.ok(STRINGS['sale.no.quorum']![lang].includes(slot), `sale.no.quorum ${lang} lost ${slot}`)
+  }
+  assert.ok(STRINGS['sale.no.quorum']!.es.includes(`“${STRINGS['items.reload']!.es}”`), 'quorum es does not name the es Reload button')
+  assert.equal(fmt('en', 'sale.cannot', { reason: 'Connect a signer first.' }), 'Cannot publish yet: Connect a signer first.')
+  for (const k of NEW130) assert.ok(!/relay|signer|nsec/i.test(fmt('es', k, { answered: '1', relays: '4', reason: 'x' })), `${k}: jargon in es`)  // Negative controls (L1): a key with no entry, and each blanked es, are reported.
+  assert.deepEqual(missing(['sale.no.bogus']), ['sale.no.bogus'])
+  for (const k of NEW130) {
     const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
     assert.deepEqual(missing(Object.keys(broken), broken), [k])
   }

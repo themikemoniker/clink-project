@@ -294,6 +294,28 @@ test('a member list short of quorum does not publish', () => {
   assert.match(noPublishSaleReason({ ...ready, answered: 1, relays: 3 })!, /Only 1 of 3 relays/)
 })
 
+// #130 (G1.1): the same four reasons in Spanish, with no jargon. The one-argument calls above are the English.
+test('noPublishSaleReason(state, es) says each reason in plain Spanish', () => {
+  const states = [
+    { ...ready, signedIn: false },
+    { ...ready, panelLoaded: false, items: 0 },
+    { ...ready, items: 0, answered: 0 },
+    { ...ready, answered: 1 },
+  ]
+  for (const s of states) {
+    const en = noPublishSaleReason(s, 'en')!
+    const es = noPublishSaleReason(s, 'es') ?? ''
+    assert.ok(es.trim(), `no es for ${JSON.stringify(s)}`)
+    assert.notEqual(es, en, `es is the English: "${es}"`)
+    assert.equal(en, noPublishSaleReason(s), 'the default is not English')
+    assert.ok(!/relay|signer|nsec/i.test(es), `jargon in "${es}"`)
+  }
+  const quorum = noPublishSaleReason({ ...ready, answered: 1 }, 'es')!
+  assert.ok(quorum.includes('1') && quorum.includes('4'), `quorum es drops the numbers: "${quorum}"`)
+  assert.ok(!quorum.includes('{'), `unfilled slot in "${quorum}"`)
+  assert.equal(noPublishSaleReason(ready, 'es'), undefined)
+})
+
 // The quorum is only worth having if the number it counts is THIS read. `pool.seenOn` is a Map on
 // the pool that is only ever added to, and main.ts holds one pool for the session — so before
 // 2026-08-24 a relay that answered once counted as answering forever, and the gate could be walked

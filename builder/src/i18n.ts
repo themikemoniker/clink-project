@@ -116,6 +116,13 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'node.none': { en: 'No node — items will publish as cash-only, with no Buy button.', es: 'Sin nodo: tus artículos se publican solo para pago en efectivo, sin botón de Comprar.' },
   'node.bad': { en: 'That is not an nmanage1… pointer. Run `node spike/authorize-manage.ts` and paste what it writes.', es: 'Ese código no es válido. Pídelo otra vez a quien instaló tu nodo y pégalo completo.' },
   'node.ok': { en: 'Node {key}… on {relay}. Offers will be minted over CLINK Manage.', es: 'Nodo conectado ({key}…). Tus artículos tendrán botón de Comprar.' },
+  // #130: why Publish sale is off (admin.ts noPublishSaleReason; needs-native-review). The quorum
+  // es names the real es label of `items.reload`.
+  'sale.no.signer': { en: 'Connect a signer first.', es: 'Primero conecta tu app de firma.' },
+  'sale.no.loading': { en: 'Still reading your items from the relays — publishing now would send an empty sale.', es: 'Todavía estamos leyendo tus artículos. Si publicas ahora, tu venta saldría vacía.' },
+  'sale.no.empty': { en: 'No items came back from the relays. Publishing now would replace your sale with an empty one.', es: 'No llegó ningún artículo de los servidores. Si publicas ahora, tu venta quedaría vacía.' },
+  'sale.no.quorum': { en: 'Only {answered} of {relays} relays answered, so this list may be short. Press “Reload my items”.', es: 'Solo {answered} de {relays} servidores respondieron. Puede faltar algo. Presiona “Volver a cargar mis artículos”.' },
+  'sale.cannot': { en: 'Cannot publish yet: {reason}', es: 'Aún no se puede publicar: {reason}' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.

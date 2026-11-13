@@ -231,6 +231,7 @@ export const draftFrom = (item: Item, event: Event, saleD: string): Draft | null
  * seller changed the price, the old offer still charges the old one. Returning nothing there is
  * what makes a price edit mint a new offer instead of publishing a Buy button that lies.
  */
+import { fmt, type Lang } from './i18n.ts' // here, not at the top: lines cited above stay put
 /**
  * Why publishing the sale would destroy something right now, or `undefined` if it would not.
  *
@@ -269,14 +270,12 @@ export const noPublishSaleReason = (state: {
   items: number
   answered: number
   relays: number
-}): string | undefined => {
-  if (!state.signedIn) return 'Connect a signer first.'
-  if (!state.panelLoaded) return 'Still reading your items from the relays — publishing now would send an empty sale.'
-  if (state.items === 0) {
-    return 'No items came back from the relays. Publishing now would replace your sale with an empty one.'
-  }
+}, lang: Lang = 'en'): string | undefined => {
+  if (!state.signedIn) return fmt(lang, 'sale.no.signer')
+  if (!state.panelLoaded) return fmt(lang, 'sale.no.loading')
+  if (state.items === 0) return fmt(lang, 'sale.no.empty')
   if (state.answered * 2 <= state.relays) {
-    return `Only ${state.answered} of ${state.relays} relays answered, so this list may be short. Press “Reload my items”.`
+    return fmt(lang, 'sale.no.quorum', { answered: String(state.answered), relays: String(state.relays) })
   }
   return undefined
 }
