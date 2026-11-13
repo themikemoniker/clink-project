@@ -42,7 +42,9 @@ const WIRED: Record<string, string> = { 'shrink.hint': 'publishing this list', '
   // #125: panel 5's warning about sale amounts
   'sales.note': 'What is not here is what each sale',
   // #168: panel 7's Deploy button
-  'deploy.btn': 'Deploy my storefront' }
+  'deploy.btn': 'Deploy my storefront',
+  // #181: panel 6's heading, explainer and Download button
+  'result.h': 'Give the watcher its ladder', 'result.hint': 'Every future stock state', 'result.download': 'Download .ladder.json' }
 const element = (keyPattern: string, flags = '') =>
   new RegExp(`<(\\w+)\\b[^>]*\\bdata-i18n="${keyPattern}"[^>]*>([\\s\\S]*?)</\\1>`, flags)
 const textOf = (html: string, key: string) => element(key.replaceAll('.', '\\.')).exec(html)?.[2]

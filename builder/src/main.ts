@@ -391,24 +391,14 @@ const doPublish = async (event: SubmitEvent) => {
     saveLadder()
     resetItem()
     $('#result').hidden = false
-    $('#result-text').textContent =
-      `${draft.title} is live on ${result.relaysOk}/${RELAYS.length} relays as ${result.d}` +
-      (result.noffer ? ', with a Buy button.' : ', cash at the table.')
-    // M1. Three outcomes, and they are deliberately three different sentences. The old
-    // instruction survives verbatim for a seller with no watcher key, because for them nothing
-    // has changed. The edit warning follows the FILE path in both cases where it is still true,
-    // and disappears on the relay path, because that is the whole point: the ladder the watcher
-    // is holding has just been replaced by this one.
-    const editWarning = wasEdit
-      ? ' You just edited an item, so this is not optional: the rungs your watcher is holding were cut from the OLD listing and are now older than what is on the relays, which means it would publish them and the relay would ignore it. It would keep reporting success while the item stayed on sale after it sold. Restarting the watcher on this file is what closes that.'
-      : ''
-    const items = `${Object.keys(ladder).length} item(s) in this ladder.`
-    $('#ladder-note').textContent =
-      result.ladderRelaysOk === undefined
-        ? `${items} Save it as .ladder.json next to watch-sales.ts, then restart the watcher.${editWarning}`
-        : result.ladderRelaysOk > 0
-          ? `${items} Sent encrypted to your watcher on ${result.ladderRelaysOk}/${RELAYS.length} relays, so there is no file to copy and nothing to restart. The download stays here as a backup.`
-          : `${items} The ladder could NOT be sent to your watcher: no relay accepted it. The item is published and really for sale, but your watcher has not been told about it. Save it as .ladder.json next to watch-sales.ts and restart the watcher, or publish again once the relays answer.${editWarning}`
+    // M1. Three outcomes for the note, deliberately three different sentences, with the edit
+    // warning on the two file outcomes only (ladder-text.ts). Kept in resultView so the language
+    // switch re-writes both lines.
+    resultView = {
+      result: { title: draft.title, ok: result.relaysOk, total: RELAYS.length, d: result.d, noffer: !!result.noffer },
+      note: { items: Object.keys(ladder).length, total: RELAYS.length, ladderRelaysOk: result.ladderRelaysOk, wasEdit },
+    }
+    showResult()
     void loadPanel(false)
   } catch (err) {
     err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
@@ -866,6 +856,7 @@ const refreshDeployCost = async () => {
 import { applyLang, countKey, errLine, fmt, keep, LANG_KEY, load, pickLang, type Lang } from './i18n.ts'
 import { unlistSay, unlistWhat } from './unlist-text.ts'
 import { saleCost, saleLive } from './sale-text.ts'
+import { ladderNote, resultLine, type ResultView } from './ladder-text.ts'
 import { photoState, type PhotoView } from './photo-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
 // #69: a status line from the table, and the last signed-in name, kept so the switch can re-write
@@ -895,6 +886,14 @@ const showPhoto = () => { $('#photo-state').textContent = photoState(lang, photo
 // null is empty; only doStickers sets it (nothing clears the sheet). Shown after applyLang below.
 let stickersView: { key: string; vars: Record<string, string> } | null = null
 const showStickers = () => { $('#stickers-state').textContent = stickersView ? fmt(lang, stickersView.key, stickersView.vars) : '' }
+// #181: what panel 6's #result-text and #ladder-note say, so a switch re-writes them. No data-i18n,
+// same reason as #node-state. null until a publish succeeds; loadPanel never clears it.
+let resultView: ResultView = null
+const showResult = () => {
+  if (!resultView) return
+  $('#result-text').textContent = resultLine(lang, resultView.result)
+  $('#ladder-note').textContent = ladderNote(lang, resultView.note)
+}
 const qrLabel = (url: string) => fmt(lang, 'stickers.qr', { url }) // #182: `lang` read at call time
 const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) => {
   say(fmt(lang, key, vars), tone) // `lang` read now, not captured
@@ -918,6 +917,7 @@ $('#lang-switch').addEventListener('click', () => {
   showWatcher()
   showNode()
   refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish
+  showResult() // #181: panel 6's #result-text and #ladder-note
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
 $('#nip07').addEventListener('click', () => void connect(connectNip07))
