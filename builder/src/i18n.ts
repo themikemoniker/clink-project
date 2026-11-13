@@ -90,6 +90,7 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'item.noSlug': { en: 'Give the item a title, or a slug.', es: 'Ponle un nombre al artículo.' },
   'item.noTitle': { en: 'Give the item a title.', es: 'Falta el nombre del artículo.' },
   'item.badPrice': { en: 'Price must be a whole number of sats.', es: 'El precio debe ser un número entero de sats, sin decimales.' },
+  'item.badFiat': { en: 'Give a price in {cur}, as a number, at or above zero.', es: 'Escribe el precio en {cur}, con números y sin signos. Puede ser 0 si es gratis.' },
   'item.floor': { en: 'A buyable item must be at least 10 sats — the node will not invoice less. Set stock to 0, or clear the node field, to list it as cash-only.', es: 'Para venderlo con botón de Comprar, el precio mínimo es 10 sats. Si es menos, pon 0 en cantidad o deja vacío el campo del nodo: se vende solo en efectivo.' },
   'item.badStock': { en: 'Stock must be 0–999.', es: 'La cantidad debe ser de 0 a 999.' },
   'err.generic': { en: '{msg}', es: 'Algo salió mal. Inténtalo otra vez en un momento.' },

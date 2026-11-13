@@ -372,8 +372,7 @@ const doPublish = async (event: SubmitEvent) => {
   // fiat field's label. The decision is `admin.ts` `fiatPriceReason`, out here where a test can
   // reach it, for the same reason `noPublishSaleReason` is.
   if (draft.fiat) {
-    const why = fiatPriceReason(draft.fiat.amount, draft.fiat.currency)
-    if (why) return say(why, 'bad')
+    if (fiatPriceReason(draft.fiat.amount, draft.fiat.currency)) return sayT('item.badFiat', 'bad', { cur: draft.fiat.currency })
   } else if (!Number.isSafeInteger(draft.priceSats) || draft.priceSats < 0) {
     return sayT('item.badPrice', 'bad')
   }
