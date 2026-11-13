@@ -74,6 +74,8 @@ build for a while.
 Two halves. The buyer half is genuinely trivial. The seller half is one bootstrap step and
 then a browser.
 
+Rehearse first: [`docs/dry-run.md`](docs/dry-run.md) walks the seller path on a throwaway key and a test relay, then says how to switch to the real setup.
+
 ### Buyer — ShockWallet, and nothing else
 
 [ShockWallet](https://shockwallet.app) is CLINK's reference wallet (named as such in
