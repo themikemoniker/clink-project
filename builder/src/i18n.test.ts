@@ -816,3 +816,122 @@ test('inventory (#141): #node-input and #node-state carry no text data-i18n, so 
   assert.throws(() => ok(onNodeInput(HTML, 'data-i18n-attr="placeholder"', 'data-i18n-attr="value"')))
   assert.throws(() => ok(HTML.replace('id="node-state"', 'id="node-state" data-i18n="node.none"')))
 })
+
+// #145: the sticker sheet. Each row: key, vars, the exact old English, what es must still show.
+const URL145 = 'https://example.invalid/x'
+const NEW145: [string, Record<string, string>, string, string[]][] = [
+  ['stickers.make', {}, 'Build the sticker sheet', []],
+  ['stickers.print', {}, 'Print it', []],
+  ['stickers.hint', {}, 'One sticker per unsold item, each with the item’s name, its price and a QR that opens that item’s page. Stick them on the things. Somebody scans a mug and lands on the mug, where they can pay for it — a code that pays directly would have to skip the refund address, and your node declines a payment it could not give back.', []],
+  ['stickers.sheet', {}, 'Item stickers', []],
+  ['stickers.encoding', {}, 'Encoding one QR per item…', []],
+  ['stickers.built', {}, 'Sticker sheet built. Press Print.', []],
+  ['stickers.none', {}, 'Nothing to sticker.', []],
+  ['stickers.ready', { n: '3', url: URL145 }, `3 sticker(s) ready, each ≥2cm square. They point at ${URL145} — which is where your storefront will be, so build these AFTER you deploy, or the codes lead nowhere.`, ['3', URL145]],
+  ['stickers.allSold', {}, 'Every item is sold, so there is nothing to sticker.', []],
+]
+const BANNED145 = /relay|nostr|noffer|nsec|signer|hex|QR/i
+
+test('fmt (#145): the sticker texts are word for word in English and plain, filled Spanish', () => {
+  for (const [k, vars, en, shown] of NEW145) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+    assert.ok(!BANNED145.test(es), `${k}: jargon in "${es}"`)
+    for (const v of shown) assert.ok(es.includes(v), `${k}: es drops ${v}: "${es}"`)
+  }
+  assert.deepEqual(missing(NEW145.map(r => r[0])), [])
+  // The build-AFTER-you-deploy warning survives in es, and "Press Print" names the es button.
+  assert.match(STRINGS['stickers.ready']!.es, /DESPUÉS/, 'stickers.ready es lost the build-after warning')
+  assert.ok(STRINGS['stickers.built']!.es.includes(STRINGS['stickers.print']!.es), 'stickers.built es does not name the es Print button')
+})
+
+test('fmt (#145, L1): each blanked es is caught, and the jargon check sees the English QR', () => {
+  for (const [k] of NEW145) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+  for (const k of ['stickers.hint', 'stickers.encoding']) assert.ok(BANNED145.test(STRINGS[k]!.en), k)
+  for (const w of ['relay', 'nostr', 'noffer', 'nsec', 'signer', 'hex', 'QR'])
+    assert.ok(BANNED145.test(`${STRINGS['stickers.hint']!.es} ${w}`), w)
+})
+
+const STICKER_TEXT = ['stickers.make', 'stickers.print', 'stickers.hint']
+const sheetTag = (html: string) => /<section\b[^>]*\bid="sticker-sheet"[^>]*>/.exec(html)?.[0]
+const stickersWired = (html: string) => {
+  for (const k of STICKER_TEXT) {
+    const text = textOf(html, k)
+    assert.ok(text !== undefined, `index.html has no element with data-i18n="${k}"`)
+    assert.ok(!text.includes('<'), `${k}: its element nests markup that applyLang would delete`)
+    assert.equal(text.replace(/\s+/g, ' ').trim(), STRINGS[k]?.en, `${k}: the HTML fallback is not the table's en`)
+  }
+  for (const old of ['Build the sticker sheet', 'Print it', 'One sticker per unsold item', 'pays directly'])
+    assert.ok(!unwired(html).includes(old), `"${old}" is in index.html outside a data-i18n element`)
+  const tag = sheetTag(html)
+  assert.ok(tag, 'no #sticker-sheet')
+  assert.equal(attrOf(tag, 'data-i18n'), 'stickers.sheet', '#sticker-sheet has no data-i18n="stickers.sheet"')
+  assert.equal(attrOf(tag, 'data-i18n-attr'), 'aria-label', '#sticker-sheet: only its aria-label may be translated')
+  assert.equal(attrOf(tag, 'aria-label'), STRINGS['stickers.sheet']?.en, '#sticker-sheet aria-label is not the table en')
+}
+
+test('inventory (#145): both sticker buttons, the hint and the sheet aria-label are wired; en is the old English', () => {
+  stickersWired(HTML)
+})
+
+test('inventory (#145, L1): dropping any one sticker attribute, or nesting the <em> again, is caught', () => {
+  for (const attr of [...STICKER_TEXT, 'stickers.sheet'].map(k => ` data-i18n="${k}"`)) {
+    const broken = HTML.replace(attr, '')
+    assert.notEqual(broken, HTML, `${attr} is not in index.html`)
+    assert.throws(() => stickersWired(broken), attr)
+  }
+  const noAttr = HTML.replace(' data-i18n-attr="aria-label"', '')
+  assert.notEqual(noAttr, HTML)
+  assert.throws(() => stickersWired(noAttr))
+  assert.throws(() => stickersWired(HTML.replace('pays directly would', 'pays <em>directly</em> would')))
+})
+
+// The doStickers lines main.ts must write through the table, and the #stickers-state view the switch re-writes.
+const OLD145 = ['Encoding one QR per item', 'Press Print', 'Nothing to sticker', 'sticker(s) ready', 'Every item is sold']
+const stickersLeft = (src: string) => {
+  const left = OLD145.filter(lit => src.includes(lit))
+  const flow = part(src, 'const doStickers =', '// --- the admin panel')
+  for (const call of ["sayT('stickers.encoding')", "sayT(n ? 'stickers.built' : 'stickers.none', n ? 'ok' : 'bad')",
+    "stickersView = n ? { key: 'stickers.ready', vars: { n: String(n), url } } : { key: 'stickers.allSold', vars: {} }"])
+    if (!flow.includes(call)) left.push(call)
+  if (/\bsay\(|#stickers-state'\)\.textContent/.test(flow)) left.push('doStickers writes plain text')
+  if (!src.includes("$('#stickers-state').textContent = stickersView ? fmt(lang, stickersView.key, stickersView.vars) : ''")) left.push('showStickers')
+  return left
+}
+const SWITCH = "$('#lang-switch').addEventListener('click', () => {"
+const stickersFollow = (src: string, html: string) => {
+  const state = /<[^>]*\bid="stickers-state"[^>]*>/.exec(html)?.[0] ?? ''
+  assert.ok(state && !state.includes('data-i18n'), '#stickers-state has a data-i18n: applyLang would blank it')
+  assert.ok(part(src, SWITCH, '\n})').includes('\n  showStickers()\n'), 'the language switch does not re-write #stickers-state')
+  assert.ok(part(src, 'applyLang(document, lang)\n', SWITCH).includes('showStickers()\n'), 'startup does not show #stickers-state after applyLang')
+}
+
+test('main.ts (#145): doStickers writes through the table, and #stickers-state follows a switch', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(stickersLeft(src), [])
+  stickersFollow(src, HTML)
+})
+
+test('main.ts (#145, L1): each old line put back, and each lost re-write, is caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const backs: [string, string][] = [
+    ["sayT('stickers.encoding')", "say('Encoding one QR per item…')"],
+    ["sayT(n ? 'stickers.built' : 'stickers.none', n ? 'ok' : 'bad')", "say(n ? 'Sticker sheet built. Press Print.' : 'Nothing to sticker.', n ? 'ok' : 'bad')"],
+    ['    showStickers()\n    sayT', "    $('#stickers-state').textContent = 'Every item is sold, so there is nothing to sticker.'\n    sayT"],
+  ]
+  for (const [now, old] of backs) {
+    const broken = src.replace(now, old)
+    assert.notEqual(broken, src, `${now} is not in main.ts`)
+    assert.notDeepEqual(stickersLeft(broken), [], old)
+  }
+  const handler = part(src, SWITCH, '\n})')
+  assert.throws(() => stickersFollow(src.replace(handler, handler.replace('\n  showStickers()', '')), HTML))
+  assert.throws(() => stickersFollow(src.replace('showPhoto()\nshowStickers()\n', 'showPhoto()\n'), HTML))
+  assert.throws(() => stickersFollow(src, HTML.replace('id="stickers-state"', 'id="stickers-state" data-i18n="stickers.allSold"')))
+})

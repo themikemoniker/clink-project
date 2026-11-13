@@ -139,6 +139,16 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'photo.stored': { en: '{sizes} on Blossom.', es: 'Tu foto ya está guardada.' },
   'geo.none':{ en: 'This browser has no geolocation. Type the geohash instead.', es: 'Este navegador no puede saber dónde estás. Escribe el código de tu zona.' },
   'geo.fail': { en: 'Could not read your location: {msg}. Type the geohash instead.', es: 'Tu teléfono no pudo saber dónde estás. Permite la ubicación, o escribe el código de tu zona.' },
+  // #145: the sticker sheet (needs-native-review). `en` is the exact old English; the hint lost its <em>.
+  'stickers.make': { en: 'Build the sticker sheet', es: 'Hacer las etiquetas' },
+  'stickers.print': { en: 'Print it', es: 'Imprimirlas' },
+  'stickers.hint': { en: 'One sticker per unsold item, each with the item’s name, its price and a QR that opens that item’s page. Stick them on the things. Somebody scans a mug and lands on the mug, where they can pay for it — a code that pays directly would have to skip the refund address, and your node declines a payment it could not give back.', es: 'Cada artículo sin vender lleva una etiqueta con su nombre, su precio y un código. Pega cada etiqueta en su cosa. Quien escanea el código llega a la página de ese artículo y lo paga ahí.' },
+  'stickers.sheet': { en: 'Item stickers', es: 'Etiquetas de tus artículos' },
+  'stickers.encoding': { en: 'Encoding one QR per item…', es: 'Haciendo un código por artículo…' },
+  'stickers.built': { en: 'Sticker sheet built. Press Print.', es: 'Tus etiquetas están listas. Presiona Imprimirlas.' },
+  'stickers.none': { en: 'Nothing to sticker.', es: 'No hay nada que etiquetar.' },
+  'stickers.ready': { en: '{n} sticker(s) ready, each ≥2cm square. They point at {url} — which is where your storefront will be, so build these AFTER you deploy, or the codes lead nowhere.', es: '{n} etiqueta(s) lista(s), de al menos 2 cm. Llevan a {url}, donde estará tu tienda. Hazlas DESPUÉS de publicar tu tienda en el paso 7, o los códigos no llevan a ninguna parte.' },
+  'stickers.allSold': { en: 'Every item is sold, so there is nothing to sticker.', es: 'Todo está vendido, así que no hay etiquetas que hacer.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.
