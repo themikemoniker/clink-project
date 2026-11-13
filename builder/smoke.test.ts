@@ -465,6 +465,25 @@ test('the node line is Spanish for none, bad and ok, and the switch keeps the pa
   await context.close()
 })
 
+// #157: the watcher line is Spanish from startup, and the switch keeps a pasted key in both directions.
+test('the watcher line is Spanish for none, bad and ok, and the switch keeps the pasted key', async () => {
+  const { page, errors, context, flip } = await openIn('es-MX')
+  const state = () => page.locator('#watcher-state').textContent()
+  assert.equal(await state(), STRINGS['watcher.none']!.es)
+  await page.locator('#watcher-input').fill('npub1xyz')
+  await page.locator('#watcher-input').dispatchEvent('change')
+  assert.equal(await state(), STRINGS['watcher.bad']!.es)
+  await page.locator('#watcher-input').fill('ab'.repeat(32)) // a fixed fake hex pubkey, not a key
+  await page.locator('#watcher-input').dispatchEvent('change')
+  assert.equal(await state(), 'Ayudante conectado (abababab…). Tu tienda se actualiza sola, sin mover ningún archivo.')
+  await flip()
+  assert.equal(await state(), 'Watcher abababab… Ladders publish encrypted to this key, so no file has to move.')
+  await flip()
+  assert.match((await state())!, /^Ayudante conectado \(abababab…\)/)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
 test('no horizontal scroll at 360 px with the new header, in either language', async () => {
   for (const locale of ['es-MX', 'en-US']) {
     const { page, context } = await openIn(locale)
