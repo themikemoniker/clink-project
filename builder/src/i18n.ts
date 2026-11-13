@@ -99,6 +99,9 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'notes.encrypting': { en: 'Encrypting to your own key…', es: 'Guardando tus notas en secreto…' },
   'notes.saved': { en: 'Notes saved on {ok}/{all} relays. Only your key can read them.', es: 'Notas guardadas en {ok}/{all} servidores. Solo tú puedes leerlas.' },
   'notes.none': { en: 'No relay took your notes. Nothing was lost — press it again.', es: 'Ningún servidor guardó tus notas. No se perdió nada. Presiona otra vez.' },
+  // #184: the Load and Save-notes catches (needs-native-review). `en` is the raw error as before; es never shows {msg}.
+  'items.loadFail': { en: '{msg}', es: 'No se pudo cargar lo que tienes en venta. Revisa tu conexión y presiona otra vez el botón de tus artículos.' },
+  'notes.saveFail': { en: '{msg}', es: 'No se pudieron guardar tus notas. Revisa tu conexión y presiona Guardar otra vez. Tus notas siguen aquí.' },
   'status.disconnected': { en: 'Disconnected.', es: 'Desconectado.' },
   'edit.cancelled': { en: 'Back to a new item. Nothing was changed.', es: 'De vuelta a un artículo nuevo. No se cambió nada.' },
   // #103: the Deploy progress lines. deploy.ts names the key; `en` is the exact English it wrote.
