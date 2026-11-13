@@ -1223,3 +1223,67 @@ test('inventory (#162, L1): a removed data-i18n, a blanked es or jargon in es is
   for (const w of ['geohash', 'geo:', 'relay', 'signer', 'nsec', 'hex', 'kind'])
     assert.ok(BANNED162.test(`${STRINGS['geo.hint']!.es} ${w}`), w)
 })
+
+// #177: the sale-name check and the locate lines. Each row: key, vars, the exact old English.
+const G177 = 'u4pruyd'
+const NEW177: [string, Record<string, string>, string][] = [
+  ['sale.noname', {}, 'Give the sale a name — it is the masthead.'],
+  ['geo.bad', {}, 'That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.'],
+  ['geo.asking', {}, 'Asking your browser where you are…'],
+  ['geo.found', { g: G177 }, `Geohash ${G177} — about 76 metres across. Nothing was sent anywhere; publish the sale to use it.`],
+]
+const BANNED177 = /geohash|relay|nostr|signer|nsec|hex|masthead/i
+
+test('fmt (#177): the sale-name and locate lines are word for word in English and plain, filled Spanish', () => {
+  assert.deepEqual(missing(NEW177.map(r => r[0])), [])
+  for (const [k, vars, en] of NEW177) {
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.notEqual(es, en, `${k}: es is the English text`)
+    assert.ok(!es.includes('{'), `${k}: unfilled slot in "${es}"`)
+    assert.ok(!BANNED177.test(es), `${k}: jargon in "${es}"`)
+  }
+  const found = fmt('es', 'geo.found', { g: G177 })
+  assert.ok(found.includes(G177), 'geo.found es drops the code')
+  assert.match(found, /76 metros/)
+  assert.match(found, /no se envió nada/i)
+  assert.match(STRINGS['geo.bad']!.es, /código de tu zona/)
+  assert.match(STRINGS['geo.bad']!.es, /“Usar mi ubicación”/, 'geo.bad es does not name the button')
+})
+
+test('fmt (#177, L1): each blanked es is caught by missing, each banned word is caught, and so is an unfilled {g}', () => {
+  for (const [k] of NEW177) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+  for (const w of ['geohash', 'relay', 'nostr', 'signer', 'nsec', 'hex', 'masthead'])
+    assert.ok(BANNED177.test(`${STRINGS['geo.found']!.es} ${w}`), w)
+  assert.ok(fmt('es', 'geo.found').includes('{'), 'geo.found es has no {g} slot to fill')
+})
+
+// Each row: key, the sayT call main.ts must hold, the old say( line it replaced, a phrase of that line.
+const CALLS177: [string, string, string, string][] = [
+  ['sale.noname', "sayT('sale.noname', 'bad')", "say('Give the sale a name — it is the masthead.', 'bad')", 'Give the sale a name'],
+  ['geo.bad', "sayT('geo.bad', 'bad')", "say('That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.', 'bad')", 'That is not a geohash'],
+  ['geo.asking', "sayT('geo.asking')", "say('Asking your browser where you are…')", 'Asking your browser'],
+  ['geo.found', "sayT('geo.found', 'ok', { g })", "say(`Geohash ${g} — about 76 metres across. Nothing was sent anywhere; publish the sale to use it.`, 'ok')", 'metres across'],
+]
+const left177 = (src: string) => CALLS177.filter(([, now, , old]) => !src.includes(now) || src.includes(old)).map(r => r[0])
+
+test('main.ts (#177): the four lines go through sayT, so a language switch re-writes them', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(left177(src), [])
+  const sale = part(src, 'const doPublishSale =', 'const locate =')
+  assert.ok(sale.includes("if (!draft.title) return sayT('sale.noname', 'bad')") && sale.includes("return sayT('geo.bad', 'bad')"), 'doPublishSale')
+  const loc = part(src, 'const locate =', '// --- the sticker sheet')
+  assert.ok(loc.includes("sayT('geo.asking')") && loc.includes("sayT('geo.found', 'ok', { g })"), 'locate')
+})
+
+test('main.ts (#177, L1): each old line put back is caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  for (const [k, now, old] of CALLS177) {
+    const broken = src.replace(now, old)
+    assert.notEqual(broken, src, `${k}: ${now} is not in main.ts`)
+    assert.deepEqual(left177(broken), [k])
+  }
+})

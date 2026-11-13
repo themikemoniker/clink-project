@@ -513,12 +513,12 @@ const doPublishSale = async (event: SubmitEvent) => {
   }, lang)
   if (blocked) return say(blocked, 'bad')
   const draft = readSale()
-  if (!draft.title) return say('Give the sale a name — it is the masthead.', 'bad')
+  if (!draft.title) return sayT('sale.noname', 'bad')
   // A geohash the seller typed that is not one. Silently dropping it would publish a sale with no
   // location link and no explanation of why the field they filled in did nothing.
   const typed = $<HTMLInputElement>('#sale-geo').value.trim()
   if (typed && !draft.g) {
-    return say('That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.', 'bad')
+    return sayT('geo.bad', 'bad')
   }
 
   // ITEM 13'S LAST BULLET, and it sits AFTER the quorum gate on purpose. Below quorum the member
@@ -564,14 +564,14 @@ const doPublishSale = async (event: SubmitEvent) => {
 // the browser asks the person, and nothing leaves the machine.
 const locate = () => {
   if (!navigator.geolocation) return sayT('geo.none', 'bad')
-  say('Asking your browser where you are…')
+  sayT('geo.asking')
   navigator.geolocation.getCurrentPosition(
     pos => {
       // 7 characters is ±76 m — the driveway, not the house. Publishing more precision than that
       // to four public relays is a decision nobody asked for.
       const g = geohashOf(pos.coords.latitude, pos.coords.longitude)
       $<HTMLInputElement>('#sale-geo').value = g
-      say(`Geohash ${g} — about 76 metres across. Nothing was sent anywhere; publish the sale to use it.`, 'ok')
+      sayT('geo.found', 'ok', { g })
     },
     err => sayT('geo.fail', 'bad', { msg: err.message }),
     { enableHighAccuracy: false, timeout: 10_000 },
