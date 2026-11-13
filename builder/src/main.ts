@@ -720,7 +720,7 @@ const loadPanel = async (withNotes = true) => {
     showShrink([])
     refreshSaleCost()
     $('#items-state').textContent = ''
-    sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
+    sayT('items.loadFail', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
     $('#refresh-items').toggleAttribute('disabled', !signer)
   }
@@ -771,7 +771,7 @@ const doSaveNotes = async () => {
     if (ok === 0) { sayT('notes.none', 'bad'); return }
     sayT('notes.saved', 'ok', { ok: String(ok), all: String(RELAYS.length) })
   } catch (err) {
-    sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
+    sayT('notes.saveFail', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
     $('#save-notes').toggleAttribute('disabled', !signer)
   }

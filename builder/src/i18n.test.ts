@@ -438,7 +438,7 @@ test('main.ts (#126): none of the old English is inside a say( call, and each ke
   const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
   assert.deepEqual(sayLeft(src), [])
   for (const [k] of NEW126) assert.ok(src.includes(`sayT('${k}'`), `main.ts never calls sayT('${k}'`)
-  assert.equal([...src.matchAll(/sayT\('err\.generic', 'bad', \{ msg: err instanceof Error \? err\.message : String\(err\) \}\)/g)].length, 6) // #126's three, plus #158's sticker, photo and deploy
+  assert.equal([...src.matchAll(/sayT\('err\.generic', 'bad', \{ msg: err instanceof Error \? err\.message : String\(err\) \}\)/g)].length, 4) // #126's item catch, plus #158's sticker, photo and deploy (#184 keyed Load and Save notes)
   const notes = src.slice(src.indexOf('const doSaveNotes ='), src.indexOf('// --- photos'))
   assert.ok(notes.includes("if (ok === 0) { sayT('notes.none', 'bad'); return }"), 'the no-server notes case still throws')
   assert.ok(!/say\(err instanceof Error/.test(notes), 'doSaveNotes still prints err.message itself')
@@ -700,6 +700,62 @@ test('main.ts (#158, L1): each old line put back is caught', () => {
     assert.notEqual(broken, src, `${name}: ${now} is not in main.ts`)
     assert.deepEqual(untranslated158(broken), [name])
   }
+})
+
+// #184: the Load and Save-notes catches get their own sentence. English stays the raw error.
+const NEW184 = ['items.loadFail', 'notes.saveFail']
+
+test('fmt (#184): Load and Save-notes failures keep English and say what failed in plain Spanish', () => {
+  assert.deepEqual(missing(NEW184), [])
+  for (const k of NEW184) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, { msg: 'boom' }), 'boom', `${k}: English changed`)
+    const es = STRINGS[k]!.es
+    assert.ok(es.trim(), `${k}: no es`)
+    assert.ok(!es.includes('{'), `${k}: es has a slot`)
+    assert.deepEqual(jargon158(es), [], `${k}: jargon in "${es}"`)
+    assert.notEqual(es, STRINGS['err.generic']!.es, `${k}: es is the generic line`)
+    assert.ok(!fmt('es', k, { msg: 'boom' }).includes('boom'), `${k}: es shows the raw message`)
+  }
+  assert.match(STRINGS['items.loadFail']!.es, /artículos/, 'items.loadFail es does not name the items')
+  assert.match(STRINGS['notes.saveFail']!.es, /notas/, 'notes.saveFail es does not name the notes')
+})
+
+test('fmt (#184, L1): each blanked es is caught by missing', () => {
+  for (const k of NEW184) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+})
+
+const FLOWS184: [string, string, string, string][] = [
+  ['loadPanel', 'items.loadFail', 'const loadPanel =', 'const editItem ='],
+  ['doSaveNotes', 'notes.saveFail', 'const doSaveNotes =', '// --- photos'],
+]
+const generic184 = (src: string) => FLOWS184.filter(([, key, from, to]) => {
+  const c = catchPart(part(src, from, to))
+  return !c.includes(`sayT('${key}', 'bad', { msg: err instanceof Error ? err.message : String(err) })`) || c.includes("sayT('err.generic'")
+}).map(([name]) => name)
+
+test('main.ts (#184): the Load and Save-notes catches write their own key, not err.generic', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(generic184(src), [])
+  const load = catchPart(part(src, 'const loadPanel =', 'const editItem ='))
+  for (const reset of ['panelLoaded = false', 'answered = []', 'saleMembers = []', 'showShrink([])', 'refreshSaleCost()', "$('#items-state').textContent = ''"])
+    assert.ok(load.includes(reset), `loadPanel catch lost ${reset}`)
+})
+
+test('main.ts (#184, L1): the old err.generic line put back in either catch is caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  let both = src
+  for (const [name, key] of FLOWS184) {
+    const now = `sayT('${key}', 'bad'`
+    const broken = src.replace(now, "sayT('err.generic', 'bad'")
+    assert.notEqual(broken, src, `${name}: ${now} is not in main.ts`)
+    assert.deepEqual(generic184(broken), [name])
+    both = both.replace(now, "sayT('err.generic', 'bad'")
+  }
+  assert.deepEqual(generic184(both), ['loadPanel', 'doSaveNotes'])
 })
 
 // A fake signer: a fixed fake pubkey and a zero signature, so the storefront's parser rejects
