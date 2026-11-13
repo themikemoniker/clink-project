@@ -161,6 +161,11 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'geo.optional': { en: 'optional; makes the neighbourhood tappable', es: 'opcional; así tu comprador abre tu zona en su mapa' },
   'geo.locate': { en: 'Use my location', es: 'Usar mi ubicación' },
   'geo.hint': { en: 'Your storefront turns this into a geo: link, which your buyer’s phone hands to whatever map app it already has — no map is loaded from anybody’s server, and nothing of ours learns that they looked. “Use my location” reads the browser’s own geolocation and rounds it to about 76 metres. Leave it empty and the neighbourhood is just text.', es: 'El teléfono de tu comprador lo abre en la app de mapas que ya tiene. No se envía nada a nadie. “Usar mi ubicación” lo redondea a unos 76 metros. Si lo dejas vacío, tu zona queda solo como texto.' },
+  // #177: the sale form's name check and the locate lines (needs-native-review). `en` is the exact old English.
+  'sale.noname': { en: 'Give the sale a name — it is the masthead.', es: 'Ponle un nombre a tu venta. Va arriba de tu página.' },
+  'geo.bad': { en: 'That is not a geohash. Geohashes use 0-9 and b-z without a, i, l or o — or press “Use my location”.', es: 'Ese código de tu zona no sirve. Presiona “Usar mi ubicación”, o escribe solo números y letras de la b a la z, sin i, l ni o.' },
+  'geo.asking': { en: 'Asking your browser where you are…', es: 'Buscando dónde estás…' },
+  'geo.found': { en: 'Geohash {g} — about 76 metres across. Nothing was sent anywhere; publish the sale to use it.', es: 'El código de tu zona es {g}. Cubre unos 76 metros. Aún no se envió nada; publica tu venta para usarlo.' },
   // #145: the sticker sheet (needs-native-review). `en` is the exact old English; the hint lost its <em>.
   'stickers.make': { en: 'Build the sticker sheet', es: 'Hacer las etiquetas' },
   'stickers.print': { en: 'Print it', es: 'Imprimirlas' },
