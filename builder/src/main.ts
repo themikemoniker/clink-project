@@ -462,12 +462,12 @@ const refreshSaleCost = () => {
     items: n,
     answered: answered.length,
     relays: RELAYS.length,
-  })
+  }, lang)
   $('#publish-sale').toggleAttribute('disabled', !!reason || salePending)
   // SHOW THE COUNT — item 13's second bullet. The seller is about to replace their whole
   // collection with these N items, and until now the number was only inferable from the list.
   $('#sale-cost').textContent = reason
-    ? `Cannot publish yet: ${reason}`
+    ? fmt(lang, 'sale.cannot', { reason })
     : saleCost(lang, // the switch handler below re-draws this
       { n, answered: answered.length, relays: RELAYS.length })
 }
@@ -513,7 +513,7 @@ const doPublishSale = async (event: SubmitEvent) => {
     items: owned.length,
     answered: answered.length,
     relays: RELAYS.length,
-  })
+  }, lang)
   if (blocked) return say(blocked, 'bad')
   const draft = readSale()
   if (!draft.title) return say('Give the sale a name — it is the masthead.', 'bad')
