@@ -130,6 +130,10 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'sale.no.empty': { en: 'No items came back from the relays. Publishing now would replace your sale with an empty one.', es: 'No llegó ningún artículo de los servidores. Si publicas ahora, tu venta quedaría vacía.' },
   'sale.no.quorum': { en: 'Only {answered} of {relays} relays answered, so this list may be short. Press “Reload my items”.', es: 'Solo {answered} de {relays} servidores respondieron. Puede faltar algo. Presiona “Volver a cargar mis artículos”.' },
   'sale.cannot': { en: 'Cannot publish yet: {reason}', es: 'Aún no se puede publicar: {reason}' },
+  // #158: photo and location failures (needs-native-review). `en` is the exact old English; es never shows {msg}.
+  'photo.noServer': { en: 'No Blossom server accepted the photo. The listing can still publish without one.', es: 'No se pudo guardar la foto. Puedes publicar el artículo sin foto, o intentarlo más tarde.' },
+  'geo.none': { en: 'This browser has no geolocation. Type the geohash instead.', es: 'Este navegador no puede saber dónde estás. Escribe el código de tu zona.' },
+  'geo.fail': { en: 'Could not read your location: {msg}. Type the geohash instead.', es: 'Tu teléfono no pudo saber dónde estás. Permite la ubicación, o escribe el código de tu zona.' },
 }
 
 // The keys with no non-empty `es`. The inventory test (G1.1) fails on any of these.
