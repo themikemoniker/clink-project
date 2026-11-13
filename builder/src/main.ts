@@ -906,8 +906,8 @@ $('#lang-switch').addEventListener('click', () => {
   if (shown) sayT(shown.key, shown.tone, shown.vars)
   if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
   showEdit()
-  showNode()
   showPhoto()
+  showNode()
   refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
