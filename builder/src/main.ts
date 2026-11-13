@@ -587,15 +587,14 @@ const doStickers = async () => {
   if (!signer) return
   try {
     $('#make-stickers').toggleAttribute('disabled', true)
-    say('Encoding one QR per item…')
+    sayT('stickers.encoding')
     const url = siteUrl(await signer.getPublicKey(), gateway())
     const n = await buildSheet($('#sticker-sheet'), items, url)
     $('#sticker-sheet').hidden = n === 0
     $('#print-stickers').hidden = n === 0
-    $('#stickers-state').textContent = n
-      ? `${n} sticker(s) ready, each ≥2cm square. They point at ${url} — which is where your storefront will be, so build these AFTER you deploy, or the codes lead nowhere.`
-      : 'Every item is sold, so there is nothing to sticker.'
-    say(n ? 'Sticker sheet built. Press Print.' : 'Nothing to sticker.', n ? 'ok' : 'bad')
+    stickersView = n ? { key: 'stickers.ready', vars: { n: String(n), url } } : { key: 'stickers.allSold', vars: {} }
+    showStickers()
+    sayT(n ? 'stickers.built' : 'stickers.none', n ? 'ok' : 'bad')
   } catch (err) {
     err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
   } finally {
@@ -893,6 +892,10 @@ const showNode = () => { $('#node-state').textContent = fmt(lang, nodeView.key, 
 // null is the default hint; `resetItem` puts it back. Shown after applyLang below.
 let photoView: PhotoView = null
 const showPhoto = () => { $('#photo-state').textContent = photoState(lang, photoView) }
+// #145: what #stickers-state says, so a switch re-writes it. No data-i18n, same reason as #node-state.
+// null is empty; only doStickers sets it (nothing clears the sheet). Shown after applyLang below.
+let stickersView: { key: string; vars: Record<string, string> } | null = null
+const showStickers = () => { $('#stickers-state').textContent = stickersView ? fmt(lang, stickersView.key, stickersView.vars) : '' }
 const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) => {
   say(fmt(lang, key, vars), tone) // `lang` read now, not captured
   shown = { key, tone, vars }
@@ -900,6 +903,7 @@ const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) =
 applyLang(document, lang)
 showNode()
 showPhoto()
+showStickers()
 $('#lang-switch').addEventListener('click', () => {
   lang = lang === 'es' ? 'en' : 'es'
   keep(LANG_KEY, lang)
@@ -907,6 +911,7 @@ $('#lang-switch').addEventListener('click', () => {
   if (shown) sayT(shown.key, shown.tone, shown.vars)
   if (who && signer) $('#whoami').textContent = fmt(lang, 'whoami', who)
   showEdit()
+  showStickers()
   showPhoto()
   showNode()
   refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish

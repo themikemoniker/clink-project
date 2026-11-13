@@ -235,13 +235,13 @@
         <div id="stickers-wrap" hidden>
           <p class="cost" id="stickers-cost"></p>
           <div class="row">
-            <button type="button" id="make-stickers">Build the sticker sheet</button>
-            <button type="button" id="print-stickers" hidden>Print it</button>
+            <button type="button" id="make-stickers" data-i18n="stickers.make">Build the sticker sheet</button>
+            <button type="button" id="print-stickers" hidden data-i18n="stickers.print">Print it</button>
           </div>
-          <p class="hint">
+          <p class="hint" data-i18n="stickers.hint">
             One sticker per unsold item, each with the item’s name, its price and a QR that opens
             that item’s page. Stick them on the things. Somebody scans a mug and lands on the mug,
-            where they can pay for it — a code that pays <em>directly</em> would have to skip the
+            where they can pay for it — a code that pays directly would have to skip the
             refund address, and your node declines a payment it could not give back.
           </p>
           <p class="hint" id="stickers-state"></p>
@@ -306,7 +306,7 @@
     </main>
     <!-- The sticker sheet. Empty and hidden until the seller builds it; the only thing that
          prints, because @media print hides <main> outright. design.md §4. -->
-    <section id="sticker-sheet" hidden aria-label="Item stickers"></section>
+    <section id="sticker-sheet" hidden aria-label="Item stickers" data-i18n="stickers.sheet" data-i18n-attr="aria-label"></section>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
