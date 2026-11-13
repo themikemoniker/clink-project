@@ -68,6 +68,8 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'stickers.cost': { en: '0 signatures. {n} unsold item(s) get a sticker; sold ones do not, because the thing is gone.', es: 'No tienes que aprobar nada. {n} artículo(s) sin vender llevan etiqueta. Los vendidos no, porque ya no están.' },
   'notes.cost': { en: '1 signature, however many notes you changed — they are one encrypted event, not one each.', es: 'Lo apruebas una sola vez, aunque cambies muchas notas. Se guardan todas juntas.' },
   'deployed.live': { en: 'Your sale is live at', es: 'Tu venta ya está en línea en' },
+  // #168: the Deploy button. Plain Spanish, needs-native-review.
+  'deploy.btn': { en: 'Deploy my storefront', es: 'Publicar mi tienda en línea' },
   // #106: the edit-an-item flow. `edit.*` hold {title} or {d}, so they never sit on a data-i18n node.
   'item.publish': { en: 'Publish this item', es: 'Publicar este artículo' },
   'item.edit': { en: 'Edit', es: 'Cambiar' },

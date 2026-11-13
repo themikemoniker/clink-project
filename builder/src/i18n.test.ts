@@ -40,7 +40,9 @@ const WIRED: Record<string, string> = { 'shrink.hint': 'publishing this list', '
   // #74: panel 7's fixed words, in a span outside the link
   'deployed.live': 'Your sale is live at',
   // #125: panel 5's warning about sale amounts
-  'sales.note': 'What is not here is what each sale' }
+  'sales.note': 'What is not here is what each sale',
+  // #168: panel 7's Deploy button
+  'deploy.btn': 'Deploy my storefront' }
 const element = (keyPattern: string, flags = '') =>
   new RegExp(`<(\\w+)\\b[^>]*\\bdata-i18n="${keyPattern}"[^>]*>([\\s\\S]*?)</\\1>`, flags)
 const textOf = (html: string, key: string) => element(key.replaceAll('.', '\\.')).exec(html)?.[2]
@@ -80,6 +82,22 @@ test('inventory (#60, L1): removing any one of panel 5\'s data-i18n attributes i
     assert.equal(textOf(broken, k), undefined)
     assert.ok(unwired(broken).includes(WIRED[k]!), `${k}: its English is not seen once unwired`)
   }
+})
+
+// #168: the Deploy button follows the language switch, in plain Spanish.
+test('deploy.btn (#168): wired, plain Spanish, and each check can go red', () => {
+  const es = fmt('es', 'deploy.btn')
+  assert.ok(es.trim(), 'deploy.btn: no es')
+  assert.notEqual(es, fmt('en', 'deploy.btn'), 'deploy.btn: es is the English text')
+  assert.doesNotMatch(es, /deploy|relay|blossom|manifest|nsec/i)
+  assert.equal(textOf(HTML, 'deploy.btn'), 'Deploy my storefront')
+  // L1: the button with its data-i18n removed is caught, and so is a blank es.
+  const broken = HTML.replace(' data-i18n="deploy.btn"', '')
+  assert.notEqual(broken, HTML)
+  assert.equal(textOf(broken, 'deploy.btn'), undefined)
+  assert.ok(unwired(broken).includes('Deploy my storefront'))
+  const blank = { ...STRINGS, 'deploy.btn': { en: STRINGS['deploy.btn']!.en, es: '' } }
+  assert.deepEqual(missing(Object.keys(blank), blank), ['deploy.btn'])
 })
 
 // #125: the sales-note Spanish says why amounts are missing with no protocol, call, command or path.
