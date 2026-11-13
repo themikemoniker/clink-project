@@ -37,7 +37,9 @@ const WIRED: Record<string, string> = { 'shrink.hint': 'publishing this list', '
   'panel5.h': 'Your sale so far', 'panel5.hint': 'straight off the public relays', 'items.load': 'Load my items',
   'notes.save': 'Save my private notes', 'notes.hint': 'encrypted to your own key',
   // #74: panel 7's fixed words, in a span outside the link
-  'deployed.live': 'Your sale is live at' }
+  'deployed.live': 'Your sale is live at',
+  // #125: panel 5's warning about sale amounts
+  'sales.note': 'What is not here is what each sale' }
 const element = (keyPattern: string, flags = '') =>
   new RegExp(`<(\\w+)\\b[^>]*\\bdata-i18n="${keyPattern}"[^>]*>([\\s\\S]*?)</\\1>`, flags)
 const textOf = (html: string, key: string) => element(key.replaceAll('.', '\\.')).exec(html)?.[2]
@@ -60,12 +62,26 @@ test('inventory (#55, L1): the check sees a tick-box span with its data-i18n rem
 })
 
 test('inventory (#60, L1): removing any one of panel 5\'s data-i18n attributes is caught', () => {
-  for (const k of ['panel5.h', 'panel5.hint', 'items.load', 'notes.save', 'notes.hint']) {
+  for (const k of ['panel5.h', 'panel5.hint', 'items.load', 'notes.save', 'notes.hint', 'sales.note']) {
     const broken = HTML.replace(` data-i18n="${k}"`, '')
     assert.notEqual(broken, HTML, `${k} is not in index.html`)
     assert.equal(textOf(broken, k), undefined)
     assert.ok(unwired(broken).includes(WIRED[k]!), `${k}: its English is not seen once unwired`)
   }
+})
+
+// #125: the sales-note Spanish says why amounts are missing with no protocol, call, command or path.
+const BANNED125 = /clink|manage|getuseroffer|\bnod[eo]s?\b|relay|signer|nsec|hex|spike\/|\.ts\b|\//i
+test('sales.note (#125): plain Spanish, no protocol, call, command or file path', () => {
+  const v = STRINGS['sales.note']
+  assert.ok(v, 'sales.note is not in STRINGS')
+  assert.ok(v.es.trim(), 'sales.note: no es')
+  assert.notEqual(v.es, v.en, 'sales.note: es is the English text')
+  assert.ok(!BANNED125.test(v.es), `sales.note: jargon in "${v.es}"`)
+  // L1: the check goes red on the English, and on each banned word dropped into plain Spanish.
+  assert.ok(BANNED125.test(v.en))
+  for (const w of ['CLINK', 'Manage', 'GetUserOfferInvoices', 'node', 'nodo', 'relay', 'signer', 'nsec', 'hex', 'node spike/x.ts', 'a/b'])
+    assert.ok(BANNED125.test(`Abre el reporte ${w} ahora.`), w)
 })
 
 test('main.ts (#60): "Reload my items" comes from the table, so a language switch keeps it', () => {
