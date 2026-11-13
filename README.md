@@ -124,11 +124,29 @@ non-negotiable (rule 2), and it has one hard consequence:
 CLINK Manage cannot bootstrap its own grant — `validateGrantAccess` needs a grant row for
 every requestor, the owner included, and the only RPC that creates one is `AuthorizeManage`,
 which is kind 21000. So exactly one call in the whole seller path needs the raw key, once, at
-the desk:
+the desk.
+
+That call reads a secret key file in `spike/`. A new seller makes one first. It writes a fresh
+key to `spike/.my-key` (chmod 600, gitignored), prints only its npub, and refuses to overwrite a
+key that already exists:
 
 ```bash
 cd spike
-node authorize-manage.ts                          # your own node, default key
+node new-key.ts                                   # or: node new-key.ts .shop-key
+```
+
+`spike/.dev-key` is the author's fixture seller, created by `seed-listings.ts` while it publishes
+the demo yard sale to public relays. You need neither. One caveat: refund arming
+(`authorize-refunds.ts`, below) still needs `.dev-key`.
+
+`--nprofile` is the node's pairing string. Its default, `~/lightning_pub/app.nprofile`, exists
+only on the node operator's machine, so on your own node the default is right. On someone else's
+Pub, pass the `nprofile1…` string the operator gave you. The output lands in
+`spike/<key>.nmanage`, e.g. `spike/.my-key.nmanage`:
+
+```bash
+cd spike
+node authorize-manage.ts --key .my-key            # your own node, default --nprofile
 node authorize-manage.ts --key .my-key --nprofile nprofile1…   # a guest account on someone else's Pub
 ```
 
