@@ -935,3 +935,68 @@ test('main.ts (#145, L1): each old line put back, and each lost re-write, is cau
   assert.throws(() => stickersFollow(src.replace('showPhoto()\nshowStickers()\n', 'showPhoto()\n'), HTML))
   assert.throws(() => stickersFollow(src, HTML.replace('id="stickers-state"', 'id="stickers-state" data-i18n="stickers.allSold"')))
 })
+
+// #146: the upload lines in onPhoto. Fixed fake numbers only. Each row: key, vars, the exact old English.
+const NEW146: [string, Record<string, string>, string][] = [
+  ['photo.needSigner', {}, 'Connect a signer first — each upload needs a signed authorisation.'],
+  ['photo.resizing', {}, 'Resizing…'],
+  ['photo.uploading', { n: '3', servers: '2' }, 'Uploading 3 sizes to 2 server…'],
+  ['photo.progress', { done: '4', total: '6' }, 'Uploading 4/6…'],
+  ['photo.done', { n: '3' }, 'Photo stored at 3 size(s).'],
+]
+const BANNED146 = /blossom|signer|firma[dr]a|autoriza|servidor|server|tamaño|\bpx\b|\{/i
+
+test('fmt (#146): the upload lines are word for word in English and plain, filled Spanish', () => {
+  assert.deepEqual(missing(NEW146.map(r => r[0])), [])
+  for (const [k, vars, en] of NEW146) {
+    assert.ok(k in STRINGS, `${k} is not in STRINGS`)
+    assert.equal(fmt('en', k, vars), en, `${k}: English changed`)
+    const es = fmt('es', k, vars)
+    assert.ok(STRINGS[k]!.es.trim() && es !== en, `${k}: es is empty or the English text`)
+    assert.ok(!BANNED146.test(es), `${k}: jargon or an unfilled slot in "${es}"`)
+  }
+  assert.ok(!fmt('es', 'photo.uploading', { n: '3', servers: '2' }).includes('{'))
+  assert.ok(!/\d/.test(fmt('es', 'photo.done', { n: '3' })), 'photo.done es prints a size count')
+  assert.match(fmt('es', 'photo.progress', { done: '4', total: '6' }), /4 de 6/, 'photo.progress es drops the count')
+  assert.ok(STRINGS['photo.needSigner']!.es.includes(STRINGS['s1.h']!.es.replace(/^1 · Tu /, '')), 'photo.needSigner es does not name step 1')
+})
+
+test('fmt (#146, L1): each blanked es is caught, and the jargon check sees each English line', () => {
+  for (const [k] of NEW146) {
+    const broken = { ...STRINGS, [k]: { en: STRINGS[k]!.en, es: '' } }
+    assert.deepEqual(missing(Object.keys(broken), broken), [k])
+  }
+  for (const k of ['photo.needSigner', 'photo.uploading', 'photo.progress']) assert.ok(BANNED146.test(STRINGS[k]!.en), k)
+  for (const w of ['Blossom', 'signer', 'servidor', 'tamaños']) assert.ok(BANNED146.test(`${STRINGS['photo.done']!.es} ${w}`), w)
+})
+
+const OLD146 = ['Connect a signer first — each upload', 'Resizing…', 'sizes to ', 'Uploading ${done}', 'Photo stored at ']
+const CALLS146 = ["sayT('photo.needSigner', 'bad')", "sayT('photo.resizing')",
+  "sayT('photo.uploading', 'busy', { n: String(rendered.length), servers: String(BLOSSOM.length) })",
+  "sayT('photo.progress', 'busy', { done: String(done), total: String(total) })",
+  "sayT('photo.done', 'ok', { n: String(blobs.length) })"]
+const photoLeft = (src: string) => {
+  const flow = part(src, 'const onPhoto =', '// --- deploy')
+  const left = OLD146.filter(lit => flow.includes(lit))
+  for (const call of CALLS146) if (!flow.includes(call)) left.push(call)
+  if (/\bsay\(/.test(flow)) left.push('onPhoto writes plain text')
+  return left
+}
+
+test('main.ts (#146): onPhoto writes each upload line through sayT', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(photoLeft(src), [])
+})
+
+test('main.ts (#146, L1): each old say( line put back is caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const olds = ["say('Connect a signer first — each upload needs a signed authorisation.', 'bad')", "say('Resizing…')",
+    'say(`Uploading ${rendered.length} sizes to ${BLOSSOM.length} server…`)', 'say(`Uploading ${done}/${total}…`)',
+    "say(`Photo stored at ${blobs.length} size(s).`, 'ok')"]
+  CALLS146.forEach((now, i) => {
+    const broken = src.replace(now, olds[i]!)
+    assert.notEqual(broken, src, `${now} is not in main.ts`)
+    const left = photoLeft(broken)
+    assert.ok(left.includes(now) && left.includes('onPhoto writes plain text'), olds[i]!)
+  })
+})

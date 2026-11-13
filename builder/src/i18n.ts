@@ -137,6 +137,12 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'photo.none': { en: 'No photo on this item yet.', es: 'Este artículo todavía no tiene foto.' },
   'photo.have': { en: '{sizes} already on Blossom. Leave the file field empty to keep them.', es: 'Este artículo ya tiene foto. Deja vacío el campo para conservarla.' },
   'photo.stored': { en: '{sizes} on Blossom.', es: 'Tu foto ya está guardada.' },
+  // #146: the upload lines in onPhoto. `en` is the exact old English; es names no server, size count or signer.
+  'photo.needSigner': { en: 'Connect a signer first — each upload needs a signed authorisation.', es: 'Primero conecta tu app de firma en el paso 1.' },
+  'photo.resizing': { en: 'Resizing…', es: 'Haciendo tu foto más chica…' },
+  'photo.uploading': { en: 'Uploading {n} sizes to {servers} server…', es: 'Subiendo tu foto…' },
+  'photo.progress': { en: 'Uploading {done}/{total}…', es: 'Subiendo tu foto: {done} de {total}…' },
+  'photo.done': { en: 'Photo stored at {n} size(s).', es: 'Tu foto ya está guardada.' },
   'geo.none':{ en: 'This browser has no geolocation. Type the geohash instead.', es: 'Este navegador no puede saber dónde estás. Escribe el código de tu zona.' },
   'geo.fail': { en: 'Could not read your location: {msg}. Type the geohash instead.', es: 'Tu teléfono no pudo saber dónde estás. Permite la ubicación, o escribe el código de tu zona.' },
   // #145: the sticker sheet (needs-native-review). `en` is the exact old English; the hint lost its <em>.

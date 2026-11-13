@@ -795,19 +795,19 @@ const doSaveNotes = async () => {
 const onPhoto = async (input: HTMLInputElement) => {
   const file = input.files?.[0]
   if (!file) return
-  if (!signer) return say('Connect a signer first — each upload needs a signed authorisation.', 'bad')
+  if (!signer) return sayT('photo.needSigner', 'bad')
   try {
-    say('Resizing…')
+    sayT('photo.resizing')
     const rendered = await resize(file)
-    say(`Uploading ${rendered.length} sizes to ${BLOSSOM.length} server…`)
-    const uploaded = await upload(signer, rendered, (done, total) => say(`Uploading ${done}/${total}…`))
+    sayT('photo.uploading', 'busy', { n: String(rendered.length), servers: String(BLOSSOM.length) })
+    const uploaded = await upload(signer, rendered, (done, total) => sayT('photo.progress', 'busy', { done: String(done), total: String(total) }))
     const { blobs } = uploaded
     if (blobs.length === 0) throw new PublishError('No Blossom server accepted the photo. The listing can still publish without one.', 'photo.noServer')
     photos = blobs
     servers = uploaded.servers
     uploads = blobs.length
     photoView = { kind: 'stored', widths: blobs.map(b => b.w) }; showPhoto()
-    say(`Photo stored at ${blobs.length} size(s).`, 'ok')
+    sayT('photo.done', 'ok', { n: String(blobs.length) })
     refreshCost()
   } catch (err) {
     err instanceof PublishError ? sayT(err.key, 'bad', err.vars) : sayT('err.generic', 'bad', { msg: err instanceof Error ? err.message : String(err) })
