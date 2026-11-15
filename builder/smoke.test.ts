@@ -357,7 +357,7 @@ test('a fiat price may have a fractional part, because a peso is not a sat', asy
 // --- G1.1 and G1.2: the front door in the seller's language -----------------------------------
 // `locale` sets navigator.language. `blocked` makes reading window.localStorage throw, as Chrome
 // does when site data is blocked, for the WHOLE real startup (L14). `init` runs before load, too.
-import { STRINGS } from './src/i18n.ts'
+import { STRINGS, fmt } from './src/i18n.ts'
 const openIn = async (locale: string, blocked = false, init?: () => void) => {
   const context = await browser.newContext({ locale, viewport: { width: 360, height: 640 } })
   const throws = () => Object.defineProperty(window, 'localStorage', { get: () => { throw new DOMException('blocked', 'SecurityError') } })
@@ -477,6 +477,32 @@ test('with storage blocked, connecting a NIP-07 signer still signs in and starts
   await page.waitForFunction(r => ((window as { seen?: string[] }).seen ?? []).includes(r), reading, { timeout: 5_000 })
   assert.equal(await page.locator('#signed-in').isVisible(), true)
   assert.equal(await page.locator('#connect').isHidden(), true)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
+// #213 (G1.2): after sign-in the #lang-switch handler re-writes #whoami from `who`. Spanish shows only
+// the short key, English `{label} — {key}`. Same fixed fake pubkey as above; no key is made.
+test('the signed-in name and its label follow the language switch both ways', async () => {
+  const { page, errors, context, flip } = await openIn('es-MX', false, () => {
+    const ok = (v: unknown) => () => Promise.resolve(v)
+    Object.assign(window, { nostr: { getPublicKey: ok('ab'.repeat(32)), signEvent: (e: unknown) => Promise.resolve(e),
+      nip44: { encrypt: ok('fake-ciphertext'), decrypt: ok('fake-plaintext') } } })
+  })
+  const as = STRINGS['s1.as'], hex = 'ab'.repeat(32), key = `${hex.slice(0, 8)}…${hex.slice(-8)}`
+  assert.ok(as?.es && as.en, 's1.as is missing a language')
+  const whoami = () => page.locator('#whoami').textContent(), asText = () => page.locator('[data-i18n="s1.as"]').textContent()
+  await page.locator('#nip07').click()
+  await page.waitForFunction(() => /abababab/.test(document.querySelector('#whoami')!.textContent ?? ''), null, { timeout: 5_000 })
+  assert.equal(await whoami(), key)
+  assert.equal(await asText(), as.es)
+  await flip()
+  // The label is the literal in builder/src/signer.ts (connectNip07); it is not in the string table.
+  assert.equal(await whoami(), fmt('en', 'whoami', { label: 'NIP-07 extension', key }))
+  assert.equal(await asText(), as.en)
+  await flip()
+  assert.equal(await whoami(), key)
+  assert.equal(await asText(), as.es)
   assert.deepEqual(errors, [])
   await context.close()
 })
