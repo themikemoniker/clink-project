@@ -463,7 +463,7 @@ command and one restore procedure.
 - ⚑ **STILL OPEN, and this PR cannot close it.** `spike/.dev-key`'s backup is on **one machine**.
   Getting a copy off it is a human step with a second device — an encrypted stick or a hardware
   password manager, verified there. Named in the runbook and in the demo-day checklist.
-- The `.builder-key` half is why item 26 exists. Noted, not decided here.
+- The `.builder-key` half is why item 26 exists. Decided: the builder keeps `.builder-key`, recorded in the runbook's "Item 26: decision" section (`docs/runbook.md`).
 
 **~~24. The only tool that reports money is hardcoded to one seller~~ — CLOSED 2026-08-23
 (`ac87512`), before this milestone's PR.** `spike/sales-report.ts:56` is `arg('key', '.dev-key')`,

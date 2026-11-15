@@ -150,6 +150,21 @@ backup is actually for.
 the first time `watch-sales.ts --refunds` writes a row, and from that moment it is the most
 irreplaceable file in the project.
 
+### Item 26: decision
+
+**Recorded 2026-11-15: the builder keeps the throwaway key it is deployed under, `spike/.builder-key`.**
+Nothing was moved. Three reasons:
+
+- A kind 15128 root site is one per pubkey (`5A.md:16`, findings §13.22). Moving the builder to a
+  new key means a new nsite URL.
+- The seller's key cannot be reused for the builder. The two sites would replace each other, and
+  the builder is not the seller's site (findings §13.22, `/CLAUDE.md` rule 5).
+- The key holds no funds. The "Gone forever" row above already says that is the only reason its
+  loss is survivable.
+
+Revisit only if Jordan wants a permanent or vanity builder URL. That moves a key, so it is
+Jordan's call, not the lab's, and it costs a new builder URL: every printed QR pins the old one.
+
 ### Back up
 
 One archive, every load-bearing file, `chmod 600`. It contains four private keys, so it is
