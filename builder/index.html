@@ -111,11 +111,11 @@
             <button type="button" id="sale-locate" data-i18n="geo.locate">Use my location</button>
           </div>
           <p class="hint" id="sale-geo-state" data-i18n="geo.hint">
-            Your storefront turns this into a geo: link, which your buyer’s phone
-            hands to whatever map app it already has — no map is loaded from anybody’s server, and
-            nothing of ours learns that they looked. “Use my location” reads the browser’s own
-            geolocation and rounds it to about 76 metres. Leave it empty and the neighbourhood
-            is just text.
+            Your storefront turns this into a geo: link
+            that opens your buyer’s own map app.
+            “Use my location” rounds it
+            to about 76 metres;
+            leave it empty for plain text.
           </p>
 
           <!-- Item 13's last bullet. Hidden until a publish would actually drop a member, and
@@ -124,11 +124,11 @@
             <p class="warn" id="sale-shrink-what"></p>
             <ul id="sale-shrink-list"></ul>
             <p class="hint" data-i18n="shrink.hint">
-              A kind 30405 is a replacement: publishing this list is what un-lists
-              the rest, because nostr has no “remove one item” event. Un-listing is not deleting —
-              those listings stay on the relays and your storefront still draws them, at the foot
-              of the page and out of the sale’s order. And this is exactly what deliberately
-              retiring an item looks like, which is why nobody can tell the two apart for you.
+              This list is a replacement:
+              publishing this list un-lists the rest.
+              Un-listing is not deleting:
+              your storefront still shows them,
+              at the foot of the page.
             </p>
             <label class="row" for="sale-shrink-ok">
               <input type="checkbox" id="sale-shrink-ok" />
@@ -187,10 +187,10 @@
             leaving the node field empty: it lists, it just has no Buy button.
           </p>
           <p class="warn" id="price-fiat-note" data-i18n="price.fiatNote" hidden>
-            This item was priced in another currency, so it keeps that price and stays cash at the
-            table — no Buy button, no offer on your node, whatever the node field says. You can
-            change the amount. You cannot change the currency here, and nothing in this app
-            converts one to the other.
+            This item was priced in another currency,
+            so it is paid in cash, with no Buy button.
+            You can change the amount;
+            nothing in this app converts the currency.
           </p>
 
           <label for="photo">Photo</label>
@@ -226,9 +226,9 @@
           <p class="cost" id="notes-cost"></p>
           <button type="button" id="save-notes" data-i18n="notes.save">Save my private notes</button>
           <p class="hint" data-i18n="notes.hint">
-            Notes are encrypted to your own key and published as one event. Nobody else can read
-            them — not a relay, not us, not a buyer. Nothing of ours stores them either; they live
-            on the same relays as the sale, which is why they survive you closing this tab.
+            Notes are encrypted to your own key, so nobody else can read them.
+            They are kept with your sale,
+            so they survive you closing this tab.
           </p>
         </div>
 
@@ -265,10 +265,10 @@
         <h2 data-i18n="result.h">6 · Give the watcher its ladder</h2>
         <p id="result-text"></p>
         <p data-i18n="result.hint">
-          Every future stock state of this item is now signed and waiting. Your watcher publishes
-          them as things sell, which is how it updates the sale while holding no key of yours at
-          all. It cannot get them off a relay — publishing the sold-out one would mark the item
-          sold immediately — so you carry them across.
+          Every future stock state of this item is now signed.
+          Your watcher shows each one as things sell,
+          holding no key of yours,
+          so carry this file to it.
         </p>
         <button type="button" id="download-ladder" data-i18n="result.download">Download .ladder.json</button>
         <p class="hint" id="ladder-note"></p>
@@ -277,10 +277,10 @@
       <section>
         <h2 data-i18n="deploy.h">7 · Publish the sale as a website</h2>
         <p class="hint" data-i18n="deploy.hint">
-          Your storefront is a handful of static files. They go to Blossom servers as blobs, and
-          a signed manifest on the relays says which blob is which path. That manifest is the
-          whole site: no host, no DNS, no certificate, no account. It is served at your own
-          npub, which is how the page knows whose sale to read.
+          Your storefront is a handful of static files on Blossom servers,
+          with no host or account.
+          It is served at your own npub,
+          so the page knows whose sale to read.
         </p>
 
         <label for="gateway" data-i18n="deploy.gateway">Gateway</label>
