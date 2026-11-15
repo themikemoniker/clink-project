@@ -1544,3 +1544,54 @@ test('inventory (#190, L1): dropping any one panel 7 or QR attribute is caught',
   assert.notEqual(noAttr, HTML)
   assert.notEqual(qrAfter(noAttr, 'es').body, '<svg>QR</svg>')
 })
+
+// #202: #nip07 tapped on a phone with no extension. The button stays live and says what to do.
+const BAN202 = /nostr|nip-?\d|relay|signer|bunker|nsec|hex|extensi[oó]n.*nip/i
+test('fmt (#202): the no-extension line has English and plain Spanish with a next step', () => {
+  assert.deepEqual(missing(['status.noExtension']), [])
+  assert.equal(fmt('en', 'status.noExtension'), 'No browser extension found. Install a signing extension such as Alby or nos2x, or use "Connect with one approval" below.')
+  const es = fmt('es', 'status.noExtension')
+  assert.notEqual(es, STRINGS['status.noExtension']!.en, 'es is the English text')
+  assert.ok(!BAN202.test(es), `jargon in "${es}"`)
+  assert.match(es, /abajo/, 'the Spanish does not point at the option below')
+  // L1: the ban goes red on connectNip07's own English (signer.ts) and on a planted word. The new
+  // en has no banned word to catch, so the old line is the English it must refuse.
+  assert.ok(BAN202.test('No NIP-07 extension found. Install Alby or nos2x, or use a bunker.'))
+  assert.ok(BAN202.test(`${es} signer`))
+  assert.ok(BAN202.test('extensión NIP-07'))
+})
+
+test('fmt (#202, L1): a blanked es is caught by missing', () => {
+  const broken = { ...STRINGS, 'status.noExtension': { en: STRINGS['status.noExtension']!.en, es: '' } }
+  assert.deepEqual(missing(Object.keys(broken), broken), ['status.noExtension'])
+})
+
+// What is wrong with main.ts's #nip07 wiring; [] when the click guard is in and the button is never disabled.
+const nip07Faults = (src: string) => {
+  const faults: string[] = []
+  const a = src.indexOf("$('#nip07').addEventListener('click'"), b = src.indexOf("$('#bunker-url')", a)
+  const click = a >= 0 && b > a ? src.slice(a, b) : ''
+  if (!/if \(!hasNip07\(\)\) \{ sayT\('status\.noExtension', 'bad'\); return \}/.test(click)) faults.push('guard')
+  if (!click.includes('void connect(connectNip07)')) faults.push('connect')
+  if (/\$\('#nip07'\)\.(setAttribute\('disabled'|toggleAttribute\('disabled'|disabled\s*=)/.test(src)) faults.push('disabled')
+  return faults
+}
+
+test('main.ts (#202): #nip07 is never disabled and its click writes the no-extension line through sayT', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(nip07Faults(src), [])
+  assert.ok(src.indexOf("$('#lang-switch').addEventListener") < src.indexOf("$('#nip07')"), 'the switch anchor moved after #nip07')
+})
+
+test('main.ts (#202, L1): the old one-line click and the old disabled line put back are each caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const click = part(src, "$('#nip07').addEventListener('click'", "$('#bunker-url')")
+  const oldClick = src.replace(click, "$('#nip07').addEventListener('click', () => void connect(connectNip07))\n")
+  assert.deepEqual(nip07Faults(oldClick), ['guard'])
+  const DISABLED = "if (!hasNip07()) $('#nip07').setAttribute('disabled', 'true')\n"
+  const oldDisabled = src.replace("$('#perms').textContent", `${DISABLED}$('#perms').textContent`)
+  assert.notEqual(oldDisabled, src)
+  assert.deepEqual(nip07Faults(oldDisabled), ['disabled'])
+  // Both at once is the main.ts before #202.
+  assert.deepEqual(nip07Faults(oldClick.replace("$('#perms').textContent", `${DISABLED}$('#perms').textContent`)), ['guard', 'disabled'])
+})

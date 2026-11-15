@@ -634,22 +634,23 @@ test('a steps run writes one PNG per numbered step, at most 360 px wide and unde
   }
 })
 
-// #69: a step-1 line already on screen flips with the switch. With no window.nostr the #nip07
-// button starts disabled (hasNip07), so the test enables it the way a late-injecting extension
-// would leave it; connectNip07 then throws "No NIP-07 extension found…" (signer.ts).
+// #69, #202: a step-1 line already on screen flips with the switch. With no window.nostr the
+// #nip07 button stays enabled (#202), and a tap says there is no extension and what to do next.
 const statusOf = (p: import('playwright').Page) =>
   p.evaluate(() => { const el = document.querySelector<HTMLElement>('#status')!; return [el.textContent, el.dataset.tone] })
 
-test('a failed connect shows Spanish without the error, and the switch re-writes the line both ways', async () => {
+test('with no extension, #nip07 is live and its tap says what to do, in Spanish and after the switch', async () => {
   const { page, errors, context, flip } = await openIn('es-MX')
-  await page.evaluate(() => document.querySelector('#nip07')!.removeAttribute('disabled'))
+  assert.equal(await page.evaluate(() => 'nostr' in window), false)
+  assert.equal(await page.locator('#nip07').isDisabled(), false)
   await page.locator('#nip07').click()
   await page.waitForFunction(() => document.querySelector<HTMLElement>('#status')!.dataset.tone === 'bad', null, { timeout: 5_000 })
-  const es = [STRINGS['status.connectFail']?.es, 'bad']
+  const es = [STRINGS['status.noExtension']?.es, 'bad']
+  assert.ok(es[0], 'status.noExtension has no es')
   assert.deepEqual(await statusOf(page), es)
   await flip()
   const [en, tone] = await statusOf(page)
-  assert.match(en!, /^No NIP-07 extension found/)
+  assert.equal(en, STRINGS['status.noExtension']?.en)
   assert.equal(tone, 'bad')
   await flip()
   assert.deepEqual(await statusOf(page), es)

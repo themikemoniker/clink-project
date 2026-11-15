@@ -926,7 +926,10 @@ $('#lang-switch').addEventListener('click', () => {
   showDeployCost() // #151: the deploy-cost line
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
-$('#nip07').addEventListener('click', () => void connect(connectNip07))
+$('#nip07').addEventListener('click', () => {
+  if (!hasNip07()) { sayT('status.noExtension', 'bad'); return } // #202: the button stays live and says what to do
+  void connect(connectNip07)
+})
 $('#bunker-url').addEventListener('click', () => {
   const input = $<HTMLInputElement>('#bunker-input').value
   void connect(() => connectBunkerURL(input))
@@ -962,7 +965,6 @@ $('#download-ladder').addEventListener('click', () => downloadLadder(ladderFile(
 $('#deploy').addEventListener('click', () => void doDeploy())
 $('#perms').textContent = PERMS.join(', ')
 
-if (!hasNip07()) $('#nip07').setAttribute('disabled', 'true')
 const saved = load(NODE_KEY)
 if (saved) {
   $<HTMLInputElement>('#node-input').value = saved
