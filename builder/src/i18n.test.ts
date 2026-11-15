@@ -1560,3 +1560,66 @@ test('size (#211): the six trimmed hints are one or two sentences of at most 160
   // L1: the counter sees three sentences, and a colon (geo: link) does not end one.
   assert.equal(sentences('One. Two, a geo: link. Three.'), 3)
 })
+
+// #214: with no extension, #nip07 stays live and its click says what happened and what to do next.
+const BAN214 = /nostr|nip-?\d|relay|signer|bunker|nsec|hex|extensi[oó]n.*nip/i
+test('fmt (#214): status.noExtension has en and plain es, and the ban list can go red', () => {
+  const v = STRINGS['status.noExtension']
+  assert.ok(v, 'status.noExtension is not in STRINGS')
+  assert.ok(v.en.trim() && v.es.trim(), 'status.noExtension lacks a language')
+  assert.notEqual(v.es, v.en, 'status.noExtension: es is the English text')
+  assert.ok(!BAN214.test(v.es), `status.noExtension: jargon in "${v.es}"`)
+  assert.equal(fmt('es', 'status.noExtension'), v.es)
+  // The English names the real one-approval button, so a seller can find it.
+  assert.ok(v.en.includes(`"${STRINGS['s1.scan']!.en}"`), 'status.noExtension: en does not name the one-approval button')
+  // L1: the ban list catches the English and a planted word.
+  assert.ok(BAN214.test(v.en))
+  assert.ok(BAN214.test(`${v.es} Abre tu signer.`))
+  assert.ok(BAN214.test('Instala una extensión NIP-07.'))
+})
+
+test('fmt (#214, L1): a blanked status.noExtension es is caught by missing', () => {
+  assert.deepEqual(missing(['status.noExtension']), [])
+  for (const es of ['', ' ']) {
+    const broken = { ...STRINGS, 'status.noExtension': { en: STRINGS['status.noExtension']!.en, es } }
+    assert.deepEqual(missing(Object.keys(broken), broken), ['status.noExtension'])
+  }
+})
+
+// The #nip07 click handler as main.ts writes it: from its addEventListener to the next `$('#`.
+const nip07Click = (src: string) => {
+  const at = src.indexOf("$('#nip07').addEventListener('click'")
+  return at < 0 ? '' : src.slice(at, src.indexOf("$('#", at + 5))
+}
+const nip07Checks = (src: string) => {
+  const click = nip07Click(src)
+  return [
+    click.includes('hasNip07()') || 'the #nip07 click does not check hasNip07()',
+    click.includes("sayT('status.noExtension', 'bad')") || "the #nip07 click does not call sayT('status.noExtension', 'bad')",
+    !/\$\('#nip07'\)\.setAttribute\('disabled'/.test(src) || 'main.ts still disables #nip07',
+    /import \{[^}]*\bhasNip07\b[^}]*\} from '\.\/signer\.ts'/.test(src) || 'main.ts no longer imports hasNip07',
+  ].filter((r): r is string => r !== true)
+}
+test('main.ts (#214): the #nip07 click says status.noExtension through sayT, and the button is never disabled', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(nip07Checks(src), [])
+  // The guard comes before connect, so a missing extension never reaches connectNip07.
+  const click = nip07Click(src)
+  assert.ok(click.includes('connect(connectNip07)'), 'the #nip07 click no longer connects')
+  assert.ok(click.indexOf('hasNip07()') < click.indexOf('connect(connectNip07)'), 'the guard is not ahead of connect')
+})
+
+test('main.ts (#214, L1): the old handler, the old disabled line and a plain say( are each caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const click = nip07Click(src)
+  assert.ok(click, 'no #nip07 click handler found')
+  const oldClick = src.replace(click, "$('#nip07').addEventListener('click', () => void connect(connectNip07))\n")
+  assert.notEqual(oldClick, src)
+  assert.equal(nip07Checks(oldClick).length, 2, nip07Checks(oldClick).join('; '))
+  const disabled = src.replace('const saved = load(NODE_KEY)', "if (!hasNip07()) $('#nip07').setAttribute('disabled', 'true')\nconst saved = load(NODE_KEY)")
+  assert.notEqual(disabled, src)
+  assert.deepEqual(nip07Checks(disabled), ['main.ts still disables #nip07'])
+  const say = src.replace("sayT('status.noExtension', 'bad')", "say('No browser extension found.', 'bad')")
+  assert.notEqual(say, src)
+  assert.equal(nip07Checks(say).length, 1)
+})

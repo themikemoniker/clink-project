@@ -42,6 +42,8 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'status.waiting': { en: 'Waiting for your signer…', es: 'Esperando a tu app de firma…' },
   'status.scan': { en: 'Scan the code with your signer. Approve every permission it lists.', es: 'Escanea el código con tu app de firma y acepta todos los permisos.' },
   'status.connectFail': { en: '{msg}', es: 'No se pudo conectar. Revisa tu app de firma e inténtalo otra vez.' },
+  // #214: #nip07 with no extension. es needs-native-review.
+  'status.noExtension': { en: 'No browser extension found. Install a signing extension such as Alby or nos2x, or use "Connect a bunker — one approval" below.', es: 'Este navegador no tiene la extensión. Usa la opción de abajo para conectar tu app con un solo permiso.' },
   'shrink.hint': { en: 'This list is a replacement: publishing this list un-lists the rest. Un-listing is not deleting: your storefront still shows them, at the foot of the page.', es: 'Al publicar esta lista, los demás artículos dejan de estar en la venta. Quitarlos no es borrarlos: siguen en tu tienda, al final de la página. Así se ve también quitar algo a propósito, y por eso solo tú sabes si fue tu intención.' },
   'shrink.ok': { en: 'Yes, un-list them. I meant to.', es: 'Sí, quítalos de la venta. Lo quiero así.' },
   'price.hint': { en: 'Sats only. There is no currency conversion anywhere in this app — that would need a price oracle, and an oracle is somebody else’s server. Price something in pesos by leaving the node field empty: it lists, it just has no Buy button.', es: 'Solo en sats. Esta app no convierte monedas. Para poner un precio en pesos, deja vacío el campo del nodo: el artículo se publica, pero sin botón de Comprar.' },
