@@ -71,6 +71,8 @@ build for a while.
 
 ## Setup
 
+**Start here:** [docs/setup.md](docs/setup.md)
+
 Two halves. The buyer half is genuinely trivial. The seller half is one bootstrap step and
 then a browser.
 
