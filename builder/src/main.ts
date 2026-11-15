@@ -288,20 +288,20 @@ const refreshCost = () => {
   const mint = !!node && draft.stock > 0 && !draft.noffer && !draft.fiat
   const n = approvalCount(draft, mint, !!watcher, uploads)
   const units = Math.max(0, draft.stock)
-  const parts = [
-    ...(uploads ? [`${uploads} photo upload${uploads === 1 ? '' : 's'}`] : []),
-    ...(mint ? ['1 offer'] : []),
-    ...(draft.noffer ? ['0 offers — this item already has one, at this price'] : []),
-    ...(draft.fiat ? [`0 offers — priced in ${draft.fiat.currency}, so it stays cash at the table`] : []),
-    '1 listing',
-    `${units} availability step${units === 1 ? '' : 's'}`,
-    // M1: one more signature, and only when there is a watcher to encrypt it to. The encryption
-    // itself is not a signature and is not counted.
-    ...(watcher ? ['1 encrypted ladder for your watcher'] : []),
-  ]
-  $('#cost').textContent =
-    `${n} signature${n === 1 ? '' : 's'}: ${parts.join(' + ')}. ` +
-    `Your signer should ask once per kind and remember the rest — if it asks every time, it ignored the permissions we requested.`
+  // #153: the words live in cost-text.ts, in the seller's language (`lang` read at call time).
+  // Each part of that sentence is one signed event here: photo uploads, the offer minted (none
+  // when one is reused or the item is fiat), the listing, one availability step per unit, and,
+  // M1, one ladder only when there is a watcher to encrypt it to. The encryption itself is not a
+  // signature and is not counted. Same line count as before, so no cited line below moves.
+  $('#cost').textContent = itemCost(lang, {
+    n,
+    uploads,
+    mint,
+    noffer: !!draft.noffer,
+    fiatCurrency: draft.fiat?.currency,
+    units,
+    watcher: !!watcher,
+  })
 }
 
 // A publish ends the item, not the session. Nothing used to reset, and #slug is only auto-filled
@@ -842,12 +842,10 @@ const doDeploy = async () => {
 // file plus the manifest and the server list.
 const refreshDeployCost = async () => {
   // The list only — counting the files must not download them. They are fetched when somebody
-  // actually presses Deploy.
-  const n = (await storefrontPaths().catch(() => [])).length
-  $('#deploy-cost').textContent = n
-    ? `${n + 2} signatures: ${n} file uploads + 1 site manifest + 1 Blossom server list. ` +
-      `The uploads are all one kind, so your signer should ask about them once.`
-    : 'The storefront files are missing. Run `npm run build` in /builder.'
+  // actually presses Deploy. #153: the count is kept in `deployFiles` so the language switch
+  // re-draws the line without fetching again; the words come from cost-text.ts.
+  deployFiles = (await storefrontPaths().catch(() => [])).length
+  showDeployCost()
 }
 
 // --- wiring ------------------------------------------------------------------------------------
@@ -858,7 +856,11 @@ import { unlistSay, unlistWhat } from './unlist-text.ts'
 import { saleCost, saleLive } from './sale-text.ts'
 import { ladderNote, resultLine, type ResultView } from './ladder-text.ts'
 import { photoState, type PhotoView } from './photo-text.ts'
+import { deployCost, itemCost } from './cost-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
+// #153: the storefront file count refreshDeployCost last read; null until it has answered.
+let deployFiles: number | null = null
+const showDeployCost = () => { if (deployFiles !== null) $('#deploy-cost').textContent = deployCost(lang, deployFiles) }
 // #69: a status line from the table, and the last signed-in name, kept so the switch can re-write
 // them. Declared here, after every cited line; `say` clears `shown` so a later plain text stays.
 type Tone = 'ok' | 'busy' | 'bad'
@@ -918,6 +920,8 @@ $('#lang-switch').addEventListener('click', () => {
   showNode()
   refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish
   showResult() // #181: panel 6's #result-text and #ladder-note
+  refreshCost() // #153: the item form's #cost
+  showDeployCost() // #153: #deploy-cost, from the count already read
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
 $('#nip07').addEventListener('click', () => void connect(connectNip07))

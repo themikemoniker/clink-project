@@ -421,8 +421,30 @@ test('with storage blocked, a pasted watcher key still counts its encrypted ladd
   await page.locator('#watcher-input').fill('ab'.repeat(32)) // a fixed fake hex pubkey, not a key
   await page.locator('#watcher-input').dispatchEvent('change')
   assert.deepEqual(errors, [])
-  assert.match((await page.locator('#cost').textContent())!, /encrypted ladder/)
+  assert.match((await page.locator('#cost').textContent())!, /lista privada para tu ayudante de ventas/)
   assert.match((await page.locator('#watcher-state').textContent())!, /abababab/)
+  await context.close()
+})
+
+// #153: the approval count and the deploy line are Spanish on an es-MX phone, and the switch
+// re-draws both (the deploy line from the count it already read, with no new fetch).
+test('in es-MX, #cost and #deploy-cost say no jargon, and the switch turns them English and back', async () => {
+  const { page, errors, context, flip } = await openIn('es-MX')
+  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  const read = async () => [(await page.locator('#cost').textContent())!, (await page.locator('#deploy-cost').textContent())!]
+  const es = await read()
+  for (const text of es) {
+    assert.ok(text.trim(), 'empty line')
+    assert.doesNotMatch(text, /\b(signatures?|signer|Blossom|kind)\b/i, `jargon in es: ${text}`)
+  }
+  assert.match(es[0]!, /^\d+ aprobaci(ón|ones): /)
+  await flip()
+  const en = await read()
+  assert.match(en[0]!, /^\d+ signatures?: .*Your signer should ask once per kind/)
+  assert.ok(/^\d+ signatures: /.test(en[1]!) || en[1] === 'The storefront files are missing. Run `npm run build` in /builder.', `deploy line: ${en[1]}`)
+  await flip()
+  assert.deepEqual(await read(), es)
+  assert.deepEqual(errors, [])
   await context.close()
 })
 
