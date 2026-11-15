@@ -109,7 +109,10 @@ export const publish = async (
             ? ' The node rejects requests more than ~30s from its own clock — check this machine’s time.'
             : result.field
               ? ` (field: ${result.field})`
-              : ''
+              // Code 0 is manage.ts's "did not answer" (or a GFY with no code); a `field` wins above.
+              : result.code === 0
+                ? ' Check that your node is running and that the relay in your node pointer (section 2) is right, or clear the node field to sell without a Buy button.'
+                : ''
       throw new PublishError(`Could not mint the offer: ${result.error}.${hint}`, 'publish.mintFail', { msg: `${result.error}.${hint}` })
     }
     noffer = result.offer.noffer
