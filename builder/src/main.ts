@@ -287,21 +287,21 @@ const refreshCost = () => {
   // number shown here cannot drift from the events actually signed.
   const mint = !!node && draft.stock > 0 && !draft.noffer && !draft.fiat
   const n = approvalCount(draft, mint, !!watcher, uploads)
-  const units = Math.max(0, draft.stock)
-  const parts = [
-    ...(uploads ? [`${uploads} photo upload${uploads === 1 ? '' : 's'}`] : []),
-    ...(mint ? ['1 offer'] : []),
-    ...(draft.noffer ? ['0 offers — this item already has one, at this price'] : []),
-    ...(draft.fiat ? [`0 offers — priced in ${draft.fiat.currency}, so it stays cash at the table`] : []),
-    '1 listing',
-    `${units} availability step${units === 1 ? '' : 's'}`,
+  // #151: the words are cost-text.ts `itemCost`, in the seller's language. costView keeps the
+  // inputs so the language switch re-writes #cost; showCost, both declared after `lang` below.
+  // Every caller runs once the module has reached them: the startup call is near the file's end.
+  costView = {
+    n, uploads, mint,
+    noffer: !!draft.noffer,
+    fiatCurrency: draft.fiat ? draft.fiat.currency : null,
+    units: Math.max(0, draft.stock),
     // M1: one more signature, and only when there is a watcher to encrypt it to. The encryption
     // itself is not a signature and is not counted.
-    ...(watcher ? ['1 encrypted ladder for your watcher'] : []),
-  ]
-  $('#cost').textContent =
-    `${n} signature${n === 1 ? '' : 's'}: ${parts.join(' + ')}. ` +
-    `Your signer should ask once per kind and remember the rest — if it asks every time, it ignored the permissions we requested.`
+    watcher: !!watcher,
+  }
+  // The same order of parts as before: photos, offer, listing, availability steps, watcher.
+  // English is word for word the old text (cost-text.test.ts pins it).
+  showCost()
 }
 
 // A publish ends the item, not the session. Nothing used to reset, and #slug is only auto-filled
@@ -843,11 +843,8 @@ const doDeploy = async () => {
 const refreshDeployCost = async () => {
   // The list only — counting the files must not download them. They are fetched when somebody
   // actually presses Deploy.
-  const n = (await storefrontPaths().catch(() => [])).length
-  $('#deploy-cost').textContent = n
-    ? `${n + 2} signatures: ${n} file uploads + 1 site manifest + 1 Blossom server list. ` +
-      `The uploads are all one kind, so your signer should ask about them once.`
-    : 'The storefront files are missing. Run `npm run build` in /builder.'
+  deployFiles = (await storefrontPaths().catch(() => [])).length
+  showDeployCost() // #151: cost-text.ts `deployCost`, re-written by the language switch
 }
 
 // --- wiring ------------------------------------------------------------------------------------
@@ -858,6 +855,7 @@ import { unlistSay, unlistWhat } from './unlist-text.ts'
 import { saleCost, saleLive } from './sale-text.ts'
 import { ladderNote, resultLine, type ResultView } from './ladder-text.ts'
 import { photoState, type PhotoView } from './photo-text.ts'
+import { deployCost, itemCost, type CostView } from './cost-text.ts'
 let lang = pickLang(navigator.language, load(LANG_KEY))
 // #69: a status line from the table, and the last signed-in name, kept so the switch can re-write
 // them. Declared here, after every cited line; `say` clears `shown` so a later plain text stays.
@@ -894,6 +892,12 @@ const showResult = () => {
   $('#result-text').textContent = resultLine(lang, resultView.result)
   $('#ladder-note').textContent = ladderNote(lang, resultView.note)
 }
+// #151: what #cost and #deploy-cost say, so a switch re-writes them. refreshCost sets costView;
+// deployFiles is null until refreshDeployCost has counted the storefront files.
+let costView: CostView | null = null
+const showCost = () => { if (costView) $('#cost').textContent = itemCost(lang, costView) }
+let deployFiles: number | null = null
+const showDeployCost = () => { if (deployFiles !== null) $('#deploy-cost').textContent = deployCost(lang, deployFiles) }
 const qrLabel = (url: string) => fmt(lang, 'stickers.qr', { url }) // #182: `lang` read at call time
 const sayT = (key: string, tone: Tone = 'busy', vars?: Record<string, string>) => {
   say(fmt(lang, key, vars), tone) // `lang` read now, not captured
@@ -918,6 +922,8 @@ $('#lang-switch').addEventListener('click', () => {
   showNode()
   refreshSaleCost() // #sale-cost follows the switch; salePending keeps the button off mid-publish
   showResult() // #181: panel 6's #result-text and #ladder-note
+  showCost() // #151: the item form's approval count
+  showDeployCost() // #151: the deploy-cost line
   if (owned.length) renderItems() // #63: the item rows' meta line follows the switch
 })
 $('#nip07').addEventListener('click', () => void connect(connectNip07))

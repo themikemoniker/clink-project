@@ -416,13 +416,20 @@ test('with storage blocked, the WHOLE startup runs to its last line, in Spanish,
 // G2.3: a watcher paste with storage blocked cannot be remembered, but must still take effect for
 // this page load. A raw setItem throws before refreshCost, so #cost would lack the watcher term.
 test('with storage blocked, a pasted watcher key still counts its encrypted ladder', async () => {
-  const { page, errors, context } = await openIn('es-MX', true)
+  const { page, errors, context, flip } = await openIn('es-MX', true)
   await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  assert.doesNotMatch((await page.locator('#cost').textContent())!, /aviso cifrado/) // no watcher yet
   await page.locator('#watcher-input').fill('ab'.repeat(32)) // a fixed fake hex pubkey, not a key
   await page.locator('#watcher-input').dispatchEvent('change')
   assert.deepEqual(errors, [])
-  assert.match((await page.locator('#cost').textContent())!, /encrypted ladder/)
+  assert.match((await page.locator('#cost').textContent())!, /aviso cifrado/)
   assert.match((await page.locator('#watcher-state').textContent())!, /abababab/)
+  // #151: the switch re-writes #cost and #deploy-cost from what they last counted.
+  assert.match((await page.locator('#deploy-cost').textContent())!, /aprobaciones|Faltan/)
+  await flip()
+  assert.match((await page.locator('#cost').textContent())!, /encrypted ladder/)
+  assert.match((await page.locator('#deploy-cost').textContent())!, /signatures|missing/)
+  assert.deepEqual(errors, [])
   await context.close()
 })
 
