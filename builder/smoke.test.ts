@@ -357,12 +357,15 @@ test('a fiat price may have a fractional part, because a peso is not a sat', asy
 // --- G1.1 and G1.2: the front door in the seller's language -----------------------------------
 // `locale` sets navigator.language. `blocked` makes reading window.localStorage throw, as Chrome
 // does when site data is blocked, for the WHOLE real startup (L14). `init` runs before load, too.
-import { STRINGS } from './src/i18n.ts'
-const openIn = async (locale: string, blocked = false, init?: () => void) => {
+import { STRINGS, fmt } from './src/i18n.ts'
+// `setup` runs on the context before the page loads (e.g. a relay stub).
+const openIn = async (locale: string, blocked = false, init?: () => void,
+  setup?: (c: import('playwright').BrowserContext) => Promise<unknown>) => {
   const context = await browser.newContext({ locale, viewport: { width: 360, height: 640 } })
   const throws = () => Object.defineProperty(window, 'localStorage', { get: () => { throw new DOMException('blocked', 'SecurityError') } })
   if (blocked) await context.addInitScript(throws)
   if (init) await context.addInitScript(init)
+  if (setup) await setup(context)
   const page = await context.newPage()
   const errors: string[] = []
   page.on('pageerror', e => errors.push(e.message))
@@ -477,6 +480,42 @@ test('with storage blocked, connecting a NIP-07 signer still signs in and starts
   await page.waitForFunction(r => ((window as { seen?: string[] }).seen ?? []).includes(r), reading, { timeout: 5_000 })
   assert.equal(await page.locator('#signed-in').isVisible(), true)
   assert.equal(await page.locator('#connect').isHidden(), true)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
+// #209 (G1.1/G1.2): after a load, main.ts loadPanel sets #refresh-items to `items.reload`, and the
+// switch must keep it. Every relay socket is stubbed: a REQ (`["REQ",subId,...filters]`, as
+// nostr-tools abstract-relay.js sends it) gets `["EOSE",subId]`, so the load ends with zero events.
+// The wait is 3 s, under nostr-tools' 4.4 s EOSE timeout, so only the stub's EOSE can end it.
+import { SALE_RELAYS } from '../spike/fixture.ts'
+test('after a load the items button says Reload, in Spanish and in English, across the switch', async () => {
+  const reqs: string[] = []
+  const { page, errors, context, flip } = await openIn('es-MX', false, () => {
+    const ok = (v: unknown) => () => Promise.resolve(v)
+    Object.assign(window, { nostr: { getPublicKey: ok('ab'.repeat(32)), signEvent: (e: unknown) => Promise.resolve(e),
+      nip44: { encrypt: ok('fake-ciphertext'), decrypt: ok('fake-plaintext') } } })
+  }, c => c.routeWebSocket(/.*/, ws => ws.onMessage(m => {
+    const msg = JSON.parse(String(m))
+    if (Array.isArray(msg) && msg[0] === 'REQ') { reqs.push(msg[1]); ws.send(JSON.stringify(['EOSE', msg[1]])) }
+  })))
+  const load = STRINGS['items.load'], reload = STRINGS['items.reload'], reading = STRINGS['items.reading']?.es
+  assert.ok(load?.es && load.en && reload?.es && reload.en && reading, 'items.load, items.reload or items.reading lacks a language')
+  const button = page.locator('#refresh-items'), state = page.locator('#items-state')
+  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  assert.equal(await button.textContent(), load.es)
+  assert.equal(await button.isDisabled(), true)
+  await page.locator('#nip07').click()
+  await page.waitForFunction(r => { const t = document.querySelector('#items-state')!.textContent; return !!t && t !== r }, reading, { timeout: 3_000 })
+  // The exact loaded line, so the catch path (items-state emptied, items.loadFail shown) cannot pass.
+  const loaded = fmt('es', 'items.loaded', { n: '0', ok: '0', all: String(SALE_RELAYS.length), sale: fmt('es', 'items.noSale') })
+  assert.equal(await state.textContent(), loaded)
+  assert.ok(reqs.length >= 2, `the stub answered ${reqs.length} REQ(s); items and notes each send one per relay`)
+  assert.equal(await button.textContent(), reload.es)
+  await flip()
+  assert.equal(await button.textContent(), reload.en)
+  await flip()
+  assert.equal(await button.textContent(), reload.es)
   assert.deepEqual(errors, [])
   await context.close()
 })
