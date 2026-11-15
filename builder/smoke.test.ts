@@ -673,25 +673,42 @@ test('a steps run writes one PNG per numbered step, at most 360 px wide and unde
   }
 })
 
-// #69: a step-1 line already on screen flips with the switch. With no window.nostr the #nip07
-// button starts disabled (hasNip07), so the test enables it the way a late-injecting extension
-// would leave it; connectNip07 then throws "No NIP-07 extension found…" (signer.ts).
+// #69: a step-1 line already on screen flips with the switch. The stub extension has signEvent
+// but no nip44 (fixed fake data, no key), so hasNip07 passes and connectNip07 throws its nip44
+// error (signer.ts), which main.ts writes as status.connectFail.
 const statusOf = (p: import('playwright').Page) =>
   p.evaluate(() => { const el = document.querySelector<HTMLElement>('#status')!; return [el.textContent, el.dataset.tone] })
 
 test('a failed connect shows Spanish without the error, and the switch re-writes the line both ways', async () => {
-  const { page, errors, context, flip } = await openIn('es-MX')
-  await page.evaluate(() => document.querySelector('#nip07')!.removeAttribute('disabled'))
+  const { page, errors, context, flip } = await openIn('es-MX', false, () => {
+    Object.assign(window, { nostr: { getPublicKey: () => Promise.resolve('ab'.repeat(32)), signEvent: (e: unknown) => Promise.resolve(e) } })
+  })
   await page.locator('#nip07').click()
   await page.waitForFunction(() => document.querySelector<HTMLElement>('#status')!.dataset.tone === 'bad', null, { timeout: 5_000 })
   const es = [STRINGS['status.connectFail']?.es, 'bad']
   assert.deepEqual(await statusOf(page), es)
   await flip()
   const [en, tone] = await statusOf(page)
-  assert.match(en!, /^No NIP-07 extension found/)
+  assert.match(en!, /^This extension does not expose nip44/)
   assert.equal(tone, 'bad')
   await flip()
   assert.deepEqual(await statusOf(page), es)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
+// #214: with no window.nostr the #nip07 button stays live, and a tap says what happened and what next.
+test('with no extension the button is live and a tap says what to do, in Spanish and in English', async () => {
+  const { page, errors, context, flip } = await openIn('es-MX')
+  const v = STRINGS['status.noExtension']
+  assert.ok(v?.es && v.en, 'status.noExtension lacks a language')
+  assert.equal(await page.locator('#nip07').isDisabled(), false)
+  await page.locator('#nip07').click()
+  assert.deepEqual(await statusOf(page), [v.es, 'bad'])
+  await flip()
+  assert.deepEqual(await statusOf(page), [v.en, 'bad'])
+  await flip()
+  assert.deepEqual(await statusOf(page), [v.es, 'bad'])
   assert.deepEqual(errors, [])
   await context.close()
 })
