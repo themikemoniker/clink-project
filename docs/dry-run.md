@@ -33,16 +33,25 @@ real sats. This page does not pretend otherwise.
 
 ## Step A: a test relay
 
-You need a relay you control, for example one listening on `ws://127.0.0.1:<port>`. Nothing in
-this repo runs one, so this page names no relay software.
-
-`UNVERIFIED: start command for a local relay.`
-
-Every command below takes it through one shell variable:
+You need a relay you control. `spike/test-relay.ts` is one, with nothing to install. In one
+terminal, start it and leave it running:
 
 ```bash
 cd spike
-TEST_RELAY=ws://127.0.0.1:<port>
+node test-relay.ts            # prints: # test relay listening on ws://127.0.0.1:7777
+```
+
+It keeps events in memory and forgets them all when you stop it (Ctrl-C). It has no auth and
+listens on 127.0.0.1 only. It is a rehearsal tool, not a relay to run in production. Add
+`--port N` if 7777 is taken.
+
+This repo still does not provide the Blossom server that Step C and Step D need. See Step C.
+
+Every command below takes the relay through one shell variable. In a second terminal:
+
+```bash
+cd spike
+TEST_RELAY=ws://127.0.0.1:7777
 ```
 
 **Always pass `--relays`.** Each script below defaults to `SALE_RELAYS` (`spike/fixture.ts:28-33`),

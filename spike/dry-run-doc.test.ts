@@ -8,6 +8,9 @@
 //      `node seed-listings.ts` with no --key, no new-key.ts line) -> "the switch to real makes
 //      the key it uses" fails. That is the defect the q193 review found: the default switch-over
 //      needed spike/.dev-key, which the rehearsal never creates.
+//   4. Step A's fenced `node test-relay.ts` line moved out of the fence (as prose), and, run
+//      separately, the `UNVERIFIED: start command for a local relay.` line put back -> "Step A
+//      starts the in-repo relay …" fails, each time.
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -96,6 +99,16 @@ test('the switch to real makes the key it uses: every seller-key command passes 
     assert.ok(made.has(key), `"${line}" uses ${key}, but no earlier \`node new-key.ts ${key}\` in the switch section makes it`)
   }
   assert.ok(keyed > 0, 'the switch section runs no seller-key command at all')
+})
+
+test('Step A starts the in-repo relay in a fenced block, and the relay start command is no longer UNVERIFIED', () => {
+  const lines = PAGE.split('\n')
+  const start = lines.findIndex(l => /^##\s+Step A\b/.test(l))
+  assert.ok(start !== -1, 'no "## Step A" heading')
+  const end = lines.findIndex((l, i) => i > start && /^##?\s/.test(l))
+  const stepA = lines.slice(start, end === -1 ? undefined : end).join('\n')
+  assert.ok(commandsIn(stepA).some(c => c.script === 'test-relay.ts'), 'Step A has no fenced `node test-relay.ts` line')
+  assert.doesNotMatch(PAGE, /UNVERIFIED: start command for a local relay/)
 })
 
 test('README links docs/dry-run.md', () => {
