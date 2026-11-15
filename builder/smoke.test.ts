@@ -629,7 +629,8 @@ test('a steps run writes one PNG per numbered step, at most 360 px wide and unde
 
 // #69: a step-1 line already on screen flips with the switch. With no window.nostr the #nip07
 // button starts disabled (hasNip07), so the test enables it the way a late-injecting extension
-// would leave it; connectNip07 then throws "No NIP-07 extension found…" (signer.ts).
+// would leave it; connectNip07 then throws "No NIP-07 extension found…" (signer.ts), and since
+// #192 the line is status.noSigner (what happened and what to install), not connectFail.
 const statusOf = (p: import('playwright').Page) =>
   p.evaluate(() => { const el = document.querySelector<HTMLElement>('#status')!; return [el.textContent, el.dataset.tone] })
 
@@ -638,14 +639,35 @@ test('a failed connect shows Spanish without the error, and the switch re-writes
   await page.evaluate(() => document.querySelector('#nip07')!.removeAttribute('disabled'))
   await page.locator('#nip07').click()
   await page.waitForFunction(() => document.querySelector<HTMLElement>('#status')!.dataset.tone === 'bad', null, { timeout: 5_000 })
-  const es = [STRINGS['status.connectFail']?.es, 'bad']
+  const es = [STRINGS['status.noSigner']?.es, 'bad']
+  assert.ok(es[0], 'status.noSigner has no es')
   assert.deepEqual(await statusOf(page), es)
   await flip()
-  const [en, tone] = await statusOf(page)
-  assert.match(en!, /^No NIP-07 extension found/)
-  assert.equal(tone, 'bad')
+  assert.deepEqual(await statusOf(page), [STRINGS['status.noSigner']!.en, 'bad'])
   await flip()
   assert.deepEqual(await statusOf(page), es)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
+// #192: a signer app is there but refuses. That is not "nothing installed", so the line stays
+// connectFail. A fixed fake object, no key: getPublicKey rejects with a fixed fake error.
+test('a signer that refuses still shows the connectFail line, not the no-signer one', async () => {
+  const context = await browser.newContext({ locale: 'es-MX', viewport: { width: 360, height: 640 } })
+  await context.addInitScript(() => {
+    const no = () => Promise.reject(new Error('fake: user rejected'))
+    Object.assign(window, { nostr: { getPublicKey: no, signEvent: no, nip44: { encrypt: no, decrypt: no } } })
+  })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto(`${origin}/`)
+  await page.waitForSelector('main', { timeout: 15_000 })
+  await page.locator('#nip07').click()
+  await page.waitForFunction(() => document.querySelector<HTMLElement>('#status')!.dataset.tone === 'bad', null, { timeout: 5_000 })
+  assert.deepEqual(await statusOf(page), [STRINGS['status.connectFail']?.es, 'bad'])
+  await page.locator('#lang-switch').click()
+  assert.deepEqual(await statusOf(page), ['fake: user rejected', 'bad'])
   assert.deepEqual(errors, [])
   await context.close()
 })

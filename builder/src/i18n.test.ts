@@ -205,8 +205,35 @@ test('main.ts (#69): the waiting and scan lines go through the table, and so do 
   const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
   assert.ok(!src.includes('Waiting for your signer'), 'main.ts still writes the waiting line itself')
   assert.ok(!src.includes('Scan the code with your signer'), 'main.ts still writes the scan line itself')
+  // Still 2 connectFail sites (connect and startScan): #192 added a noSigner branch beside the
+  // one in connect, on purpose, and only there. Its count is 1 and it must sit in connect, before
+  // startScan, because only the NIP-07 call can mean "no signer app installed".
   assert.equal([...src.matchAll(/sayT\('status\.connectFail', 'bad', \{ msg: /g)].length, 2)
+  assert.equal([...src.matchAll(/sayT\('status\.noSigner'/g)].length, 1)
+  const at = src.indexOf("sayT('status.noSigner'")
+  assert.ok(at > src.indexOf('const connect =') && at < src.indexOf('const startScan ='), 'the noSigner line is not in connect')
   assert.ok(!/say\(err instanceof Error/.test(src.slice(src.indexOf('const connect ='), src.indexOf('// --- node'))), 'a step-1 catch still prints err.message itself')
+})
+
+// #192 (G2.1): no signer app at all gets its own line, with what happened and the next step.
+const JARGON69 = /signer|bunker|nip-?\d|relay|nsec|hex/i
+const nextStep192 = (es: string) => /instal/i.test(es)
+test('fmt (#192): status.noSigner is translated, plain, and says to install an app', () => {
+  const row = STRINGS['status.noSigner']
+  assert.ok(row, 'status.noSigner is not in STRINGS')
+  assert.notEqual(row.es, row.en, 'status.noSigner is untranslated')
+  assert.ok(!JARGON69.test(row.es), `jargon in "${row.es}"`)
+  assert.ok(nextStep192(row.es), `no next step in "${row.es}"`)
+  assert.notEqual(row.es, STRINGS['status.connectFail']!.es)
+  assert.deepEqual(missing(['status.noSigner']), [])
+})
+
+test('fmt (#192, L1): a blanked es, a jargon word and a line without the next step are caught', () => {
+  const broken = { ...STRINGS, 'status.noSigner': { en: STRINGS['status.noSigner']!.en, es: ' ' } }
+  assert.deepEqual(missing(['status.noSigner'], broken), ['status.noSigner'])
+  assert.ok(JARGON69.test(`${STRINGS['status.noSigner']!.es} signer`))
+  assert.equal(nextStep192('No encontramos una app de firma en este teléfono.'), false)
+  assert.equal(nextStep192(STRINGS['status.connectFail']!.es), false)
 })
 
 // #74: panel 5's sentences main.ts writes itself, and panel 7. Fake numbers and names only. Each

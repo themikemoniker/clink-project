@@ -6,5 +6,6 @@ Measured with `npm --prefix builder run size`: the gzip -9 sum of every `.js` an
 |---|---|---|---|---|
 | Baseline, `origin/main` before G1 (bfdd107) | 61,453 | 4,217 | 1,561 | **67,231** |
 | After G1 slice 1 (header, title, step 1, switch) | 62,283 | 4,217 | 1,577 | **68,077** (+846) |
+| After #192 (no signing app installed: its own Spanish line) | 70,456 | 4,217 | 1,639 | **76,312** (+113 over 76,199) |
 
 **G1.4 ceiling: 77,315 bytes gzip**, which is the baseline plus 15% (67,231 × 1.15, rounded down). Every later G1 slice adds its row here and must stay under that number.

@@ -169,7 +169,7 @@ const connect = async (fn: () => Promise<Signer>) => {
     sayT('status.waiting')
     useSigner(await fn())
   } catch (err) {
-    sayT('status.connectFail', 'bad', { msg: err instanceof Error ? err.message : String(err) })
+    if (fn === connectNip07 && !(window as { nostr?: unknown }).nostr) sayT('status.noSigner', 'bad'); else sayT('status.connectFail', 'bad', { msg: err instanceof Error ? err.message : String(err) }) // #192: NIP-07 call + no window.nostr = no signer app installed
   }
 }
 
