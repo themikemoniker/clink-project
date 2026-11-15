@@ -5,7 +5,7 @@ and on a relay you control. The last section says exactly how to switch to the r
 real relays.
 
 Run every command here from `spike/`. The scripts resolve `--key` against their own directory
-(`join(HERE, KEY)`, `spike/seed-listings.ts:50`, `spike/deploy-nsite.ts:53`), so `.rehearsal-key`
+(`join(HERE, KEY)`, `spike/seed-listings.ts:53`, `spike/deploy-nsite.ts:53`), so `.rehearsal-key`
 means `spike/.rehearsal-key`.
 
 ## What a dry run is, and what it cannot cover
@@ -104,39 +104,45 @@ node seed-listings.ts --key .rehearsal-key --relays $TEST_RELAY --blossom $BLOSS
 ```
 
 **The key.** If `spike/.rehearsal-key` does not exist, the script creates it with mode 600 and
-prints `# generated a new throwaway dev key at …` (`spike/seed-listings.ts:74-77`). It is
+prints `# generated a new throwaway dev key at …` (`spike/seed-listings.ts:78-81`). It is
 gitignored: `.gitignore` has `spike/.*-key` and `spike/.*-key.*`, which cover the key and both
 state files below (`git check-ignore -v spike/.rehearsal-key` shows it). It holds no funds.
 
 **The listings.** It publishes the fixture yard sale (`spike/fixture.ts`) under the throwaway key,
 one kind 30402 per item and one kind 30405 for the sale, to `$TEST_RELAY` only
-(`spike/seed-listings.ts:57`, `:293-300`).
+(`spike/seed-listings.ts:61`, `:316-323`).
 
 **No Buy buttons. That is the point.** The offers file is derived from the key, so it is
-`spike/.rehearsal-key.offers.json` (`suffixed()`, `spike/seed-listings.ts:51-53`). In a rehearsal it
+`spike/.rehearsal-key.offers.json` (`suffixed()`, `spike/seed-listings.ts:54-56`). In a rehearsal it
 does not exist, because only `mint-offers.ts` writes it, and that needs the node. The script then
 prints `# no …/.rehearsal-key.offers.json — publishing without clink_offer tags; run mint-offers.ts
-first` (`spike/seed-listings.ts:90-92`). The listings carry no `clink_offer` tag, so no Buy button
+first` (`spike/seed-listings.ts:94-96`). The listings carry no `clink_offer` tag, so no Buy button
 appears. This is the rehearsal's no-node mode.
 
 **The ladder file.** The script ends by writing `spike/.rehearsal-key.ladder.json`
-(`spike/seed-listings.ts:272`). Never point `watch-sales.ts` at it unless you mean to run a
+(`spike/seed-listings.ts:295`). Never point `watch-sales.ts` at it unless you mean to run a
 watcher. Running a watcher is outside this page.
 
 **Blossom: what gets written where.** Before it publishes, the script fetches photos at three
 widths from `https://picsum.photos` into `spike/seed-photos/`, unless they are already there
-(`spike/seed-listings.ts:112-123`). That is a public read. It then uploads every photo to every
-Blossom server in its list (`spike/seed-listings.ts:158-190`). By default that list is five public
-servers (`spike/seed-listings.ts:68-71`): `cdn.hzrd149.com`, `blossom.primal.net`,
+(`spike/seed-listings.ts:126-146`). That is a public read. It then uploads every photo to every
+Blossom server in its list (`spike/seed-listings.ts:181-213`). By default that list is five public
+servers (`spike/seed-listings.ts:72-75`): `cdn.hzrd149.com`, `blossom.primal.net`,
 `files.sovbit.host`, `nostr.download` and `blossom.band`. Each upload is signed by the rehearsal
 key with a kind 24242 auth event.
 
 `--blossom` replaces that list. `$BLOSSOM` is the test server from Step A.
 
 If nothing listens at the address you pass, every upload fails as unreachable and the run goes on
-(`spike/seed-listings.ts:169-172`). It prints `# WARNING: no blob uploaded; listings will have no
-images` (`:192`), and the listings publish without images. That is still a valid relay-only
+(`spike/seed-listings.ts:192-195`). It prints `# WARNING: no blob uploaded; listings will have no
+images` (`:215`), and the listings publish without images. That is still a valid relay-only
 rehearsal. Leave out `--blossom` and the photos go to the five public servers.
+
+An unreachable photo host is also fine: the listings publish without images. If a photo fetch
+fails, or the host answers with an error, the script prints one `# photo host … unreachable:` or
+`# photo host … refused:` line, skips that photo and goes on (`spike/seed-listings.ts:129-141`).
+Photos already in `spike/seed-photos/` are used as is. `--photos-from` replaces
+`https://picsum.photos` (`spike/seed-listings.ts:58`).
 
 **Seeing it.** The storefront's relay list is hard-coded (`storefront/src/main.ts:13-18`), so
 `npm run dev` with `?seller=npub1…` does not read your test relay. `check-admin.ts` and
@@ -200,7 +206,7 @@ seller. **Nothing above created a real seller key.** So the switch starts by mak
    `mint-offers.ts` and `deploy-nsite.ts` stop with `no …/.dev-key`
    (`spike/mint-offers.ts:53`, `spike/deploy-nsite.ts:56`), and `seed-listings.ts` silently
    creates a new `.dev-key` and publishes the fixture sale under it to the four public relays
-   (`spike/seed-listings.ts:74-77`). If you are the author and already hold `spike/.dev-key`,
+   (`spike/seed-listings.ts:78-81`). If you are the author and already hold `spike/.dev-key`,
    you may drop `--key .my-key` from the lines in step 4 and skip `new-key.ts`. Everyone else
    passes `--key` every time.
 3. The real relays are `SALE_RELAYS` in `spike/fixture.ts:28-33`, the four public relays every
@@ -218,7 +224,7 @@ seller. **Nothing above created a real seller key.** So the switch starts by mak
    On someone else's Pub, give `mint-offers.ts` the operator's pairing string with
    `--nprofile nprofile1…` (README → Setup explains the default). The state files are
    `spike/.my-key.offers.json` and `spike/.my-key.ladder.json`, derived from the key's name
-   (`spike/mint-offers.ts:46`, `spike/seed-listings.ts:51-53`).
+   (`spike/mint-offers.ts:46`, `spike/seed-listings.ts:54-56`).
 
    These scripts publish a fixture module, `spike/fixture.ts` unless you pass `--fixture`. To
    sell your own items, author them in the builder instead: run
@@ -227,5 +233,5 @@ seller. **Nothing above created a real seller key.** So the switch starts by mak
 5. When you are finished, delete `spike/.rehearsal-key*`. That removes the key and its state
    files: `spike/.rehearsal-key.ladder.json`, and `spike/.rehearsal-key.offers.json` if you ever
    minted against it. Both are derived from the key's file name (`suffixed()`,
-   `spike/seed-listings.ts:51`), so they mean nothing without it. Do not delete `.my-key`: it is
+   `spike/seed-listings.ts:54`), so they mean nothing without it. Do not delete `.my-key`: it is
    the account.

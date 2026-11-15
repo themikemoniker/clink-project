@@ -16,6 +16,8 @@
 //   6. docs/runbook.md's `### Item 26: decision` heading renamed to `### Builder key: decision`,
 //      and, run separately, README.md's "Noted, not decided here." sentence put back -> "item 26
 //      has a recorded decision" fails, each time.
+//   7. Step C's "An unreachable photo host is also fine" reworded to "A dead photo host …" -> "Step C says an
+//      unreachable photo host is fine …" fails.
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -150,4 +152,8 @@ test('no wss:// public relay URL sits on a fenced node command unless that line 
     const publicUrl = [...line.matchAll(/wss:\/\/([^\s/,:]+)/g)].some(m => !/^(localhost|127\.0\.0\.1)$/.test(m[1]!))
     if (publicUrl) assert.match(line, /PUBLIC WRITE/, `public relay URL on an unmarked command: "${line}"`)
   }
+})
+
+test('Step C says an unreachable photo host is fine and the listings publish without images', () => {
+  assert.match(PAGE, /An unreachable photo host is also fine: the listings publish without images\./)
 })
