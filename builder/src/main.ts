@@ -143,6 +143,7 @@ const showSigner = () => {
   $('#signed-in').hidden = !signer
   $('#connect').hidden = !!signer
   $('#publish').toggleAttribute('disabled', !signer)
+  $('#publish-why').hidden = !!signer
   refreshSaleCost() // #publish-sale is gated on more than a signer — see admin.ts noPublishSaleReason
   $('#deploy').toggleAttribute('disabled', !signer)
   $('#refresh-items').toggleAttribute('disabled', !signer)
@@ -358,7 +359,7 @@ const onStep = (step: Step) => say(step.text, step.kind === 'fail' ? 'bad' : ste
 
 const doPublish = async (event: SubmitEvent) => {
   event.preventDefault()
-  if (!signer) return
+  if (!signer) return sayT('item.noSigner', 'bad')
   const draft = readDraft()
 
   // Validate here rather than at the signer: an error after three approvals is three wasted
