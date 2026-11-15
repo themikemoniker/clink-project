@@ -13,6 +13,9 @@
 //      starts the in-repo relay …" fails, each time.
 //   5. the `UNVERIFIED: start command for a local Blossom server.` line put back in Step C ->
 //      "Step A starts the in-repo Blossom server …" fails.
+//   6. docs/runbook.md's `### Item 26: decision` heading renamed to `### Builder key: decision`,
+//      and, run separately, README.md's "Noted, not decided here." sentence put back -> "item 26
+//      has a recorded decision" fails, each time.
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -125,6 +128,19 @@ test('Step A starts the in-repo Blossom server in a fenced block, and its start 
 
 test('README links docs/dry-run.md', () => {
   assert.match(README, /\]\(docs\/dry-run\.md\)/)
+})
+
+test('item 26 has a recorded decision', () => {
+  const runbook = readFileSync(join(HERE, '..', 'docs', 'runbook.md'), 'utf8')
+  const lines = runbook.split('\n')
+  const start = lines.findIndex(l => /^#{1,6}\s/.test(l) && /Item 26/.test(l))
+  assert.ok(start !== -1, 'docs/runbook.md has no heading matching /Item 26/')
+  const level = /^(#+)/.exec(lines[start]!)![1]!.length
+  const end = lines.findIndex((l, i) => i > start && new RegExp(`^#{1,${level}}\\s`).test(l))
+  const section = lines.slice(start + 1, end === -1 ? undefined : end).join('\n')
+  assert.match(section, /\.builder-key/, 'the Item 26 section does not name .builder-key')
+  assert.match(section, /\bkeeps\b/, 'the Item 26 section does not say the builder keeps its key')
+  assert.doesNotMatch(README, /not decided here/, 'README.md still says item 26 is not decided')
 })
 
 test('no wss:// public relay URL sits on a fenced node command unless that line says PUBLIC WRITE', () => {
