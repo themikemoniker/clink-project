@@ -133,10 +133,10 @@ test('inventory (L1): missing() goes red on a table with one es removed', () => 
 
 // #193: one word list for every key, wired or not.
 const JARGON = ['signer', 'bunker', 'nip-07', 'relay', 'nsec', 'nostr', 'kind 30405', 'oracle']
-const jargonHits = (table: Record<string, { es: string }>) =>
+const jargonHits = (table: Record<string, { es: string }>): [string, string][] =>
   Object.entries(table).flatMap(([k, v]) => JARGON.filter(w =>
     // A {slot} name is never shown (fmt fills it), so `{relays}` is not the word relay.
-    v.es.replace(/\{\w+\}/g, '').toLowerCase().includes(w)).map(w => [k, w]))
+    v.es.replace(/\{\w+\}/g, '').toLowerCase().includes(w)).map((w): [string, string] => [k, w]))
 test('the Spanish has no jargon', () => {
   assert.deepEqual(jargonHits(STRINGS), [])
 })
@@ -144,7 +144,7 @@ test('the Spanish has no jargon', () => {
 test('the Spanish has no jargon (#193, L1): a key outside WIRED saying nostr, oracle or kind 30405 is caught', () => {
   assert.ok(STRINGS['s1.connect'] && !('s1.connect' in WIRED))
   for (const w of ['Nostr', 'ORACLE', 'Kind 30405']) {
-    const poisoned = { ...STRINGS, 's1.connect': { ...STRINGS['s1.connect']!, es: `Usa ${w} aquí.` } }
+    const poisoned: Record<string, { en: string; es: string }> = { ...STRINGS, 's1.connect': { ...STRINGS['s1.connect']!, es: `Usa ${w} aquí.` } }
     assert.deepEqual(jargonHits(poisoned), [['s1.connect', w.toLowerCase()]], w)
   }
 })
