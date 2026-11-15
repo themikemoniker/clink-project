@@ -97,6 +97,8 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   'item.badFiat': { en: 'Give a price in {cur}, as a number, at or above zero.', es: 'Escribe el precio en {cur}, con números y sin signos. Puede ser 0 si es gratis.' },
   'item.floor': { en: 'A buyable item must be at least 10 sats — the node will not invoice less. Set stock to 0, or clear the node field, to list it as cash-only.', es: 'Para venderlo con botón de Comprar, el precio mínimo es 10 sats. Si es menos, pon 0 en cantidad o deja vacío el campo del nodo: se vende solo en efectivo.' },
   'item.badStock': { en: 'Stock must be 0–999.', es: 'La cantidad debe ser de 0 a 999.' },
+  // #242: under #publish while no signer is connected, and doPublish's line if a click gets through.
+  'item.noSigner': { en: 'Connect a signer first — publishing signs your item.', es: 'Primero conecta tu app de firma en el paso 1.' },
   'err.generic': { en: '{msg}', es: 'Algo salió mal. Inténtalo otra vez en un momento.' },
   'notes.encrypting': { en: 'Encrypting to your own key…', es: 'Guardando tus notas en secreto…' },
   'notes.saved': { en: 'Notes saved on {ok}/{all} relays. Only your key can read them.', es: 'Notas guardadas en {ok}/{all} servidores. Solo tú puedes leerlas.' },

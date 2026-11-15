@@ -1623,3 +1623,43 @@ test('main.ts (#214, L1): the old handler, the old disabled line and a plain say
   assert.notEqual(say, src)
   assert.equal(nip07Checks(say).length, 1)
 })
+
+// #242: the line under #publish while no signer is connected, and doPublish's guard says it too.
+const BANNED242 = /signer|bunker|nip-07|relay|nsec/i
+const publishWhyLeft = (src: string, html: string, table: typeof STRINGS) => {
+  const v = table['item.noSigner'], left: string[] = []
+  if (!v?.en.trim() || !v.es.trim() || v.es === v.en) left.push('item.noSigner: no es')
+  else {
+    if (BANNED242.test(v.es)) left.push('item.noSigner: jargon in es')
+    if (textOf(html, 'item.noSigner') !== v.en) left.push('item.noSigner: the HTML fallback is not the en')
+  }
+  if (!/<p\b[^>]*\bid="publish-why"[^>]*\bdata-i18n="item\.noSigner"/.test(html)) left.push('#publish-why is not wired')
+  if (!part(src, 'const doPublish =', 'const draft = readDraft()').includes("if (!signer) return sayT('item.noSigner', 'bad')")) left.push('doPublish returns silently')
+  if (!part(src, 'const showSigner =', 'const useSigner =').includes("$('#publish-why').hidden = !!signer")) left.push('showSigner leaves #publish-why alone')
+  return left
+}
+
+test('main.ts (#242): #publish-why is item.noSigner, plain in es, and doPublish says it', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  assert.deepEqual(publishWhyLeft(src, HTML, STRINGS), [])
+})
+
+test('main.ts (#242, L1): a blanked es, each banned word, a drifted fallback, a lost id and a silent guard are caught', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const v = STRINGS['item.noSigner']!
+  assert.deepEqual(publishWhyLeft(src, HTML, { ...STRINGS, 'item.noSigner': { en: v.en, es: '' } }), ['item.noSigner: no es'])
+  for (const w of ['signer', 'bunker', 'NIP-07', 'relay', 'nsec'])
+    assert.deepEqual(publishWhyLeft(src, HTML, { ...STRINGS, 'item.noSigner': { en: v.en, es: `${v.es} ${w}` } }), ['item.noSigner: jargon in es'], w)
+  const drift = HTML.replace('publishing signs your item.</p>', 'publishing signs it.</p>')
+  assert.notEqual(drift, HTML)
+  assert.deepEqual(publishWhyLeft(src, drift, STRINGS), ['item.noSigner: the HTML fallback is not the en'])
+  const noId = HTML.replace('id="publish-why" ', '')
+  assert.notEqual(noId, HTML)
+  assert.deepEqual(publishWhyLeft(src, noId, STRINGS), ['#publish-why is not wired'])
+  const silent = src.replace("if (!signer) return sayT('item.noSigner', 'bad')", 'if (!signer) return')
+  assert.notEqual(silent, src)
+  assert.deepEqual(publishWhyLeft(silent, HTML, STRINGS), ['doPublish returns silently'])
+  const kept = src.replace("  $('#publish-why').hidden = !!signer\n", '')
+  assert.notEqual(kept, src)
+  assert.deepEqual(publishWhyLeft(kept, HTML, STRINGS), ['showSigner leaves #publish-why alone'])
+})

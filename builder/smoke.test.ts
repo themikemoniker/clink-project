@@ -484,6 +484,35 @@ test('with storage blocked, connecting a NIP-07 signer still signs in and starts
   await context.close()
 })
 
+// #242: with no signer, #publish is off and the line under it says why, in either language. It
+// goes away once a signer connects. Real visibility, so a CSS display rule cannot defeat `hidden`.
+test('with no signer the Publish button says why it is off, in English and Spanish, and stops once one connects', async () => {
+  const why = STRINGS['item.noSigner']
+  assert.ok(why?.en && why.es, 'item.noSigner lacks a language')
+  const en = await openIn('en-US')
+  await en.page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  assert.equal(await en.page.locator('#publish').isDisabled(), true)
+  assert.equal(await en.page.locator('#publish-why').isVisible(), true)
+  assert.equal(await en.page.locator('#publish-why').textContent(), why.en)
+  assert.deepEqual(en.errors, [])
+  await en.context.close()
+  const { page, errors, context } = await openIn('es-MX', false, () => {
+    const ok = (v: unknown) => () => Promise.resolve(v)
+    Object.assign(window, { nostr: { getPublicKey: ok('ab'.repeat(32)), signEvent: (e: unknown) => Promise.resolve(e),
+      nip44: { encrypt: ok('fake-ciphertext'), decrypt: ok('fake-plaintext') } } })
+  })
+  await page.waitForFunction(() => !!document.querySelector('#deploy-cost')!.textContent, null, { timeout: 5_000 })
+  assert.equal(await page.locator('#publish').isDisabled(), true)
+  assert.equal(await page.locator('#publish-why').isVisible(), true)
+  assert.equal(await page.locator('#publish-why').textContent(), why.es)
+  await page.locator('#nip07').click()
+  await page.waitForFunction(() => /abababab/.test(document.querySelector('#whoami')!.textContent ?? ''), null, { timeout: 5_000 })
+  assert.equal(await page.locator('#publish-why').isHidden(), true)
+  assert.equal(await page.locator('#publish').isDisabled(), false)
+  assert.deepEqual(errors, [])
+  await context.close()
+})
+
 // #209 (G1.1/G1.2): after a load, main.ts loadPanel sets #refresh-items to `items.reload`, and the
 // switch must keep it. Every relay socket is stubbed: a REQ (`["REQ",subId,...filters]`, as
 // nostr-tools abstract-relay.js sends it) gets `["EOSE",subId]`, so the load ends with zero events.
