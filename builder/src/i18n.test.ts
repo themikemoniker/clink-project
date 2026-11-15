@@ -797,6 +797,31 @@ test('publish.ts (#109): its own failures are PublishErrors with a key and the u
   assert.ok(!/throw new Error\(/.test(src), 'publish.ts still throws a plain Error')
 })
 
+// #246: the node never answers. Port 1 on loopback refuses the connection, so `pool.publish`
+// rejects and manage.ts finishes with code 0 at once, well before its 20 s RESPONSE_TIMEOUT_MS.
+test('publish.ts (#246, L10): an unreachable relay at mint time says what to do next', async () => {
+  const { publish, PublishError } = await import('./publish.ts')
+  const relay = 'wss://127.0.0.1:1'
+  const node = { pubkey: FAKE_PK, relay, pointer: '' }
+  const item = { slug: 'silla', title: 'Silla', summary: '', priceSats: 100, stock: 1, alt: '', blobs: [], servers: [] }
+  const steps: { kind: string }[] = []
+  const t0 = Date.now()
+  let e: unknown
+  try { await publish(fakeSigner, node, item, FAKE_SALE, s => steps.push(s)) } catch (err) { e = err }
+  const ms = Date.now() - t0
+  assert.ok(ms < 5_000, `it waited ${ms} ms: the relay was reachable or the timeout was waited out`)
+  assert.ok(e instanceof PublishError, String(e))
+  assert.equal(e.key, 'publish.mintFail')
+  assert.ok(steps.some(s => s.kind === 'offer'), 'it never reached the mint step')
+  const msg = String(e.vars?.msg)
+  assert.ok(msg.includes(`did not answer on ${relay}`), `no "did not answer": ${msg}`)
+  // The next step, beyond "It may be offline.": an empty hint fails every line below.
+  const after = msg.slice(msg.indexOf('It may be offline.') + 'It may be offline.'.length)
+  for (const step of ['node is running', 'relay in your node pointer (section 2)', 'clear the node field'])
+    assert.ok(after.includes(step), `no next step "${step}" after "It may be offline.": ${msg}`)
+  assert.equal(fmt('en', e.key, e.vars), e.message)
+})
+
 // #169: the deploy no-server failure. `en` is the exact English deploy.ts threw; es is plain.
 const NOSERVER_EN = 'No Blossom server holds a complete copy. Refusing to publish a manifest that cannot resolve.'
 const BANNED169 = ['{msg}', 'Blossom', 'relay', 'manifest', 'signer', 'hex', 'nsec']
