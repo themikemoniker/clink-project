@@ -37,7 +37,7 @@
 
           <div id="scan" hidden>
             <p class="hint">In Amber: <strong>Scan a QR Code</strong>.</p>
-            <div id="connect-qr" role="img" aria-label="Nostr Connect QR code"></div>
+            <div id="connect-qr" role="img" aria-label="Nostr Connect QR code" data-i18n="s1.qr" data-i18n-attr="aria-label"></div>
             <label for="connect-uri">…or copy the link, if your signer takes one pasted</label>
             <textarea id="connect-uri" rows="3" readonly spellcheck="false"></textarea>
             <p class="hint">
@@ -275,17 +275,17 @@
       </section>
       <!-- 7. deploy ------------------------------------------------------------------ -->
       <section>
-        <h2>7 · Publish the sale as a website</h2>
-        <p class="hint">
+        <h2 data-i18n="deploy.h">7 · Publish the sale as a website</h2>
+        <p class="hint" data-i18n="deploy.hint">
           Your storefront is a handful of static files. They go to Blossom servers as blobs, and
           a signed manifest on the relays says which blob is which path. That manifest is the
           whole site: no host, no DNS, no certificate, no account. It is served at your own
           npub, which is how the page knows whose sale to read.
         </p>
 
-        <label for="gateway">Gateway</label>
+        <label for="gateway" data-i18n="deploy.gateway">Gateway</label>
         <input id="gateway" type="text" value="nsite.lol" autocomplete="off" spellcheck="false" />
-        <p class="hint">
+        <p class="hint" data-i18n="deploy.gatewayHint">
           Any NIP-5A host will serve it — the gateway is only where you point people. Changing it
           changes the URL printed on the flyer’s tear-off tabs, so set it before you deploy.
         </p>
@@ -293,7 +293,7 @@
         <p class="cost" id="deploy-cost"></p>
         <button type="button" id="deploy" disabled data-i18n="deploy.btn">Deploy my storefront</button>
 
-        <p class="warn">
+        <p class="warn" data-i18n="deploy.cache">
           Gateways cache for an hour and serve the previous version until it lapses, while the
           relays and Blossom update in seconds. Do not redeploy on the day of the sale.
         </p>
