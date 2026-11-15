@@ -11,6 +11,8 @@
 //   4. Step A's fenced `node test-relay.ts` line moved out of the fence (as prose), and, run
 //      separately, the `UNVERIFIED: start command for a local relay.` line put back -> "Step A
 //      starts the in-repo relay …" fails, each time.
+//   5. the `UNVERIFIED: start command for a local Blossom server.` line put back in Step C ->
+//      "Step A starts the in-repo Blossom server …" fails.
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -101,14 +103,24 @@ test('the switch to real makes the key it uses: every seller-key command passes 
   assert.ok(keyed > 0, 'the switch section runs no seller-key command at all')
 })
 
-test('Step A starts the in-repo relay in a fenced block, and the relay start command is no longer UNVERIFIED', () => {
+const stepA = () => {
   const lines = PAGE.split('\n')
   const start = lines.findIndex(l => /^##\s+Step A\b/.test(l))
   assert.ok(start !== -1, 'no "## Step A" heading')
   const end = lines.findIndex((l, i) => i > start && /^##?\s/.test(l))
-  const stepA = lines.slice(start, end === -1 ? undefined : end).join('\n')
-  assert.ok(commandsIn(stepA).some(c => c.script === 'test-relay.ts'), 'Step A has no fenced `node test-relay.ts` line')
+  return lines.slice(start, end === -1 ? undefined : end).join('\n')
+}
+
+test('Step A starts the in-repo relay in a fenced block, and the relay start command is no longer UNVERIFIED', () => {
+  assert.ok(commandsIn(stepA()).some(c => c.script === 'test-relay.ts'), 'Step A has no fenced `node test-relay.ts` line')
   assert.doesNotMatch(PAGE, /UNVERIFIED: start command for a local relay/)
+})
+
+test('Step A starts the in-repo Blossom server in a fenced block, and its start command is no longer UNVERIFIED', () => {
+  assert.ok(commandsIn(stepA()).some(c => c.script === 'test-blossom.ts'), 'Step A has no fenced `node test-blossom.ts` line')
+  assert.ok(existsSync(join(HERE, 'test-blossom.ts')), 'spike/test-blossom.ts does not exist')
+  assert.doesNotMatch(PAGE, /UNVERIFIED: start command for a local Blossom server/)
+  assert.doesNotMatch(PAGE, /<blossom-port>/, 'a --blossom placeholder is left on the page')
 })
 
 test('README links docs/dry-run.md', () => {
