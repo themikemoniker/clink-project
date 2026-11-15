@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { fiatPriceReason } from './admin.ts'
-import { countKey, errLine, fmt, keep, load, missing, pickLang, STRINGS } from './i18n.ts'
+import { applyLang, countKey, errLine, fmt, keep, load, missing, pickLang, STRINGS } from './i18n.ts'
 
 test('pickLang: a stored choice wins, then any es* phone language, then English', () => {
   for (const nav of ['es', 'es-MX', 'ES-419']) assert.equal(pickLang(nav, null), 'es', nav)
@@ -44,7 +44,10 @@ const WIRED: Record<string, string> = { 'shrink.hint': 'publishing this list', '
   // #168: panel 7's Deploy button
   'deploy.btn': 'Deploy my storefront',
   // #181: panel 6's heading, explainer and Download button
-  'result.h': 'Give the watcher its ladder', 'result.hint': 'Every future stock state', 'result.download': 'Download .ladder.json' }
+  'result.h': 'Give the watcher its ladder', 'result.hint': 'Every future stock state', 'result.download': 'Download .ladder.json',
+  // #190: panel 7's heading, both hints, the Gateway label and the cache warning
+  'deploy.h': 'Publish the sale as a website', 'deploy.hint': 'handful of static files', 'deploy.gateway': '>Gateway</label>',
+  'deploy.gatewayHint': 'Any NIP-5A host', 'deploy.cache': 'Gateways cache for an hour' }
 const element = (keyPattern: string, flags = '') =>
   new RegExp(`<(\\w+)\\b[^>]*\\bdata-i18n="${keyPattern}"[^>]*>([\\s\\S]*?)</\\1>`, flags)
 const textOf = (html: string, key: string) => element(key.replaceAll('.', '\\.')).exec(html)?.[2]
@@ -1257,7 +1260,7 @@ test('inventory (#145, L1): dropping any one sticker attribute, or nesting the <
     assert.notEqual(broken, HTML, `${attr} is not in index.html`)
     assert.throws(() => stickersWired(broken), attr)
   }
-  const noAttr = HTML.replace(' data-i18n-attr="aria-label"', '')
+  const noAttr = HTML.replace('data-i18n="stickers.sheet" data-i18n-attr="aria-label"', 'data-i18n="stickers.sheet"')
   assert.notEqual(noAttr, HTML)
   assert.throws(() => stickersWired(noAttr))
   assert.throws(() => stickersWired(HTML.replace('pays directly would', 'pays <em>directly</em> would')))
@@ -1476,4 +1479,68 @@ test('main.ts (#177, L1): each old line put back is caught', () => {
     assert.notEqual(broken, src, `${k}: ${now} is not in main.ts`)
     assert.deepEqual(left177(broken), [k])
   }
+})
+
+// #190: panel 7's fixed text and the connect QR's aria-label follow the language.
+const P7_TEXT = ['deploy.h', 'deploy.hint', 'deploy.gateway', 'deploy.gatewayHint', 'deploy.cache']
+const P7_ALL = [...P7_TEXT, 's1.qr']
+const BANNED190 = /blossom|nip-?5a|manifest|npub|\bdns\b|relay|nostr|gateway/i
+const qrTag = (html: string) => /<div\b[^>]*\bid="connect-qr"[^>]*>/.exec(html)?.[0]
+// A one-element fake document built from the tag's own attributes, so applyLang sees what the HTML says.
+const qrAfter = (html: string, lang: 'en' | 'es') => {
+  const tag = qrTag(html)
+  assert.ok(tag, 'no #connect-qr')
+  const attrs: Record<string, string> = Object.fromEntries([...tag.matchAll(/\s([\w-]+)="([^"]*)"/g)].map(m => [m[1]!, m[2]!]))
+  const el = {
+    dataset: { i18n: attrs['data-i18n'], i18nAttr: attrs['data-i18n-attr'] },
+    textContent: '<svg>QR</svg>',
+    setAttribute(n: string, v: string) { attrs[n] = v },
+  }
+  const doc = { querySelectorAll: () => (el.dataset.i18n ? [el] : []), documentElement: { lang: '' }, title: '' }
+  applyLang(doc as unknown as Document, lang)
+  return { label: attrs['aria-label'], body: el.textContent }
+}
+
+test('inventory (#190): panel 7 text is plain text, and every key has es in plain, jargon-free Spanish', () => {
+  for (const k of P7_ALL) {
+    assert.ok(STRINGS[k], `${k} is not in STRINGS`)
+    assert.deepEqual(missing([k]), [], `${k}: no es`)
+    assert.notEqual(STRINGS[k]!.es, STRINGS[k]!.en, `${k}: es is the English text`)
+    assert.ok(!BANNED190.test(STRINGS[k]!.es), `${k}: jargon in "${STRINGS[k]!.es}"`)
+  }
+  for (const k of P7_TEXT) assert.ok(!textOf(HTML, k)!.includes('<'), `${k}: its element nests markup that applyLang would delete`)
+  assert.match(STRINGS['deploy.cache']!.es, /no vuelvas a publicar el día de la venta/i, 'the cache warning lost its next step')
+})
+
+test('inventory (#190, L1): the jargon check sees each banned word, and the old English', () => {
+  for (const w of ['Blossom', 'NIP-5A', 'nip5a', 'manifest', 'npub', 'DNS', 'relay', 'Nostr', 'gateway'])
+    assert.ok(BANNED190.test(`${STRINGS['deploy.cache']!.es} ${w}`), w)
+  for (const k of ['deploy.hint', 'deploy.gateway', 'deploy.gatewayHint', 'deploy.cache', 's1.qr'])
+    assert.ok(BANNED190.test(STRINGS[k]!.en), `${k}: the old English should be caught`)
+  assert.ok(!BANNED190.test('Elige tus servidores DNSX'), 'dns must match as a word only')
+})
+
+test('inventory (#190): #connect-qr\'s aria-label is s1.qr, and the switch writes only that attribute', () => {
+  const tag = qrTag(HTML)!
+  assert.equal(attrOf(tag, 'data-i18n'), 's1.qr', '#connect-qr has no data-i18n="s1.qr"')
+  assert.equal(attrOf(tag, 'data-i18n-attr'), 'aria-label', '#connect-qr: only its aria-label may be translated')
+  assert.equal(attrOf(tag, 'aria-label'), STRINGS['s1.qr']!.en, '#connect-qr aria-label is not the table en')
+  assert.deepEqual(qrAfter(HTML, 'es'), { label: STRINGS['s1.qr']!.es, body: '<svg>QR</svg>' })
+  assert.deepEqual(qrAfter(HTML, 'en'), { label: 'Nostr Connect QR code', body: '<svg>QR</svg>' })
+})
+
+test('inventory (#190, L1): dropping any one panel 7 or QR attribute is caught', () => {
+  for (const k of P7_TEXT) {
+    const broken = HTML.replace(` data-i18n="${k}"`, '')
+    assert.notEqual(broken, HTML, `${k} is not in index.html`)
+    assert.equal(textOf(broken, k), undefined)
+    assert.ok(unwired(broken).includes(WIRED[k]!), `${k}: its English is not seen once unwired`)
+  }
+  // The QR without its key stays English; without its data-i18n-attr the switch would wipe the code.
+  const noKey = HTML.replace(' data-i18n="s1.qr"', '')
+  assert.notEqual(noKey, HTML)
+  assert.equal(qrAfter(noKey, 'es').label, 'Nostr Connect QR code')
+  const noAttr = HTML.replace('data-i18n="s1.qr" data-i18n-attr="aria-label"', 'data-i18n="s1.qr"')
+  assert.notEqual(noAttr, HTML)
+  assert.notEqual(qrAfter(noAttr, 'es').body, '<svg>QR</svg>')
 })
