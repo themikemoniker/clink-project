@@ -29,6 +29,9 @@
 // exactly the state slice 1 shipped in.
 //
 // Usage: node seed-listings.ts [--key <file>] [--fixture <module>] [--relays wss://a,wss://b] [--blossom https://x,https://y]
+//                              [--photos-from <base-url>]
+// `--photos-from` is where step 1 fetches photos, `https://picsum.photos` unless given. It exists
+// so a test can point it at a dead local address; photos already in seed-photos/ skip it.
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -52,6 +55,7 @@ const suffixed = (name: string) => join(HERE, KEY === '.dev-key' ? name : `${KEY
 const OFFERS_FILE = suffixed('.offers.json')
 const LADDER_FILE = suffixed('.ladder.json')
 const PHOTO_DIR = join(HERE, 'seed-photos')
+const PHOTOS = arg('photos-from', 'https://picsum.photos')
 
 const { ITEMS, SALE, SALE_RELAYS, listingD, offerPriceSats } = await import(arg('fixture', './fixture.ts'))
 const RELAYS = arg('relays', SALE_RELAYS.join(',')).split(',')
@@ -109,13 +113,32 @@ mkdirSync(PHOTO_DIR, { recursive: true })
 
 type Blob = { item: string; w: number; h: number; sha256: string; bytes: Uint8Array; url?: string }
 const blobs: Blob[] = []
+// An unreachable photo host is not fatal, the same as an unreachable Blossom server below: the
+// photo is skipped and its listing publishes without images. The body download sits inside the
+// try too, because a host can send its headers and then drop the connection.
+const photoHost = new URL(PHOTOS).host
+let photoHostFailed = false
+const photoFailed = (what: string) => {
+  if (!photoHostFailed) console.log(`# photo host ${photoHost} ${what}; listings whose photos are not already in ` +
+    `${PHOTO_DIR}/ publish without images (photos already there are used as is)`)
+  photoHostFailed = true
+}
 for (const item of ITEMS.filter(i => i.photo)) {
   for (const { w, h } of WIDTHS) {
     const file = join(PHOTO_DIR, `${item.d}-${w}.jpg`)
     if (!existsSync(file)) {
-      const res = await fetch(`https://picsum.photos/seed/${item.d}/${w}/${h}`, { signal: AbortSignal.timeout(20_000) })
-      if (!res.ok) throw new Error(`photo fetch ${item.d}@${w}: ${res.status}`)
-      writeFileSync(file, Buffer.from(await res.arrayBuffer()))
+      let bytes: ArrayBuffer
+      try {
+        const res = await fetch(`${PHOTOS}/seed/${item.d}/${w}/${h}`, { signal: AbortSignal.timeout(20_000) })
+        if (!res.ok) { photoFailed(`refused: HTTP ${res.status}`); continue }
+        bytes = await res.arrayBuffer()
+      } catch (err) {
+        // `fetch failed` alone names no host and no reason; undici puts both on `cause`.
+        const e = err as { cause?: { message?: string }; message?: string }
+        photoFailed(`unreachable: ${String(e.cause?.message ?? e.message ?? err).slice(0, 120)}`)
+        continue
+      }
+      writeFileSync(file, Buffer.from(bytes))
     }
     const bytes = readFileSync(file)
     blobs.push({ item: item.d, w, h, bytes, sha256: createHash('sha256').update(bytes).digest('hex') })
