@@ -1544,3 +1544,19 @@ test('inventory (#190, L1): dropping any one panel 7 or QR attribute is caught',
   assert.notEqual(noAttr, HTML)
   assert.notEqual(qrAfter(noAttr, 'es').body, '<svg>QR</svg>')
 })
+
+// #211: the six longest static English hints, trimmed to free bundle bytes (G1.4). Only `en` changed.
+const SHORT_EN = ['shrink.hint', 'geo.hint', 'deploy.hint', 'result.hint', 'price.fiatNote', 'notes.hint']
+const sentences = (s: string) => s.split(/[.!?](?=\s|$)/).filter(p => p.trim()).length
+test('size (#211): the six trimmed hints are one or two sentences of at most 160 characters, each with its own es', () => {
+  for (const k of SHORT_EN) {
+    const v = STRINGS[k]
+    assert.ok(v, `${k} is not in STRINGS`)
+    assert.ok(v.en.length <= 160, `${k}: en is ${v.en.length} characters`)
+    assert.ok(sentences(v.en) <= 2, `${k}: en is ${sentences(v.en)} sentences`)
+    assert.ok(v.es.trim(), `${k}: no es`)
+    assert.notEqual(v.es, v.en, `${k}: es is the English text`)
+  }
+  // L1: the counter sees three sentences, and a colon (geo: link) does not end one.
+  assert.equal(sentences('One. Two, a geo: link. Three.'), 3)
+})
