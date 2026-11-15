@@ -45,13 +45,27 @@ It keeps events in memory and forgets them all when you stop it (Ctrl-C). It has
 listens on 127.0.0.1 only. It is a rehearsal tool, not a relay to run in production. Add
 `--port N` if 7777 is taken.
 
-This repo still does not provide the Blossom server that Step C and Step D need. See Step C.
+Steps C and D also need a Blossom server you control. `spike/test-blossom.ts` is one, with
+nothing to install. In a second terminal, start it and leave it running:
 
-Every command below takes the relay through one shell variable. In a second terminal:
+```bash
+cd spike
+node test-blossom.ts          # prints: # test blossom listening on http://127.0.0.1:7778
+```
+
+It keeps blobs in memory and forgets them all when you stop it (Ctrl-C). It accepts an upload
+from any pubkey, and listens on 127.0.0.1 only (`spike/test-blossom.ts:57-58`, `:88`). It still
+checks each upload's kind 24242 auth. That auth must carry exactly one `x` tag, and it must equal
+the hash of the bytes the server received (`spike/test-blossom.ts:40-41`). Blobs over 50 MB are
+refused (`:23`). Add `--port N` if 7778 is taken (`:99-100`).
+
+Every command below takes the relay and the Blossom server through two shell variables. In a
+third terminal:
 
 ```bash
 cd spike
 TEST_RELAY=ws://127.0.0.1:7777
+BLOSSOM=http://127.0.0.1:7778
 ```
 
 **Always pass `--relays`.** Each script below defaults to `SALE_RELAYS` (`spike/fixture.ts:28-33`),
@@ -86,7 +100,7 @@ nothing after this step will work either.
 ## Step C: a throwaway seller
 
 ```bash
-node seed-listings.ts --key .rehearsal-key --relays $TEST_RELAY --blossom http://127.0.0.1:<blossom-port>
+node seed-listings.ts --key .rehearsal-key --relays $TEST_RELAY --blossom $BLOSSOM
 ```
 
 **The key.** If `spike/.rehearsal-key` does not exist, the script creates it with mode 600 and
@@ -117,9 +131,7 @@ servers (`spike/seed-listings.ts:68-71`): `cdn.hzrd149.com`, `blossom.primal.net
 `files.sovbit.host`, `nostr.download` and `blossom.band`. Each upload is signed by the rehearsal
 key with a kind 24242 auth event.
 
-`--blossom` replaces that list. Pass a Blossom server you control.
-
-`UNVERIFIED: start command for a local Blossom server.`
+`--blossom` replaces that list. `$BLOSSOM` is the test server from Step A.
 
 If nothing listens at the address you pass, every upload fails as unreachable and the run goes on
 (`spike/seed-listings.ts:169-172`). It prints `# WARNING: no blob uploaded; listings will have no
@@ -150,13 +162,14 @@ looks for `spike/.dev-key` and stops if it is missing (`spike/deploy-nsite.ts:53
 Then the real deploy, to the test relay:
 
 ```bash
-node deploy-nsite.ts --key .rehearsal-key --relays $TEST_RELAY --blossom http://127.0.0.1:<blossom-port>
+node deploy-nsite.ts --key .rehearsal-key --relays $TEST_RELAY --blossom $BLOSSOM
 ```
 
 This one **still touches Blossom**. It uploads every storefront file before it publishes. If no
 server ends up holding a complete copy, it refuses to publish the manifest
 (`builder/src/deploy.ts:208-221`). So an unreachable `--blossom` does not work here the way it does
-in Step C: the deploy fails. You need a Blossom server that accepts the files. Without
+in Step C: the deploy fails. You need a Blossom server that accepts the files, and the one from
+Step A does. Without
 `--blossom`, the storefront files go to the public servers in `SERVERS`
 (`builder/src/blossom.ts:45-51`, `spike/deploy-nsite.ts:87`).
 
