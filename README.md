@@ -155,6 +155,31 @@ node authorize-manage.ts --key .my-key --nprofile nprofile1…   # a guest accou
 It prints an `nmanage1…` pointer. Paste that into the builder and nothing in the authoring
 path ever needs a raw key again.
 
+**Your signer must hold that same key.** The grant goes to the pubkey of the `--key` file and to
+nobody else: it is stored for that pubkey and matched against the requesting event's `pub`
+(`spike/authorize-manage.ts`, the comment above `type Grant`). The builder makes its node calls
+as whatever pubkey its signer reports. If you connect an unrelated Amber or nsec.app identity,
+the pointer works but no grant matches it. A bunker never gives out its raw key, so the key
+cannot come out of the signer into the file. It has to go the other way, from the file into the
+signer. Run this in `spike/`, in your own terminal rather than an AI session, after
+`npm install` in `storefront/` (the script borrows its QR library):
+
+```bash
+cd spike
+node export-key-qr.ts --key .my-key --yes        # writes .my-key.nsec and .my-key.qr.svg, chmod 600, gitignored
+```
+
+It prints your npub and the same pubkey as hex, and never prints the secret. Scan the QR, or paste
+the nsec, into your signer (Amber or nsec.app). How each of those import screens looks is
+`UNVERIFIED`; the only measured import in this repo went into nos2x (below, item 7). Then `rm`
+the two files it names. The success sign: after you connect that signer, the builder's
+**Signed in as** line reads `<signer> — <first 8 hex>…<last 8 hex>` of your pubkey
+(`builder/src/main.ts`, `#whoami`), and those 16 characters match the hex line the script
+printed. If they differ, the signer holds some other key: the import failed. That check caught a
+real wrong import once (item 7). A key you made inside a signer first is unusable here. The
+signer will not export it to a file, and `authorize-manage.ts` can only grant a key it reads
+from a file.
+
 **Could ShockWallet replace even that step? Structurally yes, and this is worth checking.**
 The node already has the wallet-side approval loop: an *ungranted* requestor sending a 21003
 makes `handleAuthRequired` push a `GetLiveManageRequests` message to the account owner's key
