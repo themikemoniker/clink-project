@@ -1,16 +1,21 @@
 // Keeps docs/setup.md, the one ordered seller page, runnable by a stranger who has only that page:
 // every `node X.ts` it fences exists with the flags it passes, `npm install` comes first, every
 // authorize-manage.ts line carries `--key .my-key` (the default is the author's .dev-key), and a
-// guest seller's `--nprofile` is carried with `--key`.
+// guest seller's `--nprofile` is carried with `--key`. watch-sales.ts is fenced only in the
+// `--watcher-key` form that works for a fresh seller, and every ladder file name has the key prefix.
 // Run: npm test (in /spike). It reads files only: no relay, no node, no key.
 //
-// Proved able to fail (L8) by three mutations of docs/setup.md, each run once and then restored:
+// Proved able to fail (L8) by five mutations of docs/setup.md, each run once and then restored:
 //   1. `--key .my-key` deleted from the Option B `node authorize-manage.ts --key .my-key` fence line
 //      -> "every fenced authorize-manage.ts line passes --key .my-key" fails.
 //   2. the fenced `cd spike && npm install` line deleted -> "`npm install` in spike/ comes before
 //      the first new-key.ts and authorize-manage.ts" fails.
 //   3. the Option A `--nprofile nprofile1…` line deleted from Step 7 -> "a guest's --nprofile
 //      travels with --key" fails.
+//   4. a fenced `node watch-sales.ts --key .my-key` line added to Step 11 -> "watch-sales.ts is
+//      fenced only with --watcher-key …" fails; the Known gap's error line deleted fails it too.
+//   5. the `<!-- bare-ladder-name -->` marker deleted -> "every .ladder.json on the page carries
+//      the .my-key prefix …" fails.
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -114,4 +119,28 @@ test('Step 7 names the .nmanage output, kind 21000, and new-key.ts as the key\'s
   assert.match(step, /kind 21000/)
   assert.match(step, /new-key\.ts/)
   assert.match(step, /authorize-manage\.ts/)
+})
+
+test('watch-sales.ts is fenced only with --watcher-key, and the missing .my-key.offers.json is stated', () => {
+  // A plain run or `--once` stops at watch-sales.ts:146 for a fresh seller, so only the form that
+  // prints the npub and exits before that check (:143) may be fenced.
+  const runs = COMMANDS.filter(c => scriptOf(c) === 'watch-sales.ts')
+  assert.ok(runs.length > 0, 'no fenced `node watch-sales.ts` command')
+  assert.deepEqual(runs.filter(c => !flagsOn(c).includes('--watcher-key')), [], 'watch-sales.ts fenced without --watcher-key')
+  const step = /^#{2,3}\s+Step\s+11\b[\s\S]*?(?=^##\s(?!#))/m.exec(PAGE)?.[0]
+  assert.ok(step, 'no Step 11 section')
+  assert.match(step, /\.my-key\.offers\.json[^\n]*run mint-offers\.ts first/, 'Step 11 does not state the missing .my-key.offers.json')
+})
+
+test('every .ladder.json on the page carries the .my-key prefix, bar one marked line', () => {
+  // The watcher reads <key>.ladder.json (watch-sales.ts:87), so a bare `.ladder.json` is a wrong
+  // instruction for `--key .my-key`. The builder's own download name is bare, and the page has to
+  // say so once: that one line carries the visible marker `<!-- bare-ladder-name -->`, and only a
+  // single such line is allowed, so the marker cannot be sprinkled to silence the rule.
+  const lines = PAGE.split('\n')
+  const marked = lines.filter(l => l.includes('<!-- bare-ladder-name -->'))
+  assert.ok(marked.length <= 1, `${marked.length} lines carry the bare-ladder-name marker`)
+  const bare = lines.filter(l => !marked.includes(l) && /(?<!\.my-key)\.ladder\.json/.test(l))
+  assert.deepEqual(bare, [], '.ladder.json without the .my-key prefix')
+  assert.match(PAGE, /spike\/\.my-key\.ladder\.json/)
 })
