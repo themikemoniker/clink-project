@@ -270,5 +270,84 @@ box empty and your items publish cash-only, with no Buy button (`node.none`).
 Whether a buyer's payment then goes through cannot be seen from the builder. A payment needs real
 sats and cannot be rehearsed (`docs/dry-run.md`, "What a dry run is, and what it cannot cover").
 
-**Your sale is published here.** The optional parts are not on this page yet: the watcher, which
-counts stock down as items sell, and refunds are still in README → Setup.
+**Your sale is published here.** Two optional parts follow: Step 11, the watcher, and "Not on
+this page: refunds" at the end.
+
+## Step 11: the optional watcher
+
+The watcher counts stock down as items sell (`spike/watch-sales.ts:1-3`). It runs on the node
+machine, one process per seller (`spike/watch-sales.ts:77-82`). It is optional. Without it your
+sale is still published, but stock never counts down. Read "Known gap" below before you count on
+it: for a seller set up with this page, the watcher cannot start yet.
+
+What works today is the first half: getting the watcher key that the builder encrypts your stock
+ladders to.
+
+**Run** on the node machine:
+
+```bash
+cd spike
+node watch-sales.ts --key .my-key --watcher-key                          # Option B: your own node
+node watch-sales.ts --key .my-key --nprofile nprofile1… --watcher-key    # Option A: a guest account on someone else's Pub
+```
+
+Run one of the two lines. Always pass `--key .my-key`. Every file the watcher uses is named from
+`--key` (`spike/watch-sales.ts:83-91`). Without it the key file is `spike/.watcher-key`, the
+author's fixture name. `--watcher-key` prints the watcher key and exits
+(`spike/watch-sales.ts:143`). That happens before the seller key file is checked (`:145`), before
+the offers file (`:146`), and before any node is contacted (`:199-202`). So this works without a
+node, and the `--nprofile` on the guest line is not read yet. It is there so the guest form of the
+command is the one you keep.
+
+This is not a read-only command. The first run writes a new private key to
+`spike/.my-key.watcher-key`, chmod 600 (`spike/watch-sales.ts:134-135`). `.gitignore` covers it
+with `spike/.*-key.*` (`git check-ignore -v spike/.my-key.watcher-key`). This key can only decrypt
+ladders. It owns nothing, spends nothing and signs nothing (`spike/watch-sales.ts:127-129`).
+
+**You should see** on the first run (`spike/watch-sales.ts:136-137`, `:141-142`; the last line is
+cut here):
+
+```
+# minted …/spike/.my-key.watcher-key — a new watcher key. Ladders already published to an
+#   OLDER watcher key cannot be read with it; re-publish those items from the builder.
+# watcher key npub1…
+#   paste that into the builder's "Watcher key" box …
+```
+
+Later runs print only the last two lines, with the same npub. Paste that npub into the builder's
+**Watcher key** box (`s2.watcher.label`) on **2 · Your node**. Then press **Publish this item**
+again for each item (Step 10), so its ladder is published encrypted to that key. Do not follow
+the hint under the box: it says `node spike/watch-sales.ts` with no `--key`, which makes the
+fixture's `spike/.watcher-key` instead of yours (parked #262).
+
+### If you skipped the Watcher key box
+
+Then each publish offers the ladder as a download instead. The watcher reads it from a file named
+after `--key` (`spike/watch-sales.ts:87`). For `--key .my-key` you must save it as
+`spike/.my-key.ladder.json`. `.gitignore` covers that name with `spike/.*-key.*`
+(`git check-ignore -v spike/.my-key.ladder.json`). <!-- bare-ladder-name --> The builder names the download `.ladder.json` (`builder/src/publish.ts:296`), and its own text says to save it as `.ladder.json` (`ladder.file` in `builder/src/i18n.ts:215`). That name is wrong for `--key .my-key`: rename it (parked #263).
+
+### Known gap: the watcher cannot start for a fresh seller
+
+Without `--watcher-key`, the watcher needs `spike/.my-key.offers.json`. It stops at
+`spike/watch-sales.ts:146` with:
+
+```
+Error: no …/spike/.my-key.offers.json — run mint-offers.ts first
+```
+
+`--once` stops there too: it is read at `spike/watch-sales.ts:99` and changes nothing before `:146`.
+The builder mints your offers over CLINK Manage and never writes that file (no file in
+`builder/src/` mentions `offers.json`). So for a seller
+set up with this page, the watcher cannot start today, and this page does not show how to run it.
+`mint-offers.ts --key .my-key` does write that file name (`spike/mint-offers.ts:46`), but it mints
+new offers for the items in a fixture module (`--fixture`, default `./fixture.ts`,
+`spike/mint-offers.ts:49`), not for the items you published from the builder. Whether any
+`--fixture` can make it match the builder's offers is `UNVERIFIED`.
+
+## Not on this page: refunds
+
+Refunds are still in README → Setup, "Then, in the browser", step 4 (`README.md:214-222`). A seller
+made with this page cannot arm them today. `authorize-refunds.ts` reads only `spike/.dev-key`, the
+author's fixture seller (`spike/authorize-refunds.ts:92`, `:114`), and takes no `--key`. The
+README says so too (`README.md:143-144`).
