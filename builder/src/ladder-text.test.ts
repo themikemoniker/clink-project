@@ -94,6 +94,43 @@ test('main.ts: no old English left, publish fills resultView, the switch calls s
   assert.ok(!/\bresultView = null/.test(src), 'resultView is cleared somewhere besides its start')
 })
 
+// #276 (F3): an item published with the node box empty says it has no Buy button and how to add one.
+const NO_NODE_EN = 'Mug grande is live on 3/4 relays as 30402:abc:mug, cash at the table. It is cash-only, with no Buy button: paste your nmanage1… pointer in section 2 and publish again to add one.'
+
+test('#276 en: no node says no Buy button and section 2; fiat and sold-out keep the old cash line', () => {
+  const line = resultLine('en', { ...R, noffer: false, noNode: true })
+  assert.ok(line.includes('no Buy button'), line)
+  assert.ok(line.includes('section 2'), line)
+  assert.ok(line.endsWith(STRINGS['result.noNode']!.en), line)
+  assert.equal(line, NO_NODE_EN)
+  assert.equal(resultLine('en', { ...R, noffer: false, noNode: false }), OLD.cash)
+  assert.equal(resultLine('en', { ...R, noffer: false }), OLD.cash)
+  // An item with an offer never gets the advice, whatever noNode says.
+  assert.equal(resultLine('en', { ...R, noffer: true, noNode: true }), OLD.buy)
+})
+
+test('#276 es: no node differs from the plain cash line, names paso 2, no jargon', () => {
+  const cash = resultLine('es', { ...R, noffer: false })
+  const line = resultLine('es', { ...R, noffer: false, noNode: true })
+  assert.notEqual(line, cash)
+  assert.ok(line.startsWith(cash + ' '), line)
+  assert.match(line, /paso 2\b/)
+  assert.ok(line.includes('botón de Comprar'), line)
+  // Section 2's es calls the pointer "código de tu nodo" (s2.label, node.none/node.bad say "código").
+  assert.ok(line.includes('código de tu nodo'), line)
+  assert.ok(STRINGS['s2.label']!.es.toLowerCase().includes('código de tu nodo'))
+  plain('result noNode', line, resultLine('en', { ...R, noffer: false, noNode: true }))
+  assert.equal(resultLine('es', { ...R, noffer: false, noNode: false }), cash)
+})
+
+test('#276 main.ts: resultView.result carries noNode from the node publish saw', () => {
+  const src = readFileSync(new URL('./main.ts', import.meta.url), 'utf8')
+  const m = src.match(/resultView = \{\s*result: \{([^}]*)\}/)
+  assert.ok(m, 'no resultView assignment')
+  assert.match(m[1]!, /noNode: !usedNode && draft\.stock > 0 && !draft\.fiat/, 'resultView.result does not set noNode')
+  assert.match(src, /const usedNode = node\n\s*const result = await publish\(signer, usedNode, /)
+})
+
 // L1: a missing es entry makes the output English, which the checks above catch.
 test('L1: with one es entry missing, the es output is the English and the check goes red', () => {
   const keep = STRINGS['ladder.notSent']!

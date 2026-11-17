@@ -387,7 +387,9 @@ const doPublish = async (event: SubmitEvent) => {
   $('#publish').toggleAttribute('disabled', true)
   try {
     const wasEdit = editing?.d === saleListingD(sale.d, draft.slug)
-    const result = await publish(signer, node, draft, sale, onStep, watcher)
+    // #276: the node publish actually saw. `node` itself can change while publish awaits.
+    const usedNode = node
+    const result = await publish(signer, usedNode, draft, sale, onStep, watcher)
     ladder = { ...ladder, [result.d]: result.ladder[result.d]! }
     saveLadder()
     resetItem()
@@ -396,7 +398,7 @@ const doPublish = async (event: SubmitEvent) => {
     // warning on the two file outcomes only (ladder-text.ts). Kept in resultView so the language
     // switch re-writes both lines.
     resultView = {
-      result: { title: draft.title, ok: result.relaysOk, total: RELAYS.length, d: result.d, noffer: !!result.noffer },
+      result: { title: draft.title, ok: result.relaysOk, total: RELAYS.length, d: result.d, noffer: !!result.noffer, noNode: !usedNode && draft.stock > 0 && !draft.fiat },
       note: { items: Object.keys(ladder).length, total: RELAYS.length, ladderRelaysOk: result.ladderRelaysOk, wasEdit },
     }
     showResult()
