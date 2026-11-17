@@ -210,6 +210,8 @@ export const STRINGS: Record<string, { en: string; es: string }> = {
   's1.qr': { en: 'Nostr Connect QR code', es: 'Código para conectar tu app de firma' },
   'result.buy': { en: '{title} is live on {ok}/{total} relays as {d}, with a Buy button.', es: '“{title}” ya está a la venta en {ok} de {total} servidores como {d}, con botón para pagar.' },
   'result.cash': { en: '{title} is live on {ok}/{total} relays as {d}, cash at the table.', es: '“{title}” ya está a la venta en {ok} de {total} servidores como {d}. Se paga en efectivo.' },
+  // #276: appended to result.cash only when no node pointer was set (not fiat, not stock 0).
+  'result.noNode': { en: 'It is cash-only, with no Buy button: paste your nmanage1… pointer in section 2 and publish again to add one.', es: 'No tiene botón de Comprar: se vende solo en efectivo. Para agregarlo, pega el código de tu nodo en el paso 2 y vuelve a publicar.' },
   'ladder.items.one': { en: '{n} item(s) in this ladder.', es: '{n} artículo en el archivo de tus artículos.' },
   'ladder.items.other': { en: '{n} item(s) in this ladder.', es: '{n} artículos en el archivo de tus artículos.' },
   'ladder.file': { en: 'Save it as .ladder.json next to watch-sales.ts, then restart the watcher.', es: 'Descarga el archivo y dáselo a tu ayudante de ventas. Luego reinícialo.' },

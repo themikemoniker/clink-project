@@ -245,13 +245,15 @@ box empty and your items publish cash-only, with no Buy button (`node.none`).
 **You should see**
 
 - after **Publish this item**, on **6 · Give the watcher its ladder** (`result.h`)
-  (`result.buy`, `builder/src/ladder-text.ts:9`):
+  (`result.buy`, `builder/src/ladder-text.ts:11`):
 
   ```
   <title> is live on <ok>/<total> relays as <d>, with a Buy button.
   ```
 
-  If it says `cash at the table` instead (`result.cash`), no pointer was set in Step 9.
+  If it says `cash at the table` instead (`result.cash`), no pointer was set in Step 9. The
+  builder then also says the item has no Buy button and that pasting your `nmanage1…` pointer
+  in section 2 and publishing again adds one (`result.noNode`).
 - after **Publish my sale** (`builder/src/sale-text.ts:15`):
 
   ```

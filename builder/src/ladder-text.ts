@@ -2,11 +2,15 @@
 // language. Pure, DOM-free. The keys are in i18n.ts (needs-native-review); en is the old English.
 import { countKey, fmt, type Lang } from './i18n.ts'
 
-export type ResultVars = { title: string; ok: number; total: number; d: string; noffer: boolean }
+// #276: `noNode` is set only when the cash line is down to the empty node box (not fiat, not
+// stock 0), so only that seller is told to paste a pointer.
+export type ResultVars = { title: string; ok: number; total: number; d: string; noffer: boolean; noNode?: boolean }
 
-/** `#result-text`: the item is live, with a Buy button or cash only. */
-export const resultLine = (lang: Lang, { title, ok, total, d, noffer }: ResultVars): string =>
-  fmt(lang, noffer ? 'result.buy' : 'result.cash', { title, ok: String(ok), total: String(total), d })
+/** `#result-text`: the item is live, with a Buy button or cash only, plus how to add one. */
+export const resultLine = (lang: Lang, { title, ok, total, d, noffer, noNode }: ResultVars): string => {
+  const line = fmt(lang, noffer ? 'result.buy' : 'result.cash', { title, ok: String(ok), total: String(total), d })
+  return !noffer && noNode ? `${line} ${fmt(lang, 'result.noNode')}` : line
+}
 
 export type NoteVars = { items: number; total: number; ladderRelaysOk?: number; wasEdit: boolean }
 
